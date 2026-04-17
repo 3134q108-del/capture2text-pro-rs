@@ -1,4 +1,6 @@
 pub mod screenshot;
+#[allow(dead_code)]
+pub mod preprocess;
 
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};

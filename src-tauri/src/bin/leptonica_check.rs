@@ -1,3 +1,30 @@
+mod leptonica {
+    pub use capture2text_pro_rs_lib::leptonica::{Box, LeptonicaError, Pix};
+
+    pub mod bounding_rect {
+        pub use capture2text_pro_rs_lib::leptonica::bounding_rect::{
+            get_bounding_rect, BoundingBox,
+        };
+
+        use super::Pix;
+
+        #[inline]
+        pub fn is_black(pix: &Pix, x: i32, y: i32) -> bool {
+            if x < 0 || y < 0 || x >= pix.width() || y >= pix.height() {
+                return false;
+            }
+
+            match pix.get_pixel(x, y) {
+                Ok(pixel_value) => pixel_value == 1,
+                Err(_) => false,
+            }
+        }
+    }
+}
+
+#[path = "../capture/preprocess.rs"]
+mod preprocess;
+
 use std::env;
 use std::fs;
 use std::io;
@@ -6,6 +33,7 @@ use std::time::SystemTime;
 
 use capture2text_pro_rs_lib::leptonica::{LeptonicaError, Pix};
 use chrono::Local;
+use preprocess::{extract_text_block, ExtractParams, ExtractResult, OCR_SCALE_FACTOR_DEFAULT};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -86,6 +114,50 @@ fn run() -> Result<(), CheckError> {
     );
     println!("Depth  : {} -> {}", src.depth(), written.depth());
     println!("ConnComp(8): {conn_comp_count}");
+
+    let extract_params = ExtractParams {
+        pt_x: src.width() / 2,
+        pt_y: src.height() / 2,
+        lookahead: 14,
+        lookbehind: 1,
+        search_radius: 30,
+        vertical: false,
+        scale_factor: OCR_SCALE_FACTOR_DEFAULT,
+    };
+
+    match extract_text_block(&src, extract_params)? {
+        Some(ExtractResult {
+            cropped_bin,
+            bbox_unscaled,
+            bbox_scaled,
+        }) => {
+            let extract_output_name = format!(
+                "leptonica_check_extract_{}.png",
+                Local::now().format("%Y%m%d_%H%M%S")
+            );
+            let extract_output_path = output_dir.join(extract_output_name);
+            cropped_bin.write_png(&extract_output_path)?;
+
+            println!("Extract  : {}", extract_output_path.display());
+            println!(
+                "BBoxScaled  : x={},y={},w={},h={}",
+                bbox_scaled.x, bbox_scaled.y, bbox_scaled.w, bbox_scaled.h
+            );
+            println!(
+                "BBoxUnscale : x={},y={},w={},h={}",
+                bbox_unscaled.x, bbox_unscaled.y, bbox_unscaled.w, bbox_unscaled.h
+            );
+            println!(
+                "CroppedSize : {}x{} @ depth={}",
+                cropped_bin.width(),
+                cropped_bin.height(),
+                cropped_bin.depth()
+            );
+        }
+        None => {
+            println!("extract: no text block (bbox too small)");
+        }
+    }
 
     Ok(())
 }
