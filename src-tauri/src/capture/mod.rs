@@ -1,6 +1,8 @@
 pub mod screenshot;
 #[allow(dead_code)]
 pub mod preprocess;
+pub mod params;
+pub mod pipeline;
 
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
@@ -9,7 +11,7 @@ use std::thread;
 
 const HOTKEY_CHANNEL_CAPACITY: usize = 8;
 
-static HOTKEY_TX: OnceLock<SyncSender<HotkeyKind>> = OnceLock::new();
+static HOTKEY_TX: OnceLock<SyncSender<HotkeyEvent>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug)]
 pub enum HotkeyKind {
@@ -28,6 +30,18 @@ impl HotkeyKind {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CursorPoint {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HotkeyEvent {
+    pub kind: HotkeyKind,
+    pub cursor: CursorPoint,
+}
+
 pub fn start_worker() -> io::Result<()> {
     let (tx, rx) = sync_channel(HOTKEY_CHANNEL_CAPACITY);
 
@@ -42,8 +56,8 @@ pub fn start_worker() -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn try_enqueue_from_hook(kind: HotkeyKind) {
+pub(crate) fn try_enqueue_from_hook(event: HotkeyEvent) {
     if let Some(tx) = HOTKEY_TX.get() {
-        let _ = tx.try_send(kind);
+        let _ = tx.try_send(event);
     }
 }

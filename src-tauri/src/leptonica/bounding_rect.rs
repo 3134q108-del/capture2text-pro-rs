@@ -193,7 +193,7 @@ fn find_nearest_black_pixel(pix: &Pix, start_x: i32, start_y: i32, max_dist: i32
 }
 
 #[inline]
-pub(crate) fn is_black(pix: &Pix, x: i32, y: i32) -> bool {
+pub fn is_black(pix: &Pix, x: i32, y: i32) -> bool {
     if in_range_x(pix, x) && in_range_y(pix, y) {
         match pix.get_pixel(x, y) {
             Ok(pixel_value) => pixel_value == 1,

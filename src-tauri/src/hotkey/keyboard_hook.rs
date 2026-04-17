@@ -2,17 +2,17 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::capture::{self, HotkeyKind};
+use crate::capture::{self, CursorPoint, HotkeyEvent, HotkeyKind};
 
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
-    MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, SetWindowsHookExW,
+    UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
 const VK_Q: u32 = 0x51;
@@ -89,7 +89,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 VK_E => HotkeyKind::E,
                 _ => unreachable!(),
             };
-            capture::try_enqueue_from_hook(kind);
+
+            if let Some(cursor) = read_cursor_point() {
+                capture::try_enqueue_from_hook(HotkeyEvent { kind, cursor });
+            }
 
             if !ctrl_down && !shift_down && ((win_down && !alt_down) || (alt_down && !win_down)) {
                 unsafe { send_ctrl_tap() };
@@ -104,6 +107,26 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
 fn key_down(vk: i32) -> bool {
     (unsafe { GetKeyState(vk) } as u16 & 0x8000) != 0
+}
+
+fn read_cursor_point() -> Option<CursorPoint> {
+    let mut point = POINT::default();
+
+    if unsafe { GetPhysicalCursorPos(&mut point) }.is_ok() {
+        return Some(CursorPoint {
+            x: point.x,
+            y: point.y,
+        });
+    }
+
+    if unsafe { GetCursorPos(&mut point) }.is_ok() {
+        return Some(CursorPoint {
+            x: point.x,
+            y: point.y,
+        });
+    }
+
+    None
 }
 
 unsafe fn send_ctrl_tap() {

@@ -1,30 +1,3 @@
-mod leptonica {
-    pub use capture2text_pro_rs_lib::leptonica::{Box, LeptonicaError, Pix};
-
-    pub mod bounding_rect {
-        pub use capture2text_pro_rs_lib::leptonica::bounding_rect::{
-            get_bounding_rect, BoundingBox,
-        };
-
-        use super::Pix;
-
-        #[inline]
-        pub fn is_black(pix: &Pix, x: i32, y: i32) -> bool {
-            if x < 0 || y < 0 || x >= pix.width() || y >= pix.height() {
-                return false;
-            }
-
-            match pix.get_pixel(x, y) {
-                Ok(pixel_value) => pixel_value == 1,
-                Err(_) => false,
-            }
-        }
-    }
-}
-
-#[path = "../capture/preprocess.rs"]
-mod preprocess;
-
 use std::env;
 use std::fs;
 use std::io;
@@ -33,7 +6,9 @@ use std::time::SystemTime;
 
 use capture2text_pro_rs_lib::leptonica::{LeptonicaError, Pix};
 use chrono::Local;
-use preprocess::{extract_text_block, ExtractParams, ExtractResult, OCR_SCALE_FACTOR_DEFAULT};
+use capture2text_pro_rs_lib::preprocess::{
+    extract_text_block, ExtractParams, ExtractResult, OCR_SCALE_FACTOR_DEFAULT,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -3,6 +3,7 @@ mod commands;
 mod error;
 mod hotkey;
 pub mod leptonica;
+pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
