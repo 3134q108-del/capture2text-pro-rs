@@ -2,6 +2,8 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 
+use crate::capture::{self, HotkeyKind};
+
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -81,6 +83,14 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
         let is_target = matches!(vk, VK_Q | VK_W | VK_E);
         if is_target && win_down && !ctrl_down && !shift_down && !alt_down {
+            let kind = match vk {
+                VK_Q => HotkeyKind::Q,
+                VK_W => HotkeyKind::W,
+                VK_E => HotkeyKind::E,
+                _ => unreachable!(),
+            };
+            capture::try_enqueue_from_hook(kind);
+
             if !ctrl_down && !shift_down && ((win_down && !alt_down) || (alt_down && !win_down)) {
                 unsafe { send_ctrl_tap() };
             }

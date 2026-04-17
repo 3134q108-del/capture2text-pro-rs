@@ -1,4 +1,5 @@
-﻿mod commands;
+mod capture;
+mod commands;
 mod error;
 mod hotkey;
 
@@ -6,6 +7,7 @@ mod hotkey;
 pub fn run() {
     tauri::Builder::default()
         .setup(|_app| {
+            capture::start_worker()?;
             hotkey::install()?;
             Ok(())
         })
@@ -14,3 +16,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
