@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+default-run = "capture2text-pro-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -35,3 +36,4 @@ xcap = "0.9.4"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 dirs = "6.0.0"
+leptonica-sys = "0.4.9"

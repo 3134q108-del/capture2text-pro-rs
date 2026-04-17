@@ -2,6 +2,7 @@ mod capture;
 mod commands;
 mod error;
 mod hotkey;
+pub mod leptonica;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
