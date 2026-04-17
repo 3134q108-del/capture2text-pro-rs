@@ -9,6 +9,8 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::OnceLock;
 use std::thread;
 
+use tauri::AppHandle;
+
 const HOTKEY_CHANNEL_CAPACITY: usize = 8;
 
 static HOTKEY_TX: OnceLock<SyncSender<HotkeyEvent>> = OnceLock::new();
@@ -42,7 +44,7 @@ pub struct HotkeyEvent {
     pub cursor: CursorPoint,
 }
 
-pub fn start_worker() -> io::Result<()> {
+pub fn start_worker(app: AppHandle) -> io::Result<()> {
     let (tx, rx) = sync_channel(HOTKEY_CHANNEL_CAPACITY);
 
     HOTKEY_TX
@@ -51,7 +53,7 @@ pub fn start_worker() -> io::Result<()> {
 
     thread::Builder::new()
         .name("capture-worker".to_string())
-        .spawn(move || screenshot::worker_loop(rx))?;
+        .spawn(move || screenshot::worker_loop(app, rx))?;
 
     Ok(())
 }

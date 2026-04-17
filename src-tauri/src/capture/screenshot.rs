@@ -5,12 +5,14 @@ use std::sync::mpsc::Receiver;
 
 use chrono::Local;
 use image::{ImageFormat, RgbaImage};
+use tauri::AppHandle;
 use xcap::Monitor;
 
 use crate::capture::pipeline;
 use crate::capture::{HotkeyEvent, HotkeyKind};
+use crate::overlay;
 
-pub(crate) fn worker_loop(rx: Receiver<HotkeyEvent>) {
+pub(crate) fn worker_loop(app: AppHandle, rx: Receiver<HotkeyEvent>) {
     for event in rx {
         if let Err(err) = capture_and_save(event.kind) {
             eprintln!("[capture] save failed: {err}");
@@ -26,6 +28,7 @@ pub(crate) fn worker_loop(rx: Receiver<HotkeyEvent>) {
                     rect.w,
                     rect.h
                 );
+                overlay::show(&app, rect);
             }
             Ok(None) => {
                 println!("[pipeline] no text block");

@@ -2,14 +2,17 @@ mod capture;
 mod commands;
 mod error;
 mod hotkey;
+mod overlay;
 pub mod leptonica;
 pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|_app| {
-            capture::start_worker()?;
+        .setup(|app| {
+            let handle = app.handle().clone();
+            overlay::init(&handle)?;
+            capture::start_worker(handle.clone())?;
             hotkey::install()?;
             Ok(())
         })
