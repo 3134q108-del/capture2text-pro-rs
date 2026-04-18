@@ -1,13 +1,12 @@
 use std::io;
 
 use image::codecs::png::PngEncoder;
-use image::imageops;
 use image::{ColorType, ImageEncoder, RgbaImage};
-use xcap::Monitor;
 
-use crate::capture::params::{profile_for, ModeProfile};
-use crate::capture::{HotkeyEvent, HotkeyKind};
 use crate::capture::preprocess::{extract_text_block, ExtractParams, OCR_SCALE_FACTOR_DEFAULT};
+use crate::capture::screen_capture::{capture_at_cursor, maybe_debug_save_capture, CropRequest};
+use crate::capture::{HotkeyEvent, HotkeyKind};
+use crate::capture::params::profile_for;
 use crate::leptonica::Pix;
 
 pub const MIN_OCR_WIDTH: i32 = 3;
@@ -26,38 +25,41 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
         return Ok(None);
     };
 
-    let capture = capture_primary_monitor()?;
-    let local_x = event.cursor.x - capture.monitor_x;
-    let local_y = event.cursor.y - capture.monitor_y;
+    let Some(capture) = capture_at_cursor(
+        event.cursor,
+        CropRequest {
+            crop_left_offset: profile.crop_left_offset,
+            crop_top_offset: profile.crop_top_offset,
+            crop_w: profile.crop_w,
+            crop_h: profile.crop_h,
+            pt_in_crop_x: profile.pt_in_crop_x,
+            pt_in_crop_y: profile.pt_in_crop_y,
+        },
+    )? else {
+        return Ok(None);
+    };
 
-    if local_x < 0
-        || local_y < 0
-        || local_x >= capture.monitor_w
-        || local_y >= capture.monitor_h
+    let crop_w = capture.image.width() as i32;
+    let crop_h = capture.image.height() as i32;
+    if capture.crop_x < 0
+        || capture.crop_y < 0
+        || crop_w <= 0
+        || crop_h <= 0
+        || capture.crop_x + crop_w > capture.monitor_w
+        || capture.crop_y + crop_h > capture.monitor_h
     {
         return Ok(None);
     }
 
-    let Some(crop) = build_clamped_crop(local_x, local_y, profile, capture.monitor_w, capture.monitor_h) else {
-        return Ok(None);
-    };
+    maybe_debug_save_capture(event.kind, &capture.image);
 
-    let cropped = imageops::crop_imm(
-        &capture.image,
-        crop.x as u32,
-        crop.y as u32,
-        crop.w as u32,
-        crop.h as u32,
-    )
-    .to_image();
-
-    let png_bytes = encode_png(&cropped)?;
+    let png_bytes = encode_png(&capture.image)?;
     let pix_crop = Pix::from_bytes(&png_bytes)
         .map_err(|err| io::Error::other(format!("Pix::from_bytes failed: {err}")))?;
 
     let extract_params = ExtractParams {
-        pt_x: crop.pt_x,
-        pt_y: crop.pt_y,
+        pt_x: capture.pt_x,
+        pt_y: capture.pt_y,
         lookahead: profile.lookahead,
         lookbehind: profile.lookbehind,
         search_radius: profile.search_radius,
@@ -78,8 +80,8 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
     }
 
     Ok(Some(BoundingBoxScreen {
-        x: capture.monitor_x + crop.x + result.bbox_unscaled.x + 1,
-        y: capture.monitor_y + crop.y + result.bbox_unscaled.y + 1,
+        x: capture.monitor_x + capture.crop_x + result.bbox_unscaled.x + 1,
+        y: capture.monitor_y + capture.crop_y + result.bbox_unscaled.y + 1,
         w: result.bbox_unscaled.w,
         h: result.bbox_unscaled.h,
     }))
@@ -91,118 +93,6 @@ pub fn mode_label(kind: HotkeyKind) -> &'static str {
         HotkeyKind::W => "W",
         HotkeyKind::E => "E",
     }
-}
-
-#[derive(Debug)]
-struct PrimaryCapture {
-    image: RgbaImage,
-    monitor_x: i32,
-    monitor_y: i32,
-    monitor_w: i32,
-    monitor_h: i32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CropRegion {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    pt_x: i32,
-    pt_y: i32,
-}
-
-fn capture_primary_monitor() -> io::Result<PrimaryCapture> {
-    let mut monitors = Monitor::all().map_err(|err| io::Error::other(format!("list monitors failed: {err}")))?;
-    if monitors.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "no monitors available"));
-    }
-
-    let primary_index = monitors
-        .iter()
-        .position(|monitor| monitor.is_primary().unwrap_or(false))
-        .unwrap_or(0);
-    let monitor = monitors.swap_remove(primary_index);
-
-    let monitor_x = monitor
-        .x()
-        .map_err(|err| io::Error::other(format!("monitor.x() failed: {err}")))?;
-    let monitor_y = monitor
-        .y()
-        .map_err(|err| io::Error::other(format!("monitor.y() failed: {err}")))?;
-    let monitor_w = monitor
-        .width()
-        .map_err(|err| io::Error::other(format!("monitor.width() failed: {err}")))?
-        as i32;
-    let monitor_h = monitor
-        .height()
-        .map_err(|err| io::Error::other(format!("monitor.height() failed: {err}")))?
-        as i32;
-    let image = monitor
-        .capture_image()
-        .map_err(|err| io::Error::other(format!("capture monitor failed: {err}")))?;
-
-    Ok(PrimaryCapture {
-        image,
-        monitor_x,
-        monitor_y,
-        monitor_w,
-        monitor_h,
-    })
-}
-
-fn build_clamped_crop(
-    local_x: i32,
-    local_y: i32,
-    profile: ModeProfile,
-    monitor_w: i32,
-    monitor_h: i32,
-) -> Option<CropRegion> {
-    let mut crop_x = local_x - profile.crop_left_offset;
-    let mut crop_y = local_y - profile.crop_top_offset;
-    let mut crop_w = profile.crop_w;
-    let mut crop_h = profile.crop_h;
-    let mut pt_x = profile.pt_in_crop_x;
-    let mut pt_y = profile.pt_in_crop_y;
-
-    if crop_x < 0 {
-        let shift = -crop_x;
-        crop_x = 0;
-        crop_w -= shift;
-        pt_x -= shift;
-    }
-
-    if crop_y < 0 {
-        let shift = -crop_y;
-        crop_y = 0;
-        crop_h -= shift;
-        pt_y -= shift;
-    }
-
-    if crop_x + crop_w > monitor_w {
-        crop_w = monitor_w - crop_x;
-    }
-
-    if crop_y + crop_h > monitor_h {
-        crop_h = monitor_h - crop_y;
-    }
-
-    if crop_w <= 0 || crop_h <= 0 {
-        return None;
-    }
-
-    if pt_x < 0 || pt_y < 0 || pt_x >= crop_w || pt_y >= crop_h {
-        return None;
-    }
-
-    Some(CropRegion {
-        x: crop_x,
-        y: crop_y,
-        w: crop_w,
-        h: crop_h,
-        pt_x,
-        pt_y,
-    })
 }
 
 fn encode_png(image: &RgbaImage) -> io::Result<Vec<u8>> {

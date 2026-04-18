@@ -3,6 +3,7 @@ pub mod screenshot;
 pub mod preprocess;
 pub mod params;
 pub mod pipeline;
+pub mod screen_capture;
 
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
