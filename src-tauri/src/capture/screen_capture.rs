@@ -193,9 +193,7 @@ fn save_capture_image(kind: HotkeyKind, image: &RgbaImage) -> io::Result<PathBuf
 }
 
 fn capture_directory() -> io::Result<PathBuf> {
-    let local_data_dir = dirs::data_local_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "local app data directory not found"))?;
-    Ok(local_data_dir.join("Capture2TextPro").join("captures"))
+    Ok(PathBuf::from(r"D:\Users\Home\Desktop\Capture2Text_Test"))
 }
 
 fn next_available_png_path(capture_dir: &Path, base_name: &str) -> io::Result<PathBuf> {
