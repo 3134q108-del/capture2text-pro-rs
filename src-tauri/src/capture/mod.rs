@@ -9,6 +9,7 @@ use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::OnceLock;
 use std::thread;
+use std::time::Instant;
 
 use tauri::AppHandle;
 
@@ -43,6 +44,7 @@ pub struct CursorPoint {
 pub struct HotkeyEvent {
     pub kind: HotkeyKind,
     pub cursor: CursorPoint,
+    pub queued_at: Instant,
 }
 
 pub fn start_worker(app: AppHandle) -> io::Result<()> {

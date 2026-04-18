@@ -1,6 +1,7 @@
 use std::io;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Instant;
 
 use crate::capture::{self, CursorPoint, HotkeyEvent, HotkeyKind};
 
@@ -91,7 +92,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             };
 
             if let Some(cursor) = read_cursor_point() {
-                capture::try_enqueue_from_hook(HotkeyEvent { kind, cursor });
+                capture::try_enqueue_from_hook(HotkeyEvent {
+                    kind,
+                    cursor,
+                    queued_at: Instant::now(),
+                });
             }
 
             if !ctrl_down && !shift_down && ((win_down && !alt_down) || (alt_down && !win_down)) {

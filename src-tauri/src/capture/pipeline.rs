@@ -1,4 +1,6 @@
 use std::io;
+use std::time::Instant;
+use std::env;
 
 use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder, RgbaImage};
@@ -21,10 +23,14 @@ pub struct BoundingBoxScreen {
 }
 
 pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>> {
+    let t0 = Instant::now();
+    let perf = perf_enabled();
+
     let Some(profile) = profile_for(event.kind) else {
         return Ok(None);
     };
 
+    let t_cap_start = Instant::now();
     let Some(capture) = capture_at_cursor(
         event.cursor,
         CropRequest {
@@ -38,6 +44,7 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
     )? else {
         return Ok(None);
     };
+    let t_cap = t_cap_start.elapsed();
 
     let crop_w = capture.image.width() as i32;
     let crop_h = capture.image.height() as i32;
@@ -53,9 +60,14 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
 
     maybe_debug_save_capture(event.kind, &capture.image);
 
+    let t_enc_start = Instant::now();
     let png_bytes = encode_png(&capture.image)?;
+    let t_enc = t_enc_start.elapsed();
+
+    let t_pix_start = Instant::now();
     let pix_crop = Pix::from_bytes(&png_bytes)
         .map_err(|err| io::Error::other(format!("Pix::from_bytes failed: {err}")))?;
+    let t_pix = t_pix_start.elapsed();
 
     let extract_params = ExtractParams {
         pt_x: capture.pt_x,
@@ -67,16 +79,30 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
         scale_factor: OCR_SCALE_FACTOR_DEFAULT,
     };
 
+    let t_ext_start = Instant::now();
     let extract = extract_text_block(&pix_crop, extract_params)
         .map_err(|err| io::Error::other(format!("extract_text_block failed: {err}")))?;
+    let t_ext = t_ext_start.elapsed();
+    let t_queue = event.queued_at.elapsed();
+    let t_total = t0.elapsed();
 
     let Some(result) = extract else {
+        if perf {
+            print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
+        }
         return Ok(None);
     };
 
     // MainWindow::minOcrWidth/Height (=3) OR-check on unscaled bbox
     if result.bbox_unscaled.w < MIN_OCR_WIDTH || result.bbox_unscaled.h < MIN_OCR_HEIGHT {
+        if perf {
+            print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
+        }
         return Ok(None);
+    }
+
+    if perf {
+        print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
     }
 
     Ok(Some(BoundingBoxScreen {
@@ -107,4 +133,29 @@ fn encode_png(image: &RgbaImage) -> io::Result<Vec<u8>> {
         )
         .map_err(|err| io::Error::other(format!("png encode failed: {err}")))?;
     Ok(bytes)
+}
+
+fn perf_enabled() -> bool {
+    matches!(env::var("C2T_PERF").ok().as_deref(), Some("1"))
+}
+
+fn print_perf(
+    kind: HotkeyKind,
+    t_queue: std::time::Duration,
+    t_cap: std::time::Duration,
+    t_enc: std::time::Duration,
+    t_pix: std::time::Duration,
+    t_ext: std::time::Duration,
+    t_total: std::time::Duration,
+) {
+    println!(
+        "[perf] mode={} q={}ms cap={}ms enc={}ms pix={}ms ext={}ms total={}ms",
+        mode_label(kind),
+        t_queue.as_millis(),
+        t_cap.as_millis(),
+        t_enc.as_millis(),
+        t_pix.as_millis(),
+        t_ext.as_millis(),
+        t_total.as_millis()
+    );
 }
