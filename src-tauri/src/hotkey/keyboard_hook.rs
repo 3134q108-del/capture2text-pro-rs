@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Instant;
 
 use crate::capture::{self, CursorPoint, HotkeyEvent, HotkeyKind};
+use crate::drag_overlay;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -19,6 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const VK_Q: u32 = 0x51;
 const VK_W: u32 = 0x57;
 const VK_E: u32 = 0x45;
+const VK_ESCAPE: u32 = 0x1B;
 
 pub fn install() -> io::Result<()> {
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -82,28 +84,51 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         let win_down = key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0));
         let alt_down = key_down(i32::from(VK_MENU.0));
 
+        let no_modifiers = !win_down && !ctrl_down && !shift_down && !alt_down;
+        if vk == VK_ESCAPE && no_modifiers {
+            if drag_overlay::is_active() {
+                drag_overlay::cancel();
+                return LRESULT(1);
+            }
+            return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+        }
+
         let is_target = matches!(vk, VK_Q | VK_W | VK_E);
         if is_target && win_down && !ctrl_down && !shift_down && !alt_down {
-            let kind = match vk {
-                VK_Q => HotkeyKind::Q,
-                VK_W => HotkeyKind::W,
-                VK_E => HotkeyKind::E,
-                _ => unreachable!(),
-            };
+            unsafe { send_ctrl_tap() };
 
-            if let Some(cursor) = read_cursor_point() {
-                capture::try_enqueue_from_hook(HotkeyEvent {
-                    kind,
-                    cursor,
-                    queued_at: Instant::now(),
-                });
+            match vk {
+                VK_Q => {
+                    let _reserved_q = HotkeyKind::Q;
+                    if drag_overlay::is_active() {
+                        drag_overlay::cancel();
+                    } else {
+                        drag_overlay::begin_drag();
+                    }
+                    return LRESULT(1);
+                }
+                VK_W | VK_E => {
+                    if drag_overlay::is_active() {
+                        return LRESULT(1);
+                    }
+
+                    let kind = if vk == VK_W {
+                        HotkeyKind::W
+                    } else {
+                        HotkeyKind::E
+                    };
+
+                    if let Some(cursor) = read_cursor_point() {
+                        capture::try_enqueue_from_hook(HotkeyEvent {
+                            kind,
+                            cursor,
+                            queued_at: Instant::now(),
+                        });
+                    }
+                    return LRESULT(1);
+                }
+                _ => {}
             }
-
-            if !ctrl_down && !shift_down && ((win_down && !alt_down) || (alt_down && !win_down)) {
-                unsafe { send_ctrl_tap() };
-            }
-
-            return LRESULT(1);
         }
     }
 

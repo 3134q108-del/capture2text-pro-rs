@@ -18,15 +18,17 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, CS_HREDRAW, CS_VREDRAW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetMessageW, GetSystemMetrics, HMENU, HWND_TOPMOST, MSG, PostMessageW, PostQuitMessage,
-    RegisterClassW, SET_WINDOW_POS_FLAGS, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_SHOWWINDOW, SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA,
-    UPDATE_LAYERED_WINDOW_FLAGS, UpdateLayeredWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_DESTROY, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HMENU, HWND_TOPMOST, MA_NOACTIVATE, MSG,
+    PostMessageW, PostQuitMessage, RegisterClassW, SET_WINDOW_POS_FLAGS, SetWindowLongPtrW,
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE,
+    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow,
+    TranslateMessage, ULW_ALPHA, UPDATE_LAYERED_WINDOW_FLAGS, UpdateLayeredWindow, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GWLP_USERDATA,
 };
 
 const DRAG_OVERLAY_CHANNEL_CAPACITY: usize = 8;
@@ -36,19 +38,27 @@ const WM_APP_CMD: u32 = WM_APP + 101;
 
 static DRAG_OVERLAY_RUNTIME: OnceLock<DragOverlayRuntime> = OnceLock::new();
 static DRAG_OVERLAY_HWND_RAW: AtomicIsize = AtomicIsize::new(0);
-#[allow(dead_code)]
 static WARNED_NOT_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static DRAG_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 struct DragOverlayRuntime {
     tx: SyncSender<DragOverlayCommand>,
     join: Mutex<Option<JoinHandle<()>>>,
 }
 
-#[allow(dead_code)]
 enum DragOverlayCommand {
     BeginDrag,
     Cancel,
     Exit,
+}
+
+enum DragState {
+    Idle,
+    Waiting,
+    Dragging {
+        start: (i32, i32),
+        current: (i32, i32),
+    },
 }
 
 struct DragOverlayContext {
@@ -61,7 +71,7 @@ struct DragOverlayContext {
     desktop_y: i32,
     desktop_w: i32,
     desktop_h: i32,
-    active: bool,
+    state: DragState,
 }
 
 pub fn init() -> io::Result<()> {
@@ -96,14 +106,16 @@ pub fn init() -> io::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn begin_drag() {
     send_command(DragOverlayCommand::BeginDrag);
 }
 
-#[allow(dead_code)]
 pub fn cancel() {
     send_command(DragOverlayCommand::Cancel);
+}
+
+pub fn is_active() -> bool {
+    DRAG_OVERLAY_ACTIVE.load(Ordering::Relaxed)
 }
 
 pub fn shutdown() {
@@ -127,7 +139,6 @@ pub fn shutdown() {
     }
 }
 
-#[allow(dead_code)]
 fn send_command(command: DragOverlayCommand) {
     let Some(runtime) = DRAG_OVERLAY_RUNTIME.get() else {
         if !WARNED_NOT_INITIALIZED.swap(true, Ordering::Relaxed) {
@@ -174,7 +185,7 @@ fn run_drag_overlay_thread(
         return Err(io::Error::other("CreateCompatibleDC failed"));
     }
 
-    let mut context = DragOverlayContext {
+    let mut context = Box::new(DragOverlayContext {
         hwnd,
         hdc_mem,
         hbm: HBITMAP::default(),
@@ -184,12 +195,19 @@ fn run_drag_overlay_thread(
         desktop_y,
         desktop_w,
         desktop_h,
-        active: false,
-    };
+        state: DragState::Idle,
+    });
 
     recreate_dib(&mut context)?;
     clear_dib(&context)?;
     update_layered(&context)?;
+    unsafe {
+        let _ = SetWindowLongPtrW(
+            context.hwnd,
+            GWLP_USERDATA,
+            (&mut *context as *mut DragOverlayContext) as isize,
+        );
+    }
 
     DRAG_OVERLAY_HWND_RAW.store(hwnd.0 as isize, Ordering::Relaxed);
     let _ = ready_tx.send(Ok(()));
@@ -214,6 +232,9 @@ fn run_drag_overlay_thread(
         }
     }
 
+    unsafe {
+        let _ = SetWindowLongPtrW(context.hwnd, GWLP_USERDATA, 0);
+    }
     cleanup_context(&mut context);
     DRAG_OVERLAY_HWND_RAW.store(0, Ordering::Relaxed);
     Ok(())
@@ -223,8 +244,9 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
     while let Ok(command) = rx.try_recv() {
         match command {
             DragOverlayCommand::BeginDrag => {
-                if !context.active {
-                    context.active = true;
+                if matches!(context.state, DragState::Idle) {
+                    context.state = DragState::Waiting;
+                    DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
                     let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0);
                     if let Err(err) = unsafe {
                         SetWindowPos(
@@ -245,16 +267,21 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
                 }
             }
             DragOverlayCommand::Cancel => {
-                if context.active {
-                    context.active = false;
+                if !matches!(context.state, DragState::Idle) {
+                    context.state = DragState::Idle;
+                    DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
                     unsafe {
                         let _ = ShowWindow(context.hwnd, SW_HIDE);
                     }
                 }
             }
             DragOverlayCommand::Exit => {
-                context.active = false;
+                context.state = DragState::Idle;
+                DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
                 unsafe {
+                    if GetCapture() == context.hwnd {
+                        let _ = ReleaseCapture();
+                    }
                     let _ = ShowWindow(context.hwnd, SW_HIDE);
                     let _ = DestroyWindow(context.hwnd);
                 }
@@ -429,6 +456,78 @@ fn wake_drag_overlay_thread() {
     let _ = unsafe { PostMessageW(hwnd, WM_APP_CMD, WPARAM(0), LPARAM(0)) };
 }
 
+fn update_drag_state(context: &mut DragOverlayContext, hwnd: HWND, message: u32, lparam: LPARAM) {
+    let client_x = (lparam.0 & 0xFFFF) as u16 as i16 as i32;
+    let client_y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
+    let screen_x = context.desktop_x + client_x;
+    let screen_y = context.desktop_y + client_y;
+
+    match message {
+        WM_LBUTTONDOWN => {
+            if matches!(context.state, DragState::Waiting) {
+                context.state = DragState::Dragging {
+                    start: (screen_x, screen_y),
+                    current: (screen_x, screen_y),
+                };
+                unsafe {
+                    let _ = SetCapture(hwnd);
+                }
+                eprintln!("[drag_overlay] drag start=({}, {})", screen_x, screen_y);
+            }
+        }
+        WM_MOUSEMOVE => {
+            if let DragState::Dragging { start, current } = &mut context.state
+            {
+                *current = (screen_x, screen_y);
+                let rect = normalize_rect(*start, *current);
+                eprintln!(
+                    "[drag_overlay] dragging rect x={} y={} w={} h={}",
+                    rect.0, rect.1, rect.2, rect.3
+                );
+            }
+        }
+        WM_LBUTTONUP => {
+            let previous_state = std::mem::replace(&mut context.state, DragState::Idle);
+            if let DragState::Dragging { start, .. } = previous_state {
+                unsafe {
+                    if GetCapture() == hwnd {
+                        let _ = ReleaseCapture();
+                    }
+                }
+
+                let rect = normalize_rect(start, (screen_x, screen_y));
+                eprintln!(
+                    "[drag_overlay] drag end rect x={} y={} w={} h={}",
+                    rect.0, rect.1, rect.2, rect.3
+                );
+
+                if rect.2 > 3 && rect.3 > 3 {
+                    eprintln!("[drag_overlay] rect accepted (Q4 will route to OCR)");
+                } else {
+                    eprintln!("[drag_overlay] rect too small, cancel");
+                }
+
+                context.state = DragState::Idle;
+                DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+            } else {
+                context.state = previous_state;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> (i32, i32, i32, i32) {
+    let left = start.0.min(end.0);
+    let top = start.1.min(end.1);
+    let right = start.0.max(end.0);
+    let bottom = start.1.max(end.1);
+    (left, top, right - left, bottom - top)
+}
+
 extern "system" fn drag_overlay_wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -436,6 +535,15 @@ extern "system" fn drag_overlay_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONDOWN | WM_MOUSEMOVE | WM_LBUTTONUP => {
+            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
+            if !ptr.is_null() {
+                let context = unsafe { &mut *ptr };
+                update_drag_state(context, hwnd, msg, lparam);
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
             unsafe {
                 PostQuitMessage(0);
