@@ -4,9 +4,17 @@ use std::{env, fs};
 
 use chrono::Local;
 use image::RgbaImage;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Gdi::{
+    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+};
 use xcap::Monitor;
 
-use crate::capture::{CursorPoint, HotkeyKind};
+use crate::capture::{CursorPoint, HotkeyKind, ScreenRect};
 
 #[derive(Debug, Clone, Copy)]
 pub struct CropRequest {
@@ -81,6 +89,14 @@ pub fn capture_at_cursor(
         pt_x: crop.pt_x,
         pt_y: crop.pt_y,
     }))
+}
+
+pub fn capture_screen_rect(rect: ScreenRect) -> io::Result<Option<RgbaImage>> {
+    let Some(clipped) = clip_screen_rect_to_virtual_desktop(rect)? else {
+        return Ok(None);
+    };
+
+    capture_rect_via_gdi(clipped).map(Some)
 }
 
 pub fn maybe_debug_save_capture(kind: HotkeyKind, image: &RgbaImage) {
@@ -199,4 +215,125 @@ fn next_available_png_path(capture_dir: &Path, base_name: &str) -> io::Result<Pa
         io::ErrorKind::AlreadyExists,
         "too many captures in the same second for this hotkey",
     ))
+}
+
+pub fn clip_screen_rect_to_virtual_desktop(rect: ScreenRect) -> io::Result<Option<ScreenRect>> {
+    if rect.w <= 0 || rect.h <= 0 {
+        return Ok(None);
+    }
+
+    let desktop = virtual_desktop_rect()?;
+    let left = rect.x.max(desktop.x);
+    let top = rect.y.max(desktop.y);
+    let right = (rect.x + rect.w).min(desktop.x + desktop.w);
+    let bottom = (rect.y + rect.h).min(desktop.y + desktop.h);
+
+    if right <= left || bottom <= top {
+        return Ok(None);
+    }
+
+    Ok(Some(ScreenRect {
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
+    }))
+}
+
+fn virtual_desktop_rect() -> io::Result<ScreenRect> {
+    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let w = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let h = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+
+    if w <= 0 || h <= 0 {
+        return Err(io::Error::other("virtual desktop size is invalid"));
+    }
+
+    Ok(ScreenRect { x, y, w, h })
+}
+
+fn capture_rect_via_gdi(rect: ScreenRect) -> io::Result<RgbaImage> {
+    let screen_dc = unsafe { GetDC(HWND::default()) };
+    if screen_dc.0.is_null() {
+        return Err(io::Error::other("GetDC failed"));
+    }
+
+    let mem_dc = unsafe { CreateCompatibleDC(screen_dc) };
+    if mem_dc.0.is_null() {
+        unsafe {
+            let _ = ReleaseDC(HWND::default(), screen_dc);
+        }
+        return Err(io::Error::other("CreateCompatibleDC failed"));
+    }
+
+    let bitmap = unsafe { CreateCompatibleBitmap(screen_dc, rect.w, rect.h) };
+    if bitmap.0.is_null() {
+        unsafe {
+            let _ = DeleteDC(mem_dc);
+            let _ = ReleaseDC(HWND::default(), screen_dc);
+        }
+        return Err(io::Error::other("CreateCompatibleBitmap failed"));
+    }
+
+    let old_obj = unsafe { SelectObject(mem_dc, HGDIOBJ(bitmap.0)) };
+    if old_obj.0.is_null() {
+        unsafe {
+            let _ = DeleteObject(bitmap);
+            let _ = DeleteDC(mem_dc);
+            let _ = ReleaseDC(HWND::default(), screen_dc);
+        }
+        return Err(io::Error::other("SelectObject failed"));
+    }
+
+    let result = (|| -> io::Result<RgbaImage> {
+        if let Err(err) = unsafe { BitBlt(mem_dc, 0, 0, rect.w, rect.h, screen_dc, rect.x, rect.y, SRCCOPY) } {
+            return Err(io::Error::other(format!("BitBlt failed: {err}")));
+        }
+
+        let mut bmi = BITMAPINFO::default();
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: rect.w,
+            biHeight: -rect.h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        };
+
+        let mut buffer = vec![0_u8; (rect.w as usize) * (rect.h as usize) * 4];
+        let lines = unsafe {
+            GetDIBits(
+                mem_dc,
+                bitmap,
+                0,
+                rect.h as u32,
+                Some(buffer.as_mut_ptr().cast()),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            )
+        };
+
+        if lines == 0 {
+            return Err(io::Error::other("GetDIBits failed"));
+        }
+
+        for px in buffer.chunks_exact_mut(4) {
+            px.swap(0, 2);
+            px[3] = 255;
+        }
+
+        RgbaImage::from_raw(rect.w as u32, rect.h as u32, buffer)
+            .ok_or_else(|| io::Error::other("RgbaImage::from_raw failed"))
+    })();
+
+    unsafe {
+        let _ = SelectObject(mem_dc, old_obj);
+        let _ = DeleteObject(bitmap);
+        let _ = DeleteDC(mem_dc);
+        let _ = ReleaseDC(HWND::default(), screen_dc);
+    }
+
+    result
 }

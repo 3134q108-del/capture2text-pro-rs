@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-use crate::capture::{self, CursorPoint, HotkeyEvent, HotkeyKind};
+use crate::capture::{self, CursorPoint, HotkeyKind};
 use crate::drag_overlay;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
@@ -119,11 +119,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     };
 
                     if let Some(cursor) = read_cursor_point() {
-                        capture::try_enqueue_from_hook(HotkeyEvent {
-                            kind,
-                            cursor,
-                            queued_at: Instant::now(),
-                        });
+                        capture::try_enqueue_from_hook(kind, cursor, Instant::now());
                     }
                     return LRESULT(1);
                 }

@@ -6,9 +6,12 @@ use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder, RgbaImage};
 
 use crate::capture::preprocess::{extract_text_block, ExtractParams, OCR_SCALE_FACTOR_DEFAULT};
-use crate::capture::screen_capture::{capture_at_cursor, maybe_debug_save_capture, CropRequest};
-use crate::capture::{HotkeyEvent, HotkeyKind};
+use crate::capture::screen_capture::{
+    capture_at_cursor, capture_screen_rect, clip_screen_rect_to_virtual_desktop, maybe_debug_save_capture,
+    CropRequest,
+};
 use crate::capture::params::profile_for;
+use crate::capture::{CaptureRequest, CursorPoint, HotkeyKind, ScreenRect};
 use crate::leptonica::Pix;
 
 pub const MIN_OCR_WIDTH: i32 = 3;
@@ -22,17 +25,32 @@ pub struct BoundingBoxScreen {
     pub h: i32,
 }
 
-pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>> {
+pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<BoundingBoxScreen>> {
+    match request {
+        CaptureRequest::Hotkey {
+            kind,
+            cursor,
+            queued_at,
+        } => run_for_hotkey_event(kind, cursor, queued_at),
+        CaptureRequest::SelectedRect { rect, queued_at } => run_for_selected_rect(rect, queued_at),
+    }
+}
+
+fn run_for_hotkey_event(
+    kind: HotkeyKind,
+    cursor: CursorPoint,
+    queued_at: Instant,
+) -> io::Result<Option<BoundingBoxScreen>> {
     let t0 = Instant::now();
     let perf = perf_enabled();
 
-    let Some(profile) = profile_for(event.kind) else {
+    let Some(profile) = profile_for(kind) else {
         return Ok(None);
     };
 
     let t_cap_start = Instant::now();
     let Some(capture) = capture_at_cursor(
-        event.cursor,
+        cursor,
         CropRequest {
             crop_left_offset: profile.crop_left_offset,
             crop_top_offset: profile.crop_top_offset,
@@ -58,7 +76,7 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
         return Ok(None);
     }
 
-    maybe_debug_save_capture(event.kind, &capture.image);
+    maybe_debug_save_capture(kind, &capture.image);
 
     let t_enc_start = Instant::now();
     let png_bytes = encode_png(&capture.image)?;
@@ -83,12 +101,12 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
     let extract = extract_text_block(&pix_crop, extract_params)
         .map_err(|err| io::Error::other(format!("extract_text_block failed: {err}")))?;
     let t_ext = t_ext_start.elapsed();
-    let t_queue = event.queued_at.elapsed();
+    let t_queue = queued_at.elapsed();
     let t_total = t0.elapsed();
 
     let Some(result) = extract else {
         if perf {
-            print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
+            print_perf(kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
         }
         return Ok(None);
     };
@@ -96,13 +114,13 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
     // MainWindow::minOcrWidth/Height (=3) OR-check on unscaled bbox
     if result.bbox_unscaled.w < MIN_OCR_WIDTH || result.bbox_unscaled.h < MIN_OCR_HEIGHT {
         if perf {
-            print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
+            print_perf(kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
         }
         return Ok(None);
     }
 
     if perf {
-        print_perf(event.kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
+        print_perf(kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
     }
 
     Ok(Some(BoundingBoxScreen {
@@ -113,11 +131,55 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
     }))
 }
 
+fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Option<BoundingBoxScreen>> {
+    let t0 = Instant::now();
+    let perf = perf_enabled();
+
+    let Some(clipped_rect) = clip_screen_rect_to_virtual_desktop(rect)? else {
+        println!("[pipeline] selected rect outside virtual desktop, skip");
+        return Ok(None);
+    };
+
+    let Some(image) = capture_screen_rect(clipped_rect)? else {
+        println!("[pipeline] selected rect capture returned empty, skip");
+        return Ok(None);
+    };
+
+    if clipped_rect.w < MIN_OCR_WIDTH || clipped_rect.h < MIN_OCR_HEIGHT {
+        return Ok(None);
+    }
+
+    maybe_debug_save_capture(HotkeyKind::Q, &image);
+
+    if perf {
+        println!(
+            "[perf] mode=Q q={}ms cap={}ms total={}ms",
+            queued_at.elapsed().as_millis(),
+            t0.elapsed().as_millis(),
+            t0.elapsed().as_millis()
+        );
+    }
+
+    Ok(Some(BoundingBoxScreen {
+        x: clipped_rect.x,
+        y: clipped_rect.y,
+        w: clipped_rect.w,
+        h: clipped_rect.h,
+    }))
+}
+
 pub fn mode_label(kind: HotkeyKind) -> &'static str {
     match kind {
         HotkeyKind::Q => "Q",
         HotkeyKind::W => "W",
         HotkeyKind::E => "E",
+    }
+}
+
+pub fn request_label(request: CaptureRequest) -> &'static str {
+    match request {
+        CaptureRequest::Hotkey { kind, .. } => mode_label(kind),
+        CaptureRequest::SelectedRect { .. } => "Q",
     }
 }
 

@@ -1,16 +1,17 @@
 use std::sync::mpsc::Receiver;
 
 use crate::capture::pipeline;
-use crate::capture::HotkeyEvent;
+use crate::capture::CaptureRequest;
 use crate::overlay;
 
-pub(crate) fn worker_loop(rx: Receiver<HotkeyEvent>) {
-    for event in rx {
-        match pipeline::run_for_event(event) {
+pub(crate) fn worker_loop(rx: Receiver<CaptureRequest>) {
+    for request in rx {
+        let mode = pipeline::request_label(request);
+        match pipeline::run_for_request(request) {
             Ok(Some(rect)) => {
                 println!(
                     "[pipeline] mode={} detected screen=({},{},{},{})",
-                    pipeline::mode_label(event.kind),
+                    mode,
                     rect.x,
                     rect.y,
                     rect.w,

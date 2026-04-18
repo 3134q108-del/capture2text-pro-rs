@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -34,6 +34,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, GWLP_USERDATA,
 };
+
+use crate::capture::{self, CaptureRequest, ScreenRect as CaptureScreenRect};
 
 const DRAG_OVERLAY_CHANNEL_CAPACITY: usize = 8;
 const DRAG_OVERLAY_INIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -68,7 +70,7 @@ enum DragState {
 }
 
 #[derive(Clone, Copy)]
-struct ScreenRect {
+struct DragRect {
     x: i32,
     y: i32,
     w: i32,
@@ -96,7 +98,7 @@ struct DragOverlayContext {
     state: DragState,
     pending_render: bool,
     pending_resize: bool,
-    last_drawn_rect: Option<ScreenRect>,
+    last_drawn_rect: Option<DragRect>,
 }
 
 pub fn init() -> io::Result<()> {
@@ -600,7 +602,7 @@ fn render_current_state(context: &mut DragOverlayContext) -> io::Result<()> {
     update_layered(context)
 }
 
-fn clear_rect(context: &DragOverlayContext, rect: ScreenRect) -> io::Result<()> {
+fn clear_rect(context: &DragOverlayContext, rect: DragRect) -> io::Result<()> {
     let Some(clipped) = clip_to_desktop(context, rect) else {
         return Ok(());
     };
@@ -616,7 +618,7 @@ fn clear_rect(context: &DragOverlayContext, rect: ScreenRect) -> io::Result<()> 
     Ok(())
 }
 
-fn draw_capture_rect(context: &DragOverlayContext, rect: ScreenRect) -> io::Result<()> {
+fn draw_capture_rect(context: &DragOverlayContext, rect: DragRect) -> io::Result<()> {
     let Some(clipped) = clip_to_desktop(context, rect) else {
         return Ok(());
     };
@@ -663,7 +665,7 @@ fn draw_capture_rect(context: &DragOverlayContext, rect: ScreenRect) -> io::Resu
     Ok(())
 }
 
-fn clip_to_desktop(context: &DragOverlayContext, rect: ScreenRect) -> Option<ClippedRect> {
+fn clip_to_desktop(context: &DragOverlayContext, rect: DragRect) -> Option<ClippedRect> {
     if rect.w <= 0 || rect.h <= 0 {
         return None;
     }
@@ -727,7 +729,16 @@ fn update_drag_state(context: &mut DragOverlayContext, hwnd: HWND, message: u32,
                 );
 
                 if rect.w > 3 && rect.h > 3 {
-                    eprintln!("[drag_overlay] rect accepted (Q4 will route to OCR)");
+                    capture::try_enqueue_request(CaptureRequest::SelectedRect {
+                        rect: CaptureScreenRect {
+                            x: rect.x,
+                            y: rect.y,
+                            w: rect.w,
+                            h: rect.h,
+                        },
+                        queued_at: Instant::now(),
+                    });
+                    eprintln!("[drag_overlay] rect accepted and enqueued");
                 } else {
                     eprintln!("[drag_overlay] rect too small, cancel");
                 }
@@ -743,12 +754,12 @@ fn update_drag_state(context: &mut DragOverlayContext, hwnd: HWND, message: u32,
     }
 }
 
-fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> ScreenRect {
+fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> DragRect {
     let left = start.0.min(end.0);
     let top = start.1.min(end.1);
     let right = start.0.max(end.0);
     let bottom = start.1.max(end.1);
-    ScreenRect {
+    DragRect {
         x: left,
         y: top,
         w: right - left,
