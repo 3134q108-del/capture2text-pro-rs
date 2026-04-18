@@ -1,12 +1,10 @@
 use std::sync::mpsc::Receiver;
 
-use tauri::AppHandle;
-
 use crate::capture::pipeline;
 use crate::capture::HotkeyEvent;
 use crate::overlay;
 
-pub(crate) fn worker_loop(app: AppHandle, rx: Receiver<HotkeyEvent>) {
+pub(crate) fn worker_loop(rx: Receiver<HotkeyEvent>) {
     for event in rx {
         match pipeline::run_for_event(event) {
             Ok(Some(rect)) => {
@@ -18,7 +16,7 @@ pub(crate) fn worker_loop(app: AppHandle, rx: Receiver<HotkeyEvent>) {
                     rect.w,
                     rect.h
                 );
-                overlay::show(&app, rect);
+                overlay::show(rect);
             }
             Ok(None) => {
                 println!("[pipeline] no text block");

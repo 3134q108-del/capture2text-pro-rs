@@ -11,8 +11,6 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Instant;
 
-use tauri::AppHandle;
-
 const HOTKEY_CHANNEL_CAPACITY: usize = 8;
 
 static HOTKEY_TX: OnceLock<SyncSender<HotkeyEvent>> = OnceLock::new();
@@ -47,7 +45,7 @@ pub struct HotkeyEvent {
     pub queued_at: Instant,
 }
 
-pub fn start_worker(app: AppHandle) -> io::Result<()> {
+pub fn start_worker() -> io::Result<()> {
     let (tx, rx) = sync_channel(HOTKEY_CHANNEL_CAPACITY);
 
     HOTKEY_TX
@@ -56,7 +54,7 @@ pub fn start_worker(app: AppHandle) -> io::Result<()> {
 
     thread::Builder::new()
         .name("capture-worker".to_string())
-        .spawn(move || screenshot::worker_loop(app, rx))?;
+        .spawn(move || screenshot::worker_loop(rx))?;
 
     Ok(())
 }
