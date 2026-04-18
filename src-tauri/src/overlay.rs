@@ -236,7 +236,7 @@ fn handle_show(context: &mut OverlayContext, bbox: BoundingBoxScreen) -> io::Res
         recreate_dib(context, target_w, target_h)?;
     }
 
-    fill_stub_dib(context)?;
+    paint_border_dib(context)?;
 
     let pos_flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0);
     unsafe {
@@ -346,15 +346,34 @@ fn recreate_dib(context: &mut OverlayContext, width: i32, height: i32) -> io::Re
     Ok(())
 }
 
-fn fill_stub_dib(context: &OverlayContext) -> io::Result<()> {
+fn paint_border_dib(context: &OverlayContext) -> io::Result<()> {
     if context.bits_ptr.is_null() || context.cur_w <= 0 || context.cur_h <= 0 {
         return Err(io::Error::other("overlay dib is not initialized"));
     }
 
-    let len = (context.cur_w as usize) * (context.cur_h as usize);
-    let pixel = u32::from_le_bytes([0xC0, 0x60, 0x00, 0xC0]);
+    let w = context.cur_w as usize;
+    let h = context.cur_h as usize;
+    let len = w * h;
+    let border = u32::from_le_bytes([0xFF, 0x80, 0x00, 0xFF]);
     let pixels = unsafe { std::slice::from_raw_parts_mut(context.bits_ptr as *mut u32, len) };
-    pixels.fill(pixel);
+
+    if w < 2 || h < 2 {
+        pixels.fill(border);
+        return Ok(());
+    }
+
+    pixels.fill(0u32);
+
+    pixels[0..w].fill(border);
+    let bottom_start = (h - 1) * w;
+    pixels[bottom_start..(bottom_start + w)].fill(border);
+
+    for y in 1..(h - 1) {
+        let row_start = y * w;
+        pixels[row_start] = border;
+        pixels[row_start + (w - 1)] = border;
+    }
+
     Ok(())
 }
 
