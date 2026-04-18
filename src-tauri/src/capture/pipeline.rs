@@ -77,8 +77,6 @@ fn run_for_hotkey_event(
         return Ok(None);
     }
 
-    maybe_debug_save_capture(kind, &capture.image);
-
     let t_enc_start = Instant::now();
     let png_bytes = encode_png(&capture.image)?;
     let t_enc = t_enc_start.elapsed();
@@ -118,6 +116,18 @@ fn run_for_hotkey_event(
             print_perf(kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
         }
         return Ok(None);
+    }
+
+    if matches!(kind, HotkeyKind::W | HotkeyKind::E) {
+        let detected = image::imageops::crop_imm(
+            &capture.image,
+            result.bbox_unscaled.x as u32,
+            result.bbox_unscaled.y as u32,
+            result.bbox_unscaled.w as u32,
+            result.bbox_unscaled.h as u32,
+        )
+        .to_image();
+        maybe_debug_save_capture(kind, &detected);
     }
 
     if perf {
