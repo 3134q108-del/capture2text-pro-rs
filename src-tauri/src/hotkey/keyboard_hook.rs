@@ -1,7 +1,9 @@
 use std::io;
 use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
+use std::{env, fmt};
 use std::time::Duration;
 
 use crate::capture::{self, CursorPoint, HotkeyKind};
@@ -26,16 +28,66 @@ const VK_ESCAPE: u32 = 0x1B;
 const HOTKEY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 static HOTKEY_RUNTIME: OnceLock<HotkeyRuntime> = OnceLock::new();
+static HOTKEY_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 struct HotkeyRuntime {
     thread_id: u32,
     join: Mutex<Option<JoinHandle<()>>>,
+    trace_tx: Mutex<Option<mpsc::SyncSender<TraceEvent>>>,
+    trace_join: Mutex<Option<JoinHandle<()>>>,
+}
+
+#[derive(Clone, Copy)]
+enum TraceKind {
+    Q,
+    W,
+    E,
+}
+
+impl fmt::Display for TraceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Q => write!(f, "Q"),
+            Self::W => write!(f, "W"),
+            Self::E => write!(f, "E"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TraceEvent {
+    Consumed(TraceKind),
 }
 
 pub fn install() -> io::Result<()> {
     if HOTKEY_RUNTIME.get().is_some() {
         return Ok(());
     }
+
+    let trace_enabled = matches!(env::var("C2T_HOTKEY_TRACE").ok().as_deref(), Some("1"));
+    HOTKEY_TRACE_ENABLED.store(trace_enabled, Ordering::Relaxed);
+
+    let (trace_tx, trace_join) = if trace_enabled {
+        let (tx, rx) = mpsc::sync_channel(1024);
+        let join = thread::Builder::new()
+            .name("hotkey-trace".to_string())
+            .spawn(move || {
+                for event in rx {
+                    match event {
+                        TraceEvent::Consumed(kind) => {
+                            eprintln!(
+                                "[hotkey] Win+{} detected kind={} consumed=LRESULT(1)",
+                                kind, kind
+                            );
+                        }
+                    }
+                }
+            })
+            .map_err(|err| io::Error::other(format!("failed to spawn hotkey trace thread: {err}")))?;
+        (Some(tx), Some(join))
+    } else {
+        (None, None)
+    };
 
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
@@ -74,6 +126,8 @@ pub fn install() -> io::Result<()> {
         .set(HotkeyRuntime {
             thread_id,
             join: Mutex::new(Some(join)),
+            trace_tx: Mutex::new(trace_tx),
+            trace_join: Mutex::new(trace_join),
         })
         .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "hotkey runtime already initialized"))?;
 
@@ -97,6 +151,12 @@ pub fn shutdown() {
                 let _ = done_tx.send(());
             });
         let _ = done_rx.recv_timeout(HOTKEY_SHUTDOWN_TIMEOUT);
+    }
+
+    let _ = runtime.trace_tx.lock().ok().and_then(|mut guard| guard.take());
+    let trace_join = runtime.trace_join.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(trace_join) = trace_join {
+        let _ = trace_join.join();
     }
 }
 
@@ -143,6 +203,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
             match vk {
                 VK_Q => {
+                    trace_consumed(TraceKind::Q);
                     let _reserved_q = HotkeyKind::Q;
                     if drag_overlay::is_active() {
                         drag_overlay::cancel();
@@ -153,12 +214,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 }
                 VK_W | VK_E => {
                     if drag_overlay::is_active() {
+                        if vk == VK_W {
+                            trace_consumed(TraceKind::W);
+                        } else {
+                            trace_consumed(TraceKind::E);
+                        }
                         return LRESULT(1);
                     }
 
                     let kind = if vk == VK_W {
+                        trace_consumed(TraceKind::W);
                         HotkeyKind::W
                     } else {
+                        trace_consumed(TraceKind::E);
                         HotkeyKind::E
                     };
 
@@ -173,6 +241,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+fn trace_consumed(kind: TraceKind) {
+    if !HOTKEY_TRACE_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(runtime) = HOTKEY_RUNTIME.get() else {
+        return;
+    };
+    let Some(tx) = runtime.trace_tx.lock().ok().and_then(|guard| guard.clone()) else {
+        return;
+    };
+    let _ = tx.try_send(TraceEvent::Consumed(kind));
 }
 
 fn key_down(vk: i32) -> bool {
