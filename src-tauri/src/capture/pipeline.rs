@@ -10,6 +10,9 @@ use crate::capture::{HotkeyEvent, HotkeyKind};
 use crate::capture::preprocess::{extract_text_block, ExtractParams, OCR_SCALE_FACTOR_DEFAULT};
 use crate::leptonica::Pix;
 
+pub const MIN_OCR_WIDTH: i32 = 3;
+pub const MIN_OCR_HEIGHT: i32 = 3;
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoundingBoxScreen {
     pub x: i32,
@@ -69,9 +72,14 @@ pub fn run_for_event(event: HotkeyEvent) -> io::Result<Option<BoundingBoxScreen>
         return Ok(None);
     };
 
+    // MainWindow::minOcrWidth/Height (=3) OR-check on unscaled bbox
+    if result.bbox_unscaled.w < MIN_OCR_WIDTH || result.bbox_unscaled.h < MIN_OCR_HEIGHT {
+        return Ok(None);
+    }
+
     Ok(Some(BoundingBoxScreen {
-        x: capture.monitor_x + crop.x + result.bbox_unscaled.x,
-        y: capture.monitor_y + crop.y + result.bbox_unscaled.y,
+        x: capture.monitor_x + crop.x + result.bbox_unscaled.x + 1,
+        y: capture.monitor_y + crop.y + result.bbox_unscaled.y + 1,
         w: result.bbox_unscaled.w,
         h: result.bbox_unscaled.h,
     }))
