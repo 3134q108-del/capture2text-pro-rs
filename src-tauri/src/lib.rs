@@ -5,6 +5,7 @@ mod error;
 mod hotkey;
 mod overlay;
 pub mod leptonica;
+pub mod vlm;
 pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
