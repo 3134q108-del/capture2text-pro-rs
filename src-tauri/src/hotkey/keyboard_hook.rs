@@ -13,7 +13,7 @@ use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    KEYEVENTF_KEYUP, VK_CONTROL, VK_F18, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, PostThreadMessageW,
@@ -281,12 +281,15 @@ fn read_cursor_point() -> Option<CursorPoint> {
 }
 
 unsafe fn send_ctrl_tap() {
+    // Use VK_F18 (not VK_CONTROL) to avoid IME switching the input language:
+    // Chinese IME on Win11 intercepts Ctrl taps and toggles EN/CH mode.
+    // Any unused key (F13-F24) works; F18 picked per MS virtual-key docs.
     let inputs = [
         INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VK_CONTROL,
+                    wVk: VK_F18,
                     wScan: 0,
                     dwFlags: KEYBD_EVENT_FLAGS(0),
                     time: 0,
@@ -298,7 +301,7 @@ unsafe fn send_ctrl_tap() {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VK_CONTROL,
+                    wVk: VK_F18,
                     wScan: 0,
                     dwFlags: KEYEVENTF_KEYUP,
                     time: 0,
