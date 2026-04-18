@@ -1,5 +1,6 @@
 mod capture;
 mod commands;
+mod drag_overlay;
 mod error;
 mod hotkey;
 mod overlay;
@@ -11,6 +12,7 @@ pub fn run() {
     let result = tauri::Builder::default()
         .setup(|_app| {
             overlay::init()?;
+            drag_overlay::init()?;
             capture::start_worker()?;
             hotkey::install()?;
             Ok(())
@@ -19,6 +21,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![commands::files::read_file])
         .run(tauri::generate_context!());
 
+    drag_overlay::shutdown();
     overlay::shutdown();
 
     result.expect("error while running tauri application");
