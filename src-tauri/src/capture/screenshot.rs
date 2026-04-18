@@ -6,6 +6,10 @@ use crate::overlay;
 
 pub(crate) fn worker_loop(rx: Receiver<CaptureRequest>) {
     for request in rx {
+        if matches!(request, CaptureRequest::Exit) {
+            break;
+        }
+
         let mode = pipeline::request_label(request);
         match pipeline::run_for_request(request) {
             Ok(Some(rect)) => {

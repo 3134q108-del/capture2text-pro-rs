@@ -9,7 +9,7 @@ pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|_app| {
             overlay::init()?;
             drag_overlay::init()?;
@@ -19,11 +19,22 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![commands::files::read_file])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
 
-    drag_overlay::shutdown();
-    overlay::shutdown();
-
-    result.expect("error while running tauri application");
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            eprintln!("[shutdown] begin");
+            eprintln!("[shutdown] hotkey");
+            hotkey::shutdown();
+            eprintln!("[shutdown] capture");
+            capture::shutdown_worker();
+            eprintln!("[shutdown] drag_overlay");
+            drag_overlay::shutdown();
+            eprintln!("[shutdown] overlay");
+            overlay::shutdown();
+            eprintln!("[shutdown] done");
+        }
+    });
 }
 

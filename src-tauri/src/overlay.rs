@@ -46,7 +46,6 @@ struct OverlayRuntime {
 
 enum OverlayCommand {
     Show(BoundingBoxScreen),
-    Hide,
     Exit,
 }
 
@@ -113,8 +112,8 @@ pub fn shutdown() {
         return;
     };
 
-    let _ = runtime.tx.try_send(OverlayCommand::Hide);
-    let _ = runtime.tx.try_send(OverlayCommand::Exit);
+    wake_overlay_thread();
+    let _ = runtime.tx.send(OverlayCommand::Exit);
     wake_overlay_thread();
 
     let join = runtime.join.lock().ok().and_then(|mut guard| guard.take());
@@ -209,9 +208,6 @@ fn drain_commands(
                 if let Err(err) = handle_show(context, bbox) {
                     eprintln!("[overlay] show command failed: {err}");
                 }
-            }
-            OverlayCommand::Hide => {
-                hide_window(context.hwnd);
             }
             OverlayCommand::Exit => {
                 *exiting = true;

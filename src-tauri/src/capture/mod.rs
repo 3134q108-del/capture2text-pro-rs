@@ -7,13 +7,20 @@ pub mod screen_capture;
 
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
-use std::sync::OnceLock;
-use std::thread;
+use std::sync::{Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
+use std::time::Duration;
 
 const HOTKEY_CHANNEL_CAPACITY: usize = 8;
+const CAPTURE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-static CAPTURE_TX: OnceLock<SyncSender<CaptureRequest>> = OnceLock::new();
+static CAPTURE_RUNTIME: OnceLock<CaptureRuntime> = OnceLock::new();
+
+struct CaptureRuntime {
+    tx: SyncSender<CaptureRequest>,
+    join: Mutex<Option<JoinHandle<()>>>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum HotkeyKind {
@@ -57,18 +64,22 @@ pub enum CaptureRequest {
         rect: ScreenRect,
         queued_at: Instant,
     },
+    Exit,
 }
 
 pub fn start_worker() -> io::Result<()> {
     let (tx, rx) = sync_channel(HOTKEY_CHANNEL_CAPACITY);
 
-    CAPTURE_TX
-        .set(tx)
-        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "hotkey sender already initialized"))?;
-
-    thread::Builder::new()
+    let join = thread::Builder::new()
         .name("capture-worker".to_string())
         .spawn(move || screenshot::worker_loop(rx))?;
+
+    CAPTURE_RUNTIME
+        .set(CaptureRuntime {
+            tx,
+            join: Mutex::new(Some(join)),
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "capture runtime already initialized"))?;
 
     Ok(())
 }
@@ -82,7 +93,27 @@ pub(crate) fn try_enqueue_from_hook(kind: HotkeyKind, cursor: CursorPoint, queue
 }
 
 pub(crate) fn try_enqueue_request(request: CaptureRequest) {
-    if let Some(tx) = CAPTURE_TX.get() {
-        let _ = tx.try_send(request);
+    if let Some(runtime) = CAPTURE_RUNTIME.get() {
+        let _ = runtime.tx.try_send(request);
+    }
+}
+
+pub fn shutdown_worker() {
+    let Some(runtime) = CAPTURE_RUNTIME.get() else {
+        return;
+    };
+
+    let _ = runtime.tx.send(CaptureRequest::Exit);
+
+    let join = runtime.join.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(join) = join {
+        let (done_tx, done_rx) = sync_channel(1);
+        let _ = thread::Builder::new()
+            .name("capture-join-wait".to_string())
+            .spawn(move || {
+                let _ = join.join();
+                let _ = done_tx.send(());
+            });
+        let _ = done_rx.recv_timeout(CAPTURE_SHUTDOWN_TIMEOUT);
     }
 }

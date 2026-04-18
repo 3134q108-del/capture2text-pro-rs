@@ -150,7 +150,8 @@ pub fn shutdown() {
         return;
     };
 
-    let _ = runtime.tx.try_send(DragOverlayCommand::Exit);
+    wake_drag_overlay_thread();
+    let _ = runtime.tx.send(DragOverlayCommand::Exit);
     wake_drag_overlay_thread();
 
     let join = runtime.join.lock().ok().and_then(|mut guard| guard.take());

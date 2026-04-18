@@ -33,6 +33,7 @@ pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<BoundingBox
             queued_at,
         } => run_for_hotkey_event(kind, cursor, queued_at),
         CaptureRequest::SelectedRect { rect, queued_at } => run_for_selected_rect(rect, queued_at),
+        CaptureRequest::Exit => Ok(None),
     }
 }
 
@@ -180,6 +181,7 @@ pub fn request_label(request: CaptureRequest) -> &'static str {
     match request {
         CaptureRequest::Hotkey { kind, .. } => mode_label(kind),
         CaptureRequest::SelectedRect { .. } => "Q",
+        CaptureRequest::Exit => "EXIT",
     }
 }
 

@@ -1,7 +1,8 @@
 use std::io;
-use std::sync::mpsc;
-use std::thread;
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
+use std::time::Duration;
 
 use crate::capture::{self, CursorPoint, HotkeyKind};
 use crate::drag_overlay;
@@ -13,30 +14,44 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, SetWindowsHookExW,
-    UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, PostThreadMessageW,
+    SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+    WM_QUIT, WM_SYSKEYDOWN,
 };
 
 const VK_Q: u32 = 0x51;
 const VK_W: u32 = 0x57;
 const VK_E: u32 = 0x45;
 const VK_ESCAPE: u32 = 0x1B;
+const HOTKEY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+static HOTKEY_RUNTIME: OnceLock<HotkeyRuntime> = OnceLock::new();
+
+struct HotkeyRuntime {
+    thread_id: u32,
+    join: Mutex<Option<JoinHandle<()>>>,
+}
 
 pub fn install() -> io::Result<()> {
+    if HOTKEY_RUNTIME.get().is_some() {
+        return Ok(());
+    }
+
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
-    thread::Builder::new()
+    let join = thread::Builder::new()
         .name("keyboard-hook".to_string())
         .spawn(move || {
             let hook_result = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) };
 
             match hook_result {
                 Ok(hook) => {
+                    let thread_id = unsafe { GetCurrentThreadId() };
                     println!(
                         "[hotkey] WH_KEYBOARD_LL installed, thread id={}",
-                        unsafe { GetCurrentThreadId() }
+                        thread_id
                     );
-                    let _ = ready_tx.send(Ok(()));
+                    let _ = ready_tx.send(Ok(thread_id));
                     unsafe { message_loop(hook) };
                 }
                 Err(err) => {
@@ -48,12 +63,41 @@ pub fn install() -> io::Result<()> {
             }
         })?;
 
-    ready_rx.recv().unwrap_or_else(|_| {
+    let thread_id = ready_rx.recv().unwrap_or_else(|_| {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "keyboard hook thread exited before initialization",
         ))
-    })
+    })?;
+
+    HOTKEY_RUNTIME
+        .set(HotkeyRuntime {
+            thread_id,
+            join: Mutex::new(Some(join)),
+        })
+        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "hotkey runtime already initialized"))?;
+
+    Ok(())
+}
+
+pub fn shutdown() {
+    let Some(runtime) = HOTKEY_RUNTIME.get() else {
+        return;
+    };
+
+    let _ = unsafe { PostThreadMessageW(runtime.thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+
+    let join = runtime.join.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(join) = join {
+        let (done_tx, done_rx) = mpsc::sync_channel(1);
+        let _ = thread::Builder::new()
+            .name("keyboard-hook-join-wait".to_string())
+            .spawn(move || {
+                let _ = join.join();
+                let _ = done_tx.send(());
+            });
+        let _ = done_rx.recv_timeout(HOTKEY_SHUTDOWN_TIMEOUT);
+    }
 }
 
 unsafe fn message_loop(hook: HHOOK) {
