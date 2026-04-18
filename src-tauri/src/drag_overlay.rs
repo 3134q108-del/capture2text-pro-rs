@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::env;
 use std::io;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
@@ -51,6 +52,7 @@ static DRAG_OVERLAY_RUNTIME: OnceLock<DragOverlayRuntime> = OnceLock::new();
 static DRAG_OVERLAY_HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static WARNED_NOT_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static DRAG_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
+static DRAG_PERF_ENABLED: AtomicBool = AtomicBool::new(false);
 
 struct DragOverlayRuntime {
     tx: SyncSender<DragOverlayCommand>,
@@ -97,6 +99,7 @@ struct DragOverlayContext {
     desktop_h: i32,
     state: DragState,
     pending_render: bool,
+    pending_ts: Option<Instant>,
     pending_resize: bool,
     last_drawn_rect: Option<DragRect>,
 }
@@ -105,6 +108,11 @@ pub fn init() -> io::Result<()> {
     if DRAG_OVERLAY_RUNTIME.get().is_some() {
         return Ok(());
     }
+
+    DRAG_PERF_ENABLED.store(
+        matches!(env::var("C2T_DRAG_PERF").ok().as_deref(), Some("1")),
+        Ordering::Relaxed,
+    );
 
     let (cmd_tx, cmd_rx) = sync_channel(DRAG_OVERLAY_CHANNEL_CAPACITY);
     let (ready_tx, ready_rx) = sync_channel(0);
@@ -217,6 +225,7 @@ fn run_drag_overlay_thread(
         desktop_h,
         state: DragState::Idle,
         pending_render: false,
+        pending_ts: None,
         pending_resize: false,
         last_drawn_rect: None,
     });
@@ -281,6 +290,7 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
 
                     context.state = DragState::Waiting;
                     context.pending_render = false;
+                    context.pending_ts = None;
                     context.last_drawn_rect = None;
                     DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
 
@@ -561,12 +571,14 @@ fn post_render_if_needed(context: &mut DragOverlayContext) {
         return;
     }
     context.pending_render = true;
+    context.pending_ts = Some(Instant::now());
     let _ = unsafe { PostMessageW(context.hwnd, WM_APP_RENDER, WPARAM(0), LPARAM(0)) };
 }
 
 fn hide_and_reset_overlay(context: &mut DragOverlayContext) -> io::Result<()> {
     context.state = DragState::Idle;
     context.pending_render = false;
+    context.pending_ts = None;
     DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
 
     if unsafe { GetCapture() } == context.hwnd {
@@ -808,8 +820,23 @@ extern "system" fn drag_overlay_wnd_proc(
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
             if !ptr.is_null() {
                 let context = unsafe { &mut *ptr };
+                let pending_ts = context.pending_ts.take();
+                let render_start = Instant::now();
                 if let Err(err) = render_current_state(context) {
                     eprintln!("[drag_overlay] render failed: {err}");
+                } else if DRAG_PERF_ENABLED.load(Ordering::Relaxed) {
+                    let render_end = Instant::now();
+                    let queue_delay = pending_ts
+                        .map(|ts| render_start.saturating_duration_since(ts))
+                        .unwrap_or_default();
+                    let render_cost = render_end.saturating_duration_since(render_start);
+                    let total = queue_delay.saturating_add(render_cost);
+                    eprintln!(
+                        "[drag_overlay perf] queue_delay_ms={:.1} render_cost_ms={:.1} total_ms={:.1}",
+                        duration_ms(queue_delay),
+                        duration_ms(render_cost),
+                        duration_ms(total),
+                    );
                 }
             }
             LRESULT(0)
@@ -830,4 +857,8 @@ extern "system" fn drag_overlay_wnd_proc(
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
