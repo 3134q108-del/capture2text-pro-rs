@@ -1,12 +1,11 @@
-use std::ffi::c_void;
-use std::env;
+﻿use std::ffi::c_void;
 use std::io;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -19,40 +18,36 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::{
-    GetAwarenessFromDpiAwarenessContext, GetThreadDpiAwarenessContext, GetWindowDpiAwarenessContext,
-    SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, CS_HREDRAW, CS_VREDRAW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetMessageW, GetSystemMetrics, GetWindowLongPtrW, HMENU, HWND_TOPMOST, IDC_CROSS, LoadCursorW,
-    MA_NOACTIVATE, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SET_WINDOW_POS_FLAGS,
-    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetCursor, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage, ULW_ALPHA, UPDATE_LAYERED_WINDOW_FLAGS, UpdateLayeredWindow,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY, WM_DISPLAYCHANGE, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, GWLP_USERDATA,
+    GetCursorPos, GetMessageW, GetPhysicalCursorPos, GetWindowLongPtrW, HMENU, HWND_TOPMOST,
+    KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
+    SET_WINDOW_POS_FLAGS, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
+    ULW_ALPHA, UPDATE_LAYERED_WINDOW_FLAGS, UpdateLayeredWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_DESTROY, WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, GWLP_USERDATA,
+    SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
 };
 
-use crate::capture::{self, CaptureRequest, ScreenRect as CaptureScreenRect};
+use crate::capture::ScreenRect as CaptureScreenRect;
 
 const DRAG_OVERLAY_CHANNEL_CAPACITY: usize = 8;
 const DRAG_OVERLAY_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 const DRAG_OVERLAY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 const WM_APP_CMD: u32 = WM_APP + 101;
-const WM_APP_RENDER: u32 = WM_APP + 102;
+const TIMER_ID: usize = 1;
+const TIMER_INTERVAL_MS: u32 = 10;
 
-const FILL_BGRA_PREMULT: u32 = u32::from_le_bytes([60, 30, 0, 60]);
-const BORDER_BGRA_PREMULT: u32 = u32::from_le_bytes([255, 128, 0, 255]);
+// QColor(255, 0, 0, 64) premultiplied to BGRA bytes.
+const FILL_BGRA_PREMULT: u32 = u32::from_le_bytes([0, 0, 64, 64]);
+// QColor(255, 0, 0, 255) BGRA bytes.
+const BORDER_BGRA_PREMULT: u32 = u32::from_le_bytes([0, 0, 255, 255]);
 
 static DRAG_OVERLAY_RUNTIME: OnceLock<DragOverlayRuntime> = OnceLock::new();
 static DRAG_OVERLAY_HWND_RAW: AtomicIsize = AtomicIsize::new(0);
 static WARNED_NOT_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static DRAG_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
-static DRAG_PERF_ENABLED: AtomicBool = AtomicBool::new(false);
 
 struct DragOverlayRuntime {
     tx: SyncSender<DragOverlayCommand>,
@@ -61,26 +56,19 @@ struct DragOverlayRuntime {
 
 enum DragOverlayCommand {
     BeginDrag,
+    ShowRect(CaptureScreenRect),
     Cancel,
     Exit,
 }
 
-enum DragState {
+enum DragMode {
     Idle,
-    Waiting,
-    Dragging { start: (i32, i32), current: (i32, i32) },
+    Growing { pivot: (i32, i32), current: (i32, i32) },
+    Fixed,
 }
 
 #[derive(Clone, Copy)]
 struct DragRect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-}
-
-#[derive(Clone, Copy)]
-struct ClippedRect {
     x: i32,
     y: i32,
     w: i32,
@@ -93,26 +81,17 @@ struct DragOverlayContext {
     hbm: HBITMAP,
     old_bitmap: HGDIOBJ,
     bits_ptr: *mut u8,
-    desktop_x: i32,
-    desktop_y: i32,
-    desktop_w: i32,
-    desktop_h: i32,
-    state: DragState,
-    pending_render: bool,
-    pending_ts: Option<Instant>,
-    pending_resize: bool,
-    last_drawn_rect: Option<DragRect>,
+    dib_w: i32,
+    dib_h: i32,
+    window_x: i32,
+    window_y: i32,
+    mode: DragMode,
 }
 
 pub fn init() -> io::Result<()> {
     if DRAG_OVERLAY_RUNTIME.get().is_some() {
         return Ok(());
     }
-
-    DRAG_PERF_ENABLED.store(
-        matches!(env::var("C2T_DRAG_PERF").ok().as_deref(), Some("1")),
-        Ordering::Relaxed,
-    );
 
     let (cmd_tx, cmd_rx) = sync_channel(DRAG_OVERLAY_CHANNEL_CAPACITY);
     let (ready_tx, ready_rx) = sync_channel(0);
@@ -143,6 +122,11 @@ pub fn init() -> io::Result<()> {
 
 pub fn begin_drag() {
     send_command(DragOverlayCommand::BeginDrag);
+}
+
+#[allow(dead_code)]
+pub fn show(rect: CaptureScreenRect) {
+    send_command(DragOverlayCommand::ShowRect(rect));
 }
 
 pub fn cancel() {
@@ -197,16 +181,12 @@ fn run_drag_overlay_thread(
     rx: Receiver<DragOverlayCommand>,
     ready_tx: &SyncSender<io::Result<()>>,
 ) -> io::Result<()> {
-    try_set_thread_dpi_awareness();
-
     let hinstance = unsafe { GetModuleHandleW(None) }
         .map(|hmodule| HINSTANCE(hmodule.0))
         .map_err(|err| io::Error::other(format!("GetModuleHandleW failed: {err}")))?;
 
     register_drag_overlay_class(hinstance)?;
-
-    let (desktop_x, desktop_y, desktop_w, desktop_h) = query_virtual_desktop()?;
-    let hwnd = create_drag_overlay_window(hinstance, desktop_x, desktop_y, desktop_w, desktop_h)?;
+    let hwnd = create_drag_overlay_window(hinstance)?;
 
     let hdc_mem = unsafe { CreateCompatibleDC(None) };
     if hdc_mem.0.is_null() {
@@ -219,21 +199,16 @@ fn run_drag_overlay_thread(
         hbm: HBITMAP::default(),
         old_bitmap: HGDIOBJ::default(),
         bits_ptr: ptr::null_mut(),
-        desktop_x,
-        desktop_y,
-        desktop_w,
-        desktop_h,
-        state: DragState::Idle,
-        pending_render: false,
-        pending_ts: None,
-        pending_resize: false,
-        last_drawn_rect: None,
+        dib_w: 0,
+        dib_h: 0,
+        window_x: 0,
+        window_y: 0,
+        mode: DragMode::Idle,
     });
 
-    recreate_dib(&mut context)?;
-    clear_dib(&context)?;
+    ensure_dib_size(&mut context, 1, 1)?;
+    draw_box(&context, 1, 1)?;
     update_layered(&context)?;
-    log_window_dpi_awareness(hwnd);
 
     unsafe {
         let _ = SetWindowLongPtrW(
@@ -270,99 +245,175 @@ fn run_drag_overlay_thread(
         let _ = SetWindowLongPtrW(context.hwnd, GWLP_USERDATA, 0);
     }
     cleanup_context(&mut context);
+    DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
     DRAG_OVERLAY_HWND_RAW.store(0, Ordering::Relaxed);
     Ok(())
 }
 
 fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayContext) -> bool {
     while let Ok(command) = rx.try_recv() {
-        match command {
-            DragOverlayCommand::BeginDrag => {
-                if matches!(context.state, DragState::Idle) {
-                    if let Err(err) = ensure_virtual_desktop_up_to_date(context) {
-                        eprintln!("[drag_overlay] ensure desktop metrics failed: {err}");
-                        continue;
-                    }
-
-                    if let Err(err) = clear_dib(context).and_then(|_| update_layered(context)) {
-                        eprintln!("[drag_overlay] clear before begin failed: {err}");
-                    }
-
-                    context.state = DragState::Waiting;
-                    context.pending_render = false;
-                    context.pending_ts = None;
-                    context.last_drawn_rect = None;
-                    DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
-
-                    let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0);
-                    if let Err(err) = unsafe {
-                        SetWindowPos(
-                            context.hwnd,
-                            HWND_TOPMOST,
-                            context.desktop_x,
-                            context.desktop_y,
-                            context.desktop_w,
-                            context.desktop_h,
-                            flags,
-                        )
-                    } {
-                        eprintln!("[drag_overlay] SetWindowPos failed: {err}");
-                    }
-
-                    unsafe {
-                        let _ = ShowWindow(context.hwnd, SW_SHOWNOACTIVATE);
-                    }
-                }
-            }
-            DragOverlayCommand::Cancel => {
-                if !matches!(context.state, DragState::Idle) {
-                    if let Err(err) = hide_and_reset_overlay(context) {
-                        eprintln!("[drag_overlay] cancel failed: {err}");
-                    }
-                }
-            }
+        let result = match command {
+            DragOverlayCommand::BeginDrag => begin_grow_mode(context),
+            DragOverlayCommand::ShowRect(rect) => begin_fixed_mode(context, rect),
+            DragOverlayCommand::Cancel => hide_overlay(context),
             DragOverlayCommand::Exit => {
-                if let Err(err) = hide_and_reset_overlay(context) {
-                    eprintln!("[drag_overlay] exit cleanup failed: {err}");
-                }
+                let _ = hide_overlay(context);
                 unsafe {
                     let _ = DestroyWindow(context.hwnd);
                 }
                 return false;
             }
+        };
+
+        if result.is_err() {
+            let _ = hide_overlay(context);
         }
     }
+
     true
 }
 
-fn try_set_thread_dpi_awareness() {
-    let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-    if previous.0.is_null() {
-        eprintln!("[drag_overlay] SetThreadDpiAwarenessContext(PMv2) failed");
-    } else {
-        eprintln!(
-            "[drag_overlay] thread DPI awareness now {}",
-            awareness_name_from_context(unsafe { GetThreadDpiAwarenessContext() })
-        );
+fn begin_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
+    let cursor = cursor_pos().ok_or_else(|| io::Error::other("failed to read cursor position"))?;
+    context.mode = DragMode::Growing {
+        pivot: (cursor.x, cursor.y),
+        current: (cursor.x, cursor.y),
+    };
+    DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
+
+    unsafe {
+        let _ = SetTimer(context.hwnd, TIMER_ID, TIMER_INTERVAL_MS, None);
+    }
+
+    apply_rect(context, DragRect {
+        x: cursor.x,
+        y: cursor.y,
+        w: 1,
+        h: 1,
+    })
+}
+
+fn begin_fixed_mode(context: &mut DragOverlayContext, rect: CaptureScreenRect) -> io::Result<()> {
+    let normalized = normalize_rect(DragRect {
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+    });
+
+    context.mode = DragMode::Fixed;
+    DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
+
+    unsafe {
+        let _ = KillTimer(context.hwnd, TIMER_ID);
+    }
+
+    apply_rect(context, normalized)
+}
+
+fn hide_overlay(context: &mut DragOverlayContext) -> io::Result<()> {
+    context.mode = DragMode::Idle;
+    DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
+
+    unsafe {
+        let _ = KillTimer(context.hwnd, TIMER_ID);
+        let _ = ShowWindow(context.hwnd, SW_HIDE);
+    }
+
+    Ok(())
+}
+
+fn tick_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
+    let DragMode::Growing { pivot, current } = context.mode else {
+        return Ok(());
+    };
+
+    let Some(cursor) = cursor_pos() else {
+        return Ok(());
+    };
+
+    let current_xy = (cursor.x, cursor.y);
+    if current_xy == current {
+        return Ok(());
+    }
+
+    context.mode = DragMode::Growing {
+        pivot,
+        current: current_xy,
+    };
+
+    apply_rect(context, rect_from_points(pivot, current_xy))
+}
+
+fn rect_from_points(a: (i32, i32), b: (i32, i32)) -> DragRect {
+    let x1 = a.0.min(b.0);
+    let y1 = a.1.min(b.1);
+    let x2 = a.0.max(b.0);
+    let y2 = a.1.max(b.1);
+
+    DragRect {
+        x: x1,
+        y: y1,
+        w: (x2 - x1).max(0) + 1,
+        h: (y2 - y1).max(0) + 1,
     }
 }
 
-fn log_window_dpi_awareness(hwnd: HWND) {
-    let awareness = unsafe { GetWindowDpiAwarenessContext(hwnd) };
-    eprintln!(
-        "[drag_overlay] window DPI awareness={}",
-        awareness_name_from_context(awareness)
-    );
+fn normalize_rect(rect: DragRect) -> DragRect {
+    let x2 = rect.x + rect.w;
+    let y2 = rect.y + rect.h;
+    let x1 = rect.x.min(x2);
+    let y1 = rect.y.min(y2);
+    let x2 = rect.x.max(x2);
+    let y2 = rect.y.max(y2);
+
+    DragRect {
+        x: x1,
+        y: y1,
+        w: (x2 - x1).max(1),
+        h: (y2 - y1).max(1),
+    }
 }
 
-fn awareness_name_from_context(context: windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT) -> &'static str {
-    match unsafe { GetAwarenessFromDpiAwarenessContext(context) }.0 {
-        -1 => "Invalid",
-        0 => "Unaware",
-        1 => "SystemAware",
-        2 => "PerMonitorAware",
-        _ => "Unknown",
+fn apply_rect(context: &mut DragOverlayContext, rect: DragRect) -> io::Result<()> {
+    let rect = normalize_rect(rect);
+    context.window_x = rect.x;
+    context.window_y = rect.y;
+
+    let flags = SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE.0 | SWP_SHOWWINDOW.0);
+    unsafe {
+        SetWindowPos(
+            context.hwnd,
+            HWND_TOPMOST,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            flags,
+        )
     }
+    .map_err(|err| io::Error::other(format!("SetWindowPos failed: {err}")))?;
+
+    ensure_dib_size(context, rect.w, rect.h)?;
+    draw_box(context, rect.w, rect.h)?;
+    update_layered(context)?;
+
+    unsafe {
+        let _ = ShowWindow(context.hwnd, SW_SHOWNOACTIVATE);
+    }
+
+    Ok(())
+}
+
+fn cursor_pos() -> Option<POINT> {
+    let mut point = POINT::default();
+    if unsafe { GetPhysicalCursorPos(&mut point) }.is_ok() {
+        return Some(point);
+    }
+    if unsafe { GetCursorPos(&mut point) }.is_ok() {
+        return Some(point);
+    }
+    None
 }
 
 fn register_drag_overlay_class(hinstance: HINSTANCE) -> io::Result<()> {
@@ -381,18 +432,18 @@ fn register_drag_overlay_class(hinstance: HINSTANCE) -> io::Result<()> {
             return Err(io::Error::other(format!("RegisterClassW failed: {err:?}")));
         }
     }
+
     Ok(())
 }
 
-fn create_drag_overlay_window(
-    hinstance: HINSTANCE,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-) -> io::Result<HWND> {
-    let ex_style =
-        WINDOW_EX_STYLE(WS_EX_LAYERED.0 | WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0);
+fn create_drag_overlay_window(hinstance: HINSTANCE) -> io::Result<HWND> {
+    let ex_style = WINDOW_EX_STYLE(
+        WS_EX_LAYERED.0
+            | WS_EX_TOPMOST.0
+            | WS_EX_TOOLWINDOW.0
+            | WS_EX_NOACTIVATE.0
+            | WS_EX_TRANSPARENT.0,
+    );
     let style = WINDOW_STYLE(WS_POPUP.0);
 
     unsafe {
@@ -401,10 +452,10 @@ fn create_drag_overlay_window(
             w!("Capture2TextDragOverlayWindow"),
             w!("Capture2TextDragOverlayWindow"),
             style,
-            x,
-            y,
-            w,
-            h,
+            0,
+            0,
+            1,
+            1,
             HWND::default(),
             HMENU::default(),
             hinstance,
@@ -414,45 +465,18 @@ fn create_drag_overlay_window(
     .map_err(|err| io::Error::other(format!("CreateWindowExW failed: {err}")))
 }
 
-fn query_virtual_desktop() -> io::Result<(i32, i32, i32, i32)> {
-    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
-    let w = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
-    let h = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
-
-    if w <= 0 || h <= 0 {
-        return Err(io::Error::other("virtual desktop size is invalid"));
-    }
-    Ok((x, y, w, h))
-}
-
-fn ensure_virtual_desktop_up_to_date(context: &mut DragOverlayContext) -> io::Result<()> {
-    if !context.pending_resize {
+fn ensure_dib_size(context: &mut DragOverlayContext, w: i32, h: i32) -> io::Result<()> {
+    if context.dib_w == w && context.dib_h == h && !context.hbm.0.is_null() {
         return Ok(());
     }
 
-    let (x, y, w, h) = query_virtual_desktop()?;
-    context.desktop_x = x;
-    context.desktop_y = y;
-    context.desktop_w = w;
-    context.desktop_h = h;
-    context.pending_resize = false;
-    context.last_drawn_rect = None;
-
-    recreate_dib(context)?;
-    clear_dib(context)?;
-    update_layered(context)?;
-    Ok(())
-}
-
-fn recreate_dib(context: &mut DragOverlayContext) -> io::Result<()> {
     destroy_dib(context);
 
     let mut bmi = BITMAPINFO::default();
     bmi.bmiHeader = BITMAPINFOHEADER {
         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: context.desktop_w,
-        biHeight: -context.desktop_h,
+        biWidth: w,
+        biHeight: -h,
         biPlanes: 1,
         biBitCount: 32,
         biCompression: BI_RGB.0,
@@ -477,6 +501,9 @@ fn recreate_dib(context: &mut DragOverlayContext) -> io::Result<()> {
 
     context.hbm = hbm;
     context.bits_ptr = bits as *mut u8;
+    context.dib_w = w;
+    context.dib_h = h;
+
     Ok(())
 }
 
@@ -494,31 +521,59 @@ fn destroy_dib(context: &mut DragOverlayContext) {
 
     context.hbm = HBITMAP::default();
     context.bits_ptr = ptr::null_mut();
-}
-
-fn clear_dib(context: &DragOverlayContext) -> io::Result<()> {
-    let pixels = pixels_mut(context)?;
-    pixels.fill(0);
-    Ok(())
+    context.dib_w = 0;
+    context.dib_h = 0;
 }
 
 fn pixels_mut(context: &DragOverlayContext) -> io::Result<&mut [u32]> {
-    if context.bits_ptr.is_null() || context.desktop_w <= 0 || context.desktop_h <= 0 {
+    if context.bits_ptr.is_null() || context.dib_w <= 0 || context.dib_h <= 0 {
         return Err(io::Error::other("drag overlay dib is not initialized"));
     }
 
-    let len = (context.desktop_w as usize) * (context.desktop_h as usize);
+    let len = (context.dib_w as usize) * (context.dib_h as usize);
     Ok(unsafe { std::slice::from_raw_parts_mut(context.bits_ptr as *mut u32, len) })
+}
+
+fn draw_box(context: &DragOverlayContext, w: i32, h: i32) -> io::Result<()> {
+    let pixels = pixels_mut(context)?;
+    pixels.fill(FILL_BGRA_PREMULT);
+
+    if w <= 1 || h <= 1 {
+        pixels.fill(BORDER_BGRA_PREMULT);
+        return Ok(());
+    }
+
+    let pitch = w as usize;
+    let top = 0usize;
+    let bottom = (h - 1) as usize;
+    let left = 0usize;
+    let right = (w - 1) as usize;
+
+    let top_start = top * pitch;
+    let top_end = top_start + w as usize;
+    pixels[top_start..top_end].fill(BORDER_BGRA_PREMULT);
+
+    let bottom_start = bottom * pitch;
+    let bottom_end = bottom_start + w as usize;
+    pixels[bottom_start..bottom_end].fill(BORDER_BGRA_PREMULT);
+
+    for y in 1..(h - 1) {
+        let row_start = (y as usize) * pitch;
+        pixels[row_start + left] = BORDER_BGRA_PREMULT;
+        pixels[row_start + right] = BORDER_BGRA_PREMULT;
+    }
+
+    Ok(())
 }
 
 fn update_layered(context: &DragOverlayContext) -> io::Result<()> {
     let dst = POINT {
-        x: context.desktop_x,
-        y: context.desktop_y,
+        x: context.window_x,
+        y: context.window_y,
     };
     let size = SIZE {
-        cx: context.desktop_w,
-        cy: context.desktop_h,
+        cx: context.dib_w,
+        cy: context.dib_h,
     };
     let src = POINT { x: 0, y: 0 };
     let blend = BLENDFUNCTION {
@@ -545,14 +600,16 @@ fn update_layered(context: &DragOverlayContext) -> io::Result<()> {
 }
 
 fn cleanup_context(context: &mut DragOverlayContext) {
+    let _ = hide_overlay(context);
     destroy_dib(context);
+
     if !context.hdc_mem.0.is_null() {
         unsafe {
             let _ = DeleteDC(context.hdc_mem);
         }
+        context.hdc_mem = HDC::default();
     }
 
-    context.hdc_mem = HDC::default();
     context.old_bitmap = HGDIOBJ::default();
 }
 
@@ -566,220 +623,6 @@ fn wake_drag_overlay_thread() {
     let _ = unsafe { PostMessageW(hwnd, WM_APP_CMD, WPARAM(0), LPARAM(0)) };
 }
 
-fn post_render_if_needed(context: &mut DragOverlayContext) {
-    if context.pending_render {
-        return;
-    }
-    context.pending_render = true;
-    context.pending_ts = Some(Instant::now());
-    let _ = unsafe { PostMessageW(context.hwnd, WM_APP_RENDER, WPARAM(0), LPARAM(0)) };
-}
-
-fn hide_and_reset_overlay(context: &mut DragOverlayContext) -> io::Result<()> {
-    context.state = DragState::Idle;
-    context.pending_render = false;
-    context.pending_ts = None;
-    DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
-
-    if unsafe { GetCapture() } == context.hwnd {
-        unsafe {
-            let _ = ReleaseCapture();
-        }
-    }
-
-    if context.last_drawn_rect.is_some() {
-        render_current_state(context)?;
-    }
-
-    unsafe {
-        let _ = ShowWindow(context.hwnd, SW_HIDE);
-    }
-    Ok(())
-}
-
-fn render_current_state(context: &mut DragOverlayContext) -> io::Result<()> {
-    context.pending_render = false;
-
-    if let Some(previous) = context.last_drawn_rect.take() {
-        clear_rect(context, previous)?;
-    }
-
-    if let DragState::Dragging { start, current } = context.state {
-        let rect = normalize_rect(start, current);
-        if rect.w > 0 && rect.h > 0 {
-            draw_capture_rect(context, rect)?;
-            context.last_drawn_rect = Some(rect);
-        }
-    }
-
-    update_layered(context)
-}
-
-fn clear_rect(context: &DragOverlayContext, rect: DragRect) -> io::Result<()> {
-    let Some(clipped) = clip_to_desktop(context, rect) else {
-        return Ok(());
-    };
-
-    let pixels = pixels_mut(context)?;
-    for row in 0..clipped.h {
-        let y = clipped.y + row;
-        let row_start = (y as usize) * (context.desktop_w as usize) + (clipped.x as usize);
-        let row_end = row_start + clipped.w as usize;
-        pixels[row_start..row_end].fill(0);
-    }
-
-    Ok(())
-}
-
-fn draw_capture_rect(context: &DragOverlayContext, rect: DragRect) -> io::Result<()> {
-    let Some(clipped) = clip_to_desktop(context, rect) else {
-        return Ok(());
-    };
-
-    let pixels = pixels_mut(context)?;
-    let pitch = context.desktop_w as usize;
-
-    for row in 0..clipped.h {
-        let y = clipped.y + row;
-        let row_start = (y as usize) * pitch + (clipped.x as usize);
-        let row_end = row_start + clipped.w as usize;
-        pixels[row_start..row_end].fill(FILL_BGRA_PREMULT);
-    }
-
-    if clipped.w < 2 || clipped.h < 2 {
-        for row in 0..clipped.h {
-            let y = clipped.y + row;
-            let row_start = (y as usize) * pitch + (clipped.x as usize);
-            let row_end = row_start + clipped.w as usize;
-            pixels[row_start..row_end].fill(BORDER_BGRA_PREMULT);
-        }
-        return Ok(());
-    }
-
-    let top = clipped.y as usize;
-    let bottom = (clipped.y + clipped.h - 1) as usize;
-    let left = clipped.x as usize;
-    let right = (clipped.x + clipped.w - 1) as usize;
-
-    let top_start = top * pitch + left;
-    let top_end = top_start + clipped.w as usize;
-    pixels[top_start..top_end].fill(BORDER_BGRA_PREMULT);
-
-    let bottom_start = bottom * pitch + left;
-    let bottom_end = bottom_start + clipped.w as usize;
-    pixels[bottom_start..bottom_end].fill(BORDER_BGRA_PREMULT);
-
-    for y in (clipped.y + 1)..(clipped.y + clipped.h - 1) {
-        let row_start = (y as usize) * pitch;
-        pixels[row_start + left] = BORDER_BGRA_PREMULT;
-        pixels[row_start + right] = BORDER_BGRA_PREMULT;
-    }
-
-    Ok(())
-}
-
-fn clip_to_desktop(context: &DragOverlayContext, rect: DragRect) -> Option<ClippedRect> {
-    if rect.w <= 0 || rect.h <= 0 {
-        return None;
-    }
-
-    let left = rect.x.max(context.desktop_x);
-    let top = rect.y.max(context.desktop_y);
-    let right = (rect.x + rect.w).min(context.desktop_x + context.desktop_w);
-    let bottom = (rect.y + rect.h).min(context.desktop_y + context.desktop_h);
-
-    if right <= left || bottom <= top {
-        return None;
-    }
-
-    Some(ClippedRect {
-        x: left - context.desktop_x,
-        y: top - context.desktop_y,
-        w: right - left,
-        h: bottom - top,
-    })
-}
-
-fn update_drag_state(context: &mut DragOverlayContext, hwnd: HWND, message: u32, lparam: LPARAM) {
-    let client_x = (lparam.0 & 0xFFFF) as u16 as i16 as i32;
-    let client_y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
-    let screen_x = context.desktop_x + client_x;
-    let screen_y = context.desktop_y + client_y;
-
-    match message {
-        WM_LBUTTONDOWN => {
-            if matches!(context.state, DragState::Waiting) {
-                context.state = DragState::Dragging {
-                    start: (screen_x, screen_y),
-                    current: (screen_x, screen_y),
-                };
-                unsafe {
-                    let _ = SetCapture(hwnd);
-                }
-                post_render_if_needed(context);
-                eprintln!("[drag_overlay] drag start=({}, {})", screen_x, screen_y);
-            }
-        }
-        WM_MOUSEMOVE => {
-            if let DragState::Dragging { current, .. } = &mut context.state {
-                *current = (screen_x, screen_y);
-                post_render_if_needed(context);
-            }
-        }
-        WM_LBUTTONUP => {
-            let previous_state = std::mem::replace(&mut context.state, DragState::Idle);
-            if let DragState::Dragging { start, .. } = previous_state {
-                if unsafe { GetCapture() } == hwnd {
-                    unsafe {
-                        let _ = ReleaseCapture();
-                    }
-                }
-
-                let rect = normalize_rect(start, (screen_x, screen_y));
-                eprintln!(
-                    "[drag_overlay] drag end rect x={} y={} w={} h={}",
-                    rect.x, rect.y, rect.w, rect.h
-                );
-
-                if rect.w > 3 && rect.h > 3 {
-                    capture::try_enqueue_request(CaptureRequest::SelectedRect {
-                        rect: CaptureScreenRect {
-                            x: rect.x,
-                            y: rect.y,
-                            w: rect.w,
-                            h: rect.h,
-                        },
-                        queued_at: Instant::now(),
-                    });
-                    eprintln!("[drag_overlay] rect accepted and enqueued");
-                } else {
-                    eprintln!("[drag_overlay] rect too small, cancel");
-                }
-
-                if let Err(err) = hide_and_reset_overlay(context) {
-                    eprintln!("[drag_overlay] hide after button up failed: {err}");
-                }
-            } else {
-                context.state = previous_state;
-            }
-        }
-        _ => {}
-    }
-}
-
-fn normalize_rect(start: (i32, i32), end: (i32, i32)) -> DragRect {
-    let left = start.0.min(end.0);
-    let top = start.1.min(end.1);
-    let right = start.0.max(end.0);
-    let bottom = start.1.max(end.1);
-    DragRect {
-        x: left,
-        y: top,
-        w: right - left,
-        h: bottom - top,
-    }
-}
-
 extern "system" fn drag_overlay_wnd_proc(
     hwnd: HWND,
     msg: u32,
@@ -787,65 +630,22 @@ extern "system" fn drag_overlay_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-        WM_SETCURSOR => {
-            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
-            if !ptr.is_null() {
-                let context = unsafe { &mut *ptr };
-                if !matches!(context.state, DragState::Idle) {
-                    if let Ok(cursor) = unsafe { LoadCursorW(None, IDC_CROSS) } {
-                        unsafe {
-                            SetCursor(cursor);
-                        }
-                        return LRESULT(1);
-                    }
+        WM_TIMER => {
+            if wparam.0 == TIMER_ID {
+                let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
+                if !ptr.is_null() {
+                    let context = unsafe { &mut *ptr };
+                    let _ = tick_grow_mode(context);
                 }
             }
-            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            LRESULT(0)
         }
         WM_DISPLAYCHANGE => {
             let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
             if !ptr.is_null() {
                 let context = unsafe { &mut *ptr };
-                context.pending_resize = true;
-                if matches!(context.state, DragState::Dragging { .. }) {
-                    if let Err(err) = hide_and_reset_overlay(context) {
-                        eprintln!("[drag_overlay] hide on display change failed: {err}");
-                    }
-                }
-            }
-            LRESULT(0)
-        }
-        WM_APP_RENDER => {
-            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
-            if !ptr.is_null() {
-                let context = unsafe { &mut *ptr };
-                let pending_ts = context.pending_ts.take();
-                let render_start = Instant::now();
-                if let Err(err) = render_current_state(context) {
-                    eprintln!("[drag_overlay] render failed: {err}");
-                } else if DRAG_PERF_ENABLED.load(Ordering::Relaxed) {
-                    let render_end = Instant::now();
-                    let queue_delay = pending_ts
-                        .map(|ts| render_start.saturating_duration_since(ts))
-                        .unwrap_or_default();
-                    let render_cost = render_end.saturating_duration_since(render_start);
-                    let total = queue_delay.saturating_add(render_cost);
-                    eprintln!(
-                        "[drag_overlay perf] queue_delay_ms={:.1} render_cost_ms={:.1} total_ms={:.1}",
-                        duration_ms(queue_delay),
-                        duration_ms(render_cost),
-                        duration_ms(total),
-                    );
-                }
-            }
-            LRESULT(0)
-        }
-        WM_LBUTTONDOWN | WM_MOUSEMOVE | WM_LBUTTONUP => {
-            let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
-            if !ptr.is_null() {
-                let context = unsafe { &mut *ptr };
-                update_drag_state(context, hwnd, msg, lparam);
+                let _ = ensure_dib_size(context, context.dib_w.max(1), context.dib_h.max(1));
+                let _ = update_layered(context);
             }
             LRESULT(0)
         }
@@ -857,8 +657,4 @@ extern "system" fn drag_overlay_wnd_proc(
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
-}
-
-fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.0
 }
