@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
 const VLM_QUEUE_CAPACITY: usize = 4;
+const QWEN3VL_MIN_DIM: u32 = 32;
 
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
 
@@ -98,8 +99,9 @@ pub fn try_submit(job: VlmJob) {
 }
 
 pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Result<VlmOutput> {
+    let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
-    let image_b64 = STANDARD.encode(png_bytes);
+    let image_b64 = STANDARD.encode(&png_bytes);
 
     let system_prompt = format!(
         "你是精準的翻譯助理。分析提供的圖片，輸出嚴格 JSON：\
@@ -152,6 +154,31 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Resul
         translated: parsed.translated,
         duration_ms,
     })
+}
+
+fn ensure_min_dimension(png_bytes: &[u8]) -> io::Result<Vec<u8>> {
+    let img = image::load_from_memory(png_bytes)
+        .map_err(|err| io::Error::other(format!("decode png failed: {err}")))?;
+    let (w, h) = (img.width(), img.height());
+
+    if w == 0 || h == 0 {
+        return Err(io::Error::other("decode png failed: zero-sized image"));
+    }
+    if w >= QWEN3VL_MIN_DIM && h >= QWEN3VL_MIN_DIM {
+        return Ok(png_bytes.to_vec());
+    }
+
+    let min_dim = w.min(h);
+    let scale = (QWEN3VL_MIN_DIM + min_dim - 1) / min_dim;
+    let new_w = w * scale;
+    let new_h = h * scale;
+
+    let scaled = img.resize_exact(new_w, new_h, image::imageops::FilterType::Nearest);
+    let mut out = Vec::new();
+    scaled
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|err| io::Error::other(format!("encode png failed: {err}")))?;
+    Ok(out)
 }
 
 fn parse_model_output(content: &str) -> io::Result<ModelOutput> {
