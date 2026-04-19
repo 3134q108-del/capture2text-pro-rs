@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
+const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
 const VLM_QUEUE_CAPACITY: usize = 4;
 const QWEN3VL_MIN_DIM: u32 = 32;
 const REQUEST_TIMEOUT_MS: u64 = 30_000;
+const HEALTH_TIMEOUT_SECS: u64 = 5;
 
 pub type VlmResult<T> = std::result::Result<T, VlmError>;
 
@@ -45,6 +47,14 @@ impl From<io::Error> for VlmError {
     fn from(err: io::Error) -> Self {
         VlmError::Internal(err.to_string())
     }
+}
+
+#[derive(Debug)]
+pub enum HealthStatus {
+    Healthy,
+    OllamaDown,
+    ModelMissing { model: String },
+    Unknown(String),
 }
 
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
@@ -128,6 +138,50 @@ pub fn try_submit(job: VlmJob) {
         }
         Err(TrySendError::Disconnected(job)) => {
             eprintln!("[vlm] worker disconnected, dropping source={}", job.source);
+        }
+    }
+}
+
+pub fn check_health() -> HealthStatus {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(HEALTH_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => return HealthStatus::Unknown(format!("client build failed: {err}")),
+    };
+
+    let response = match client.get(OLLAMA_TAGS_URL).send() {
+        Ok(response) => response,
+        Err(err) => {
+            if err.is_connect() || err.is_timeout() {
+                return HealthStatus::OllamaDown;
+            }
+            return HealthStatus::Unknown(format!("request failed: {err}"));
+        }
+    };
+
+    let status = response.status();
+    let raw = match response.text() {
+        Ok(raw) => raw,
+        Err(err) => return HealthStatus::Unknown(format!("read body failed: {err}")),
+    };
+
+    if !status.is_success() {
+        return HealthStatus::Unknown(format!("HTTP {}: {}", status.as_u16(), raw));
+    }
+
+    let tags = match serde_json::from_str::<OllamaTagsResponse>(&raw) {
+        Ok(tags) => tags,
+        Err(err) => return HealthStatus::Unknown(format!("decode tags failed: {err}")),
+    };
+
+    let has_model = tags.models.iter().any(|model| model.name == OLLAMA_MODEL);
+    if has_model {
+        HealthStatus::Healthy
+    } else {
+        HealthStatus::ModelMissing {
+            model: OLLAMA_MODEL.to_string(),
         }
     }
 }
@@ -303,4 +357,14 @@ struct OllamaMessageResponse {
 struct ModelOutput {
     original: String,
     translated: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaTagModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaTagModel {
+    name: String,
 }

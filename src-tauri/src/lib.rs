@@ -13,6 +13,23 @@ pub use crate::capture::preprocess;
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|_app| {
+            match vlm::check_health() {
+                vlm::HealthStatus::Healthy => {
+                    println!("[vlm] ollama health: OK");
+                }
+                vlm::HealthStatus::OllamaDown => {
+                    eprintln!("[vlm] ollama health: daemon not reachable (is 'ollama serve' running?)");
+                }
+                vlm::HealthStatus::ModelMissing { model } => {
+                    eprintln!(
+                        "[vlm] ollama health: model '{}' not found (run: ollama pull {})",
+                        model, model
+                    );
+                }
+                vlm::HealthStatus::Unknown(msg) => {
+                    eprintln!("[vlm] ollama health: unknown status ({})", msg);
+                }
+            }
             vlm::init_worker();
             overlay::init()?;
             drag_overlay::init()?;
