@@ -1,9 +1,14 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
+import ResultView from "./result/ResultView";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
+const label = getCurrentWindow().label;
+const Root = label === "result" ? ResultView : App;
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <Root />
+  </StrictMode>,
 );
