@@ -29,11 +29,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
 };
 
+use crate::capture::pipeline::{MIN_OCR_HEIGHT, MIN_OCR_WIDTH};
 use crate::capture::ScreenRect as CaptureScreenRect;
 
 const DRAG_OVERLAY_CHANNEL_CAPACITY: usize = 8;
 const DRAG_OVERLAY_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 const DRAG_OVERLAY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const DRAG_OVERLAY_FINALIZE_TIMEOUT: Duration = Duration::from_millis(200);
 
 const WM_APP_CMD: u32 = WM_APP + 101;
 const TIMER_ID: usize = 1;
@@ -57,6 +59,7 @@ struct DragOverlayRuntime {
 enum DragOverlayCommand {
     BeginDrag,
     ShowRect(CaptureScreenRect),
+    FinalizeAndGetRect(SyncSender<Option<CaptureScreenRect>>),
     Cancel,
     Exit,
 }
@@ -131,6 +134,19 @@ pub fn show(rect: CaptureScreenRect) {
 
 pub fn cancel() {
     send_command(DragOverlayCommand::Cancel);
+}
+
+pub fn finalize_and_get_rect() -> Option<CaptureScreenRect> {
+    let runtime = DRAG_OVERLAY_RUNTIME.get()?;
+    let (tx, rx) = sync_channel(1);
+
+    runtime
+        .tx
+        .try_send(DragOverlayCommand::FinalizeAndGetRect(tx))
+        .ok()?;
+    wake_drag_overlay_thread();
+
+    rx.recv_timeout(DRAG_OVERLAY_FINALIZE_TIMEOUT).ok().flatten()
 }
 
 pub fn is_active() -> bool {
@@ -255,6 +271,11 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
         let result = match command {
             DragOverlayCommand::BeginDrag => begin_grow_mode(context),
             DragOverlayCommand::ShowRect(rect) => begin_fixed_mode(context, rect),
+            DragOverlayCommand::FinalizeAndGetRect(reply_tx) => {
+                let rect = finalize_rect(context);
+                let _ = reply_tx.send(rect);
+                Ok(())
+            }
             DragOverlayCommand::Cancel => hide_overlay(context),
             DragOverlayCommand::Exit => {
                 let _ = hide_overlay(context);
@@ -321,6 +342,35 @@ fn hide_overlay(context: &mut DragOverlayContext) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn finalize_rect(context: &mut DragOverlayContext) -> Option<CaptureScreenRect> {
+    let rect = match context.mode {
+        DragMode::Growing { pivot, current } => rect_from_points(pivot, current),
+        DragMode::Fixed => DragRect {
+            x: context.window_x,
+            y: context.window_y,
+            w: context.dib_w,
+            h: context.dib_h,
+        },
+        DragMode::Idle => {
+            let _ = hide_overlay(context);
+            return None;
+        }
+    };
+
+    let _ = hide_overlay(context);
+    let rect = normalize_rect(rect);
+    if rect.w < MIN_OCR_WIDTH || rect.h < MIN_OCR_HEIGHT {
+        return None;
+    }
+
+    Some(CaptureScreenRect {
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+    })
 }
 
 fn tick_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {

@@ -1,34 +1,69 @@
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use crate::capture::pipeline;
-use crate::capture::CaptureRequest;
+use crate::capture::{self, CaptureRequest};
+use crate::drag_overlay;
+use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
 
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 pub(crate) fn worker_loop(rx: Receiver<CaptureRequest>) {
-    for request in rx {
+    loop {
+        drain_mouse_events();
+
+        let request = match rx.recv_timeout(WORKER_POLL_INTERVAL) {
+            Ok(request) => request,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+
         if matches!(request, CaptureRequest::Exit) {
             break;
         }
 
-        let mode = pipeline::request_label(request);
-        match pipeline::run_for_request(request) {
-            Ok(Some(rect)) => {
-                println!(
-                    "[pipeline] mode={} detected screen=({},{},{},{})",
-                    mode,
-                    rect.x,
-                    rect.y,
-                    rect.w,
-                    rect.h
-                );
-                overlay::show(rect);
+        process_request(request);
+    }
+}
+
+fn drain_mouse_events() {
+    while let Some(event) = mouse_hook::try_recv_event() {
+        match event {
+            MouseEvent::LeftDown => {
+                let rect = drag_overlay::finalize_and_get_rect();
+                mouse_hook::uninstall();
+                if let Some(rect) = rect {
+                    capture::try_enqueue_request(CaptureRequest::SelectedRect {
+                        rect,
+                        queued_at: Instant::now(),
+                    });
+                }
             }
-            Ok(None) => {
-                println!("[pipeline] no text block");
-            }
-            Err(err) => {
-                eprintln!("[pipeline] failed: {err}");
-            }
+            MouseEvent::RightDown | MouseEvent::RightUp => {}
+        }
+    }
+}
+
+fn process_request(request: CaptureRequest) {
+    let mode = pipeline::request_label(request);
+    match pipeline::run_for_request(request) {
+        Ok(Some(rect)) => {
+            println!(
+                "[pipeline] mode={} detected screen=({},{},{},{})",
+                mode,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h
+            );
+            overlay::show(rect);
+        }
+        Ok(None) => {
+            println!("[pipeline] no text block");
+        }
+        Err(err) => {
+            eprintln!("[pipeline] failed: {err}");
         }
     }
 }
