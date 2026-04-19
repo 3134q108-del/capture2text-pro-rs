@@ -41,7 +41,7 @@ type WindowState = {
 const FONT_FAMILIES = [
   "Segoe UI",
   "Microsoft JhengHei",
-  "·L³n¥¿¶ÂÅé",
+  "å¾®è»Ÿæ­£é»‘é«”",
   "PMingLiU",
   "Arial",
   "Consolas",
@@ -502,7 +502,7 @@ export default function ResultView() {
           }}
           disabled={!original.trim()}
         >
-          {speakingTarget === "original" ? "Stop" : "Speak ­ì¤å"}
+          {speakingTarget === "original" ? "Stop" : "Speak åŸæ–‡"}
         </button>
 
         {showTranslated && (
@@ -513,7 +513,7 @@ export default function ResultView() {
             }}
             disabled={!translated.trim()}
           >
-            {speakingTarget === "translated" ? "Stop" : "Speak Ä¶¤å"}
+            {speakingTarget === "translated" ? "Stop" : "Speak è­¯æ–‡"}
           </button>
         )}
 
@@ -524,7 +524,7 @@ export default function ResultView() {
           }}
           disabled={!original}
         >
-          Copy ­ì¤å
+          Copy åŸæ–‡
         </button>
 
         {showTranslated && hasTranslatedText && (
@@ -535,7 +535,7 @@ export default function ResultView() {
             }}
             disabled={!translated}
           >
-            Copy Ä¶¤å
+            Copy è­¯æ–‡
           </button>
         )}
 
@@ -588,7 +588,7 @@ export default function ResultView() {
               className="font-modal-preview"
               style={{ fontFamily: fontFamilyDraft, fontSize: `${fontSizeDraftPt}pt` }}
             >
-              Capture2Text ¹wÄı Preview 123
+              Capture2Text é è¦½ Preview 123
             </div>
 
             <div className="font-modal-actions">

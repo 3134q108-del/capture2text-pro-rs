@@ -55,6 +55,17 @@ pub fn run() {
                     let _ = app_handle.emit_to("settings", "health-warning", warning);
                 });
             }
+            for label in ["result", "settings"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let window_cloned = window.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = window_cloned.hide();
+                        }
+                    });
+                }
+            }
             let app_handle = app.handle().clone();
             vlm::init_worker(app_handle);
             tray::install(&app.handle().clone())?;
