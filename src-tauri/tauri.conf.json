@@ -30,6 +30,15 @@
         "decorations": false,
         "resizable": true,
         "focus": false
+      },
+      {
+        "label": "settings",
+        "title": "設定 - Capture2Text",
+        "width": 700,
+        "height": 500,
+        "visible": false,
+        "skipTaskbar": true,
+        "resizable": true
       }
     ],
     "security": {

@@ -83,6 +83,14 @@ export default function ResultView() {
     }
   }
 
+  async function openSettings() {
+    try {
+      await invoke("show_settings_window");
+    } catch {
+      // ignore
+    }
+  }
+
   async function retranslate() {
     const text = original.trim();
     if (!text) return;
@@ -125,6 +133,9 @@ export default function ResultView() {
           {status === "success" && (
             <span className="result-duration">{durationMs} ms</span>
           )}
+          <button className="result-close" onClick={openSettings} aria-label="Settings">
+            ⚙
+          </button>
           <button className="result-close" onClick={hide} aria-label="Close">
             ×
           </button>

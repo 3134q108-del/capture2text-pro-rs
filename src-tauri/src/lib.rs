@@ -4,6 +4,7 @@ mod drag_overlay;
 mod error;
 mod hotkey;
 mod overlay;
+mod scenarios;
 mod tts;
 pub mod leptonica;
 pub mod mouse_hook;
@@ -14,6 +15,7 @@ pub use crate::capture::preprocess;
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
+            scenarios::init_runtime()?;
             match vlm::check_health() {
                 vlm::HealthStatus::Healthy => {
                     println!("[vlm] ollama health: OK");
@@ -44,6 +46,13 @@ pub fn run() {
             commands::files::read_file,
             commands::result_window::show_result_window,
             commands::result_window::hide_result_window,
+            commands::result_window::show_settings_window,
+            commands::result_window::hide_settings_window,
+            commands::scenarios::list_scenarios,
+            commands::scenarios::save_scenario,
+            commands::scenarios::delete_scenario,
+            commands::scenarios::get_active_scenario,
+            commands::scenarios::set_active_scenario,
             commands::tts::speak,
             commands::translate::retranslate
         ])

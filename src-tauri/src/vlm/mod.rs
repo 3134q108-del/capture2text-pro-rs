@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 
+use crate::scenarios;
+
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
@@ -24,22 +26,17 @@ pub type VlmResult<T> = std::result::Result<T, VlmError>;
 pub enum VlmError {
     #[error("ollama connection refused (is ollama running?)")]
     OllamaDown,
-
     #[error("ollama returned HTTP {status}: {body}")]
     OllamaHttpError { status: u16, body: String },
-
     #[error("vlm request timed out after {}ms", .0)]
     Timeout(u64),
-
     #[error("image preprocessing failed: {0}")]
     ImagePreprocessing(String),
-
     #[error(
         "response JSON decode failed: {source_error}; raw={raw_preview}",
         raw_preview = .raw.chars().take(200).collect::<String>()
     )]
     ResponseDecode { raw: String, source_error: String },
-
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -58,17 +55,19 @@ pub enum HealthStatus {
     Unknown(String),
 }
 
-static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
-
-struct VlmRuntime {
-    tx: SyncSender<VlmJob>,
-    _join: Mutex<Option<JoinHandle<()>>>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum TargetLang {
     Chinese,
     English,
+}
+
+impl TargetLang {
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Chinese => "繁體中文",
+            Self::English => "English",
+        }
+    }
 }
 
 pub enum VlmJob {
@@ -108,20 +107,18 @@ pub struct PartialOutput {
     pub translated: Option<String>,
 }
 
-impl TargetLang {
-    fn as_prompt_lang(self) -> &'static str {
-        match self {
-            Self::Chinese => "繁體中文",
-            Self::English => "English",
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 pub struct VlmOutput {
     pub original: String,
     pub translated: String,
     pub duration_ms: u64,
+}
+
+static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
+
+struct VlmRuntime {
+    tx: SyncSender<VlmJob>,
+    _join: Mutex<Option<JoinHandle<()>>>,
 }
 
 pub fn init_worker(app_handle: AppHandle) {
@@ -317,7 +314,7 @@ pub fn check_health() -> HealthStatus {
         Err(err) => return HealthStatus::Unknown(format!("decode tags failed: {err}")),
     };
 
-    let has_model = tags.models.iter().any(|model| model.name == OLLAMA_MODEL);
+    let has_model = tags.models.iter().any(|item| item.name == OLLAMA_MODEL);
     if has_model {
         HealthStatus::Healthy
     } else {
@@ -335,90 +332,25 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
-
-    let system_prompt = format!(
-        "你是精準的翻譯助理。分析提供的圖片，輸出嚴格 JSON：\n\
-{{\"original\":\"<圖片中的完整原文，保留原語言>\",\"translated\":\"<翻譯成 {} 的結果>\"}}\n\
-禁止 thinking、禁止解釋、禁止 markdown。",
-        target_lang.as_prompt_lang()
+    let request = build_chat_request(
+        build_system_prompt(target_lang),
+        "請分析這張圖片中的文字並翻譯。".to_string(),
+        Some(vec![image_b64]),
+        true,
     );
 
-    let request = OllamaChatRequest {
-        model: OLLAMA_MODEL.to_string(),
-        stream: true,
-        messages: vec![
-            OllamaMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-                images: None,
-            },
-            OllamaMessage {
-                role: "user".to_string(),
-                content: "請分析這張圖".to_string(),
-                images: Some(vec![image_b64]),
-            },
-        ],
-    };
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .build()
-        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
-
-    let response = client
-        .post(OLLAMA_CHAT_URL)
-        .json(&request)
-        .send()
-        .map_err(map_reqwest_send_error)?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let raw = response.text().map_err(map_reqwest_send_error)?;
-        return Err(VlmError::OllamaHttpError {
-            status: status.as_u16(),
-            body: raw,
+    let (raw_accumulated, duration_ns) = run_streaming_request(request, |raw| {
+        on_partial(&PartialOutput {
+            raw_accumulated: raw.to_string(),
+            original: extract_partial_json_string(raw, "original"),
+            translated: extract_partial_json_string(raw, "translated"),
         });
-    }
-
-    let mut raw_accumulated = String::new();
-    let mut final_duration_ns: Option<u64> = None;
-    let reader = BufReader::new(response);
-    for line in reader.lines() {
-        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
-            VlmError::ResponseDecode {
-                raw: trimmed.to_string(),
-                source_error: format!("stream chunk parse failed: {err}"),
-            }
-        })?;
-
-        if let Some(message) = chunk.message {
-            if !message.content.is_empty() {
-                raw_accumulated.push_str(&message.content);
-                on_partial(&PartialOutput {
-                    raw_accumulated: raw_accumulated.clone(),
-                    original: extract_partial_json_string(&raw_accumulated, "original"),
-                    translated: extract_partial_json_string(&raw_accumulated, "translated"),
-                });
-            }
-        }
-
-        if chunk.done {
-            final_duration_ns = chunk.total_duration;
-            break;
-        }
-    }
+    })?;
 
     let parsed = parse_model_output(&raw_accumulated)?;
-    let duration_ms = final_duration_ns
+    let duration_ms = duration_ns
         .map(|ns| ns / 1_000_000)
         .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
-
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
@@ -432,90 +364,25 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
     let started_at = Instant::now();
-
-    let system_prompt = format!(
-        "You are a precise translation assistant. Return strict JSON only: \
-{{\"original\":\"<keep original language>\",\"translated\":\"<translate to {}>\"}}. \
-No markdown, no explanations.",
-        target_lang.as_prompt_lang()
+    let request = build_chat_request(
+        build_system_prompt(target_lang),
+        text.to_string(),
+        None,
+        true,
     );
 
-    let request = OllamaChatRequest {
-        model: OLLAMA_MODEL.to_string(),
-        stream: true,
-        messages: vec![
-            OllamaMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-                images: None,
-            },
-            OllamaMessage {
-                role: "user".to_string(),
-                content: text.to_string(),
-                images: None,
-            },
-        ],
-    };
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .build()
-        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
-
-    let response = client
-        .post(OLLAMA_CHAT_URL)
-        .json(&request)
-        .send()
-        .map_err(map_reqwest_send_error)?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let raw = response.text().map_err(map_reqwest_send_error)?;
-        return Err(VlmError::OllamaHttpError {
-            status: status.as_u16(),
-            body: raw,
+    let (raw_accumulated, duration_ns) = run_streaming_request(request, |raw| {
+        on_partial(&PartialOutput {
+            raw_accumulated: raw.to_string(),
+            original: Some(text.to_string()),
+            translated: extract_partial_json_string(raw, "translated"),
         });
-    }
-
-    let mut raw_accumulated = String::new();
-    let mut final_duration_ns: Option<u64> = None;
-    let reader = BufReader::new(response);
-    for line in reader.lines() {
-        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
-            VlmError::ResponseDecode {
-                raw: trimmed.to_string(),
-                source_error: format!("stream chunk parse failed: {err}"),
-            }
-        })?;
-
-        if let Some(message) = chunk.message {
-            if !message.content.is_empty() {
-                raw_accumulated.push_str(&message.content);
-                on_partial(&PartialOutput {
-                    raw_accumulated: raw_accumulated.clone(),
-                    original: Some(text.to_string()),
-                    translated: extract_partial_json_string(&raw_accumulated, "translated"),
-                });
-            }
-        }
-
-        if chunk.done {
-            final_duration_ns = chunk.total_duration;
-            break;
-        }
-    }
+    })?;
 
     let parsed = parse_model_output(&raw_accumulated)?;
-    let duration_ms = final_duration_ns
+    let duration_ms = duration_ns
         .map(|ns| ns / 1_000_000)
         .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
-
     Ok(VlmOutput {
         original: text.to_string(),
         translated: parsed.translated,
@@ -527,30 +394,12 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
-
-    let system_prompt = format!(
-        "你是精準的翻譯助理。分析提供的圖片，輸出嚴格 JSON：\
-{{\"original\":\"<圖片中的完整原文，保留原語言>\",\"translated\":\"<翻譯成 {} 的結果>\"}}\
-禁止 thinking、禁止解釋、禁止 markdown。",
-        target_lang.as_prompt_lang()
+    let request = build_chat_request(
+        build_system_prompt(target_lang),
+        "請分析這張圖片中的文字並翻譯。".to_string(),
+        Some(vec![image_b64]),
+        false,
     );
-
-    let request = OllamaChatRequest {
-        model: OLLAMA_MODEL.to_string(),
-        stream: false,
-        messages: vec![
-            OllamaMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-                images: None,
-            },
-            OllamaMessage {
-                role: "user".to_string(),
-                content: "請分析這張圖".to_string(),
-                images: Some(vec![image_b64]),
-            },
-        ],
-    };
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
@@ -582,24 +431,112 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
     let content = response
         .message
         .as_ref()
-        .map(|message| message.content.as_str())
+        .map(|msg| msg.content.as_str())
         .ok_or_else(|| VlmError::ResponseDecode {
             raw: "<missing message.content>".to_string(),
             source_error: "missing message.content".to_string(),
         })?;
 
     let parsed = parse_model_output(content)?;
-
     let duration_ms = response
         .total_duration
         .map(|ns| ns / 1_000_000)
         .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
-
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
         duration_ms,
     })
+}
+
+fn run_streaming_request<F: FnMut(&str)>(
+    request: OllamaChatRequest,
+    mut on_partial_raw: F,
+) -> VlmResult<(String, Option<u64>)> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+        .build()
+        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+
+    let response = client
+        .post(OLLAMA_CHAT_URL)
+        .json(&request)
+        .send()
+        .map_err(map_reqwest_send_error)?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let raw = response.text().map_err(map_reqwest_send_error)?;
+        return Err(VlmError::OllamaHttpError {
+            status: status.as_u16(),
+            body: raw,
+        });
+    }
+
+    let mut raw_accumulated = String::new();
+    let mut final_duration_ns: Option<u64> = None;
+    let reader = BufReader::new(response);
+    for line in reader.lines() {
+        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
+            VlmError::ResponseDecode {
+                raw: trimmed.to_string(),
+                source_error: format!("stream chunk parse failed: {err}"),
+            }
+        })?;
+
+        if let Some(message) = chunk.message {
+            if !message.content.is_empty() {
+                raw_accumulated.push_str(&message.content);
+                on_partial_raw(&raw_accumulated);
+            }
+        }
+
+        if chunk.done {
+            final_duration_ns = chunk.total_duration;
+            break;
+        }
+    }
+
+    Ok((raw_accumulated, final_duration_ns))
+}
+
+fn build_system_prompt(target_lang: TargetLang) -> String {
+    let scenario = scenarios::current_scenario();
+    format!(
+        "{}\n\n輸出嚴格 JSON：{{\"original\":\"<圖片或文字中的完整原文，保留原語言>\",\"translated\":\"<翻譯成{}的結果>\"}}。禁止 thinking、禁止解釋、禁止 markdown。",
+        scenario.prompt,
+        target_lang.display_name()
+    )
+}
+
+fn build_chat_request(
+    system_prompt: String,
+    user_content: String,
+    images: Option<Vec<String>>,
+    stream: bool,
+) -> OllamaChatRequest {
+    OllamaChatRequest {
+        model: OLLAMA_MODEL.to_string(),
+        stream,
+        messages: vec![
+            OllamaMessage {
+                role: "system".to_string(),
+                content: system_prompt,
+                images: None,
+            },
+            OllamaMessage {
+                role: "user".to_string(),
+                content: user_content,
+                images,
+            },
+        ],
+    }
 }
 
 fn ensure_min_dimension(png_bytes: &[u8]) -> VlmResult<Vec<u8>> {
