@@ -100,6 +100,21 @@ export default function ResultView() {
     }
   }
 
+  function detectLang(text: string): "zh" | "en" {
+    return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
+  }
+
+  async function speakText(text: string) {
+    const content = text.trim();
+    if (!content) return;
+    try {
+      await invoke("speak", { text: content, lang: detectLang(content) });
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(String(err));
+    }
+  }
+
   return (
     <div className="result-root">
       <header className="result-header" data-tauri-drag-region>
@@ -136,6 +151,13 @@ export default function ResultView() {
                 </button>
                 <button
                   className="result-btn-copy"
+                  onClick={() => speakText(original)}
+                  disabled={!original.trim()}
+                >
+                  ▶ 朗讀
+                </button>
+                <button
+                  className="result-btn-copy"
                   onClick={retranslate}
                   disabled={!original.trim()}
                 >
@@ -153,13 +175,22 @@ export default function ResultView() {
           <section className="result-section">
             <div className="result-section-header">
               <span>譯文</span>
-              <button
-                className="result-btn-copy"
-                onClick={() => copy(translated)}
-                disabled={!translated}
-              >
-                複製
-              </button>
+              <div className="result-section-actions">
+                <button
+                  className="result-btn-copy"
+                  onClick={() => copy(translated)}
+                  disabled={!translated}
+                >
+                  複製
+                </button>
+                <button
+                  className="result-btn-copy"
+                  onClick={() => speakText(translated)}
+                  disabled={!translated.trim()}
+                >
+                  ▶ 朗讀
+                </button>
+              </div>
             </div>
             <textarea
               className="result-text"

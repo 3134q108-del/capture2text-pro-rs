@@ -4,6 +4,7 @@ mod drag_overlay;
 mod error;
 mod hotkey;
 mod overlay;
+mod tts;
 pub mod leptonica;
 pub mod mouse_hook;
 pub mod vlm;
@@ -43,6 +44,7 @@ pub fn run() {
             commands::files::read_file,
             commands::result_window::show_result_window,
             commands::result_window::hide_result_window,
+            commands::tts::speak,
             commands::translate::retranslate
         ])
         .build(tauri::generate_context!())
