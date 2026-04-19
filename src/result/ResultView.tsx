@@ -1,4 +1,4 @@
-嚜磨mport { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,6 +6,7 @@ import "./ResultView.css";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
 type SpeakingTarget = "original" | "translated" | null;
+type PopupFont = { family: string; size_pt: number } | null;
 
 type VlmEventPayload = {
   source: string;
@@ -34,7 +35,23 @@ type VlmSnapshot = {
 
 type WindowState = {
   popup_topmost: boolean;
+  popup_font: PopupFont;
 };
+
+const FONT_FAMILIES = [
+  "Segoe UI",
+  "Microsoft JhengHei",
+  "微軟正黑體",
+  "PMingLiU",
+  "Arial",
+  "Consolas",
+  "Courier New",
+  "Times New Roman",
+  "Verdana",
+  "Tahoma",
+];
+
+const FONT_SIZES_PT = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32];
 
 export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
@@ -43,9 +60,19 @@ export default function ResultView() {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
   const [isTopmost, setIsTopmost] = useState<boolean>(true);
+  const [popupFont, setPopupFont] = useState<PopupFont>(null);
+  const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
+  const [fontFamilyDraft, setFontFamilyDraft] = useState<string>("Segoe UI");
+  const [fontSizeDraftPt, setFontSizeDraftPt] = useState<number>(13);
   const playRequestRef = useRef(0);
+  const originalTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
+  const hasTranslatedText = translated.trim().length > 0;
+
+  const textStyle = popupFont
+    ? { fontFamily: popupFont.family, fontSize: `${popupFont.size_pt}pt` }
+    : undefined;
 
   function applyFinalPayload(p: VlmEventPayload) {
     console.log("[ResultView] applyFinal", p);
@@ -92,6 +119,7 @@ export default function ResultView() {
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
+    let offTtsDone: null | (() => void) = null;
 
     const setup = async () => {
       console.log("[ResultView] setup start");
@@ -133,6 +161,18 @@ export default function ResultView() {
         offFinal = null;
         return;
       }
+
+      offTtsDone = await listen("tts-done", () => {
+        setSpeakingTarget(null);
+      });
+      if (disposed) {
+        offTtsDone();
+        offTtsDone = null;
+        offPartial?.();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
+      }
     };
 
     void setup();
@@ -142,25 +182,27 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+      offTtsDone?.();
     };
   }, []);
 
   useEffect(() => {
-    console.log("[ResultView] topmost-effect mount");
+    console.log("[ResultView] window-state-effect mount");
     let disposed = false;
 
-    const loadTopmost = async () => {
+    const loadWindowState = async () => {
       try {
         const state = await invoke<WindowState>("get_window_state");
         if (!disposed) {
           setIsTopmost(Boolean(state.popup_topmost));
+          setPopupFont(state.popup_font ?? null);
         }
       } catch {
         // ignore
       }
     };
 
-    void loadTopmost();
+    void loadWindowState();
 
     return () => {
       disposed = true;
@@ -295,8 +337,57 @@ export default function ResultView() {
     return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
   }
 
-  async function toggleSpeak(target: Exclude<SpeakingTarget, null>, text: string) {
-    const content = text.trim();
+  function openFontModal() {
+    if (popupFont) {
+      setFontFamilyDraft(popupFont.family);
+      setFontSizeDraftPt(popupFont.size_pt);
+    } else {
+      setFontFamilyDraft("Segoe UI");
+      setFontSizeDraftPt(13);
+    }
+    setFontModalOpen(true);
+  }
+
+  async function applyFontModal() {
+    try {
+      await invoke("set_popup_font", { family: fontFamilyDraft, sizePt: fontSizeDraftPt });
+      setPopupFont({ family: fontFamilyDraft, size_pt: fontSizeDraftPt });
+      setFontModalOpen(false);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function resetFontModal() {
+    try {
+      await invoke("clear_popup_font");
+      setPopupFont(null);
+      setFontModalOpen(false);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function toggleSpeak(target: Exclude<SpeakingTarget, null>) {
+    let content = "";
+
+    if (target === "original") {
+      const originalTextarea = originalTextareaRef.current;
+      if (
+        originalTextarea &&
+        originalTextarea.selectionStart !== null &&
+        originalTextarea.selectionEnd !== null &&
+        originalTextarea.selectionStart < originalTextarea.selectionEnd
+      ) {
+        content = original
+          .substring(originalTextarea.selectionStart, originalTextarea.selectionEnd)
+          .trim();
+      } else {
+        content = original.trim();
+      }
+    } else {
+      content = translated.trim();
+    }
 
     if (speakingTarget === target) {
       playRequestRef.current += 1;
@@ -318,15 +409,13 @@ export default function ResultView() {
       if (speakingTarget !== null) {
         await invoke("stop_speaking");
       }
-      setSpeakingTarget(target);
       await invoke("speak", { text: content, lang: detectLang(content) });
+      if (playRequestRef.current === requestId) {
+        setSpeakingTarget(target);
+      }
     } catch (err) {
       setStatus("error");
       setErrorMsg(String(err));
-    } finally {
-      if (playRequestRef.current == requestId) {
-        setSpeakingTarget(null);
-      }
     }
   }
 
@@ -358,10 +447,12 @@ export default function ResultView() {
         ) : (
           <>
             <textarea
+              ref={originalTextareaRef}
               className="result-text"
               value={original}
               onChange={(event) => setOriginal(event.target.value)}
               placeholder={status === "idle" ? "Waiting for capture..." : ""}
+              style={textStyle}
             />
             {showTranslated && (
               <textarea
@@ -369,6 +460,7 @@ export default function ResultView() {
                 value={translated}
                 readOnly
                 placeholder={status === "idle" ? "Waiting for capture..." : ""}
+                style={textStyle}
               />
             )}
           </>
@@ -387,7 +479,7 @@ export default function ResultView() {
           Topmost
         </label>
 
-        <button className="c2t-btn" disabled>
+        <button className="c2t-btn" onClick={openFontModal}>
           Font...
         </button>
 
@@ -406,12 +498,24 @@ export default function ResultView() {
         <button
           className={`c2t-btn ${speakingTarget === "original" ? "playing" : ""}`}
           onClick={() => {
-            void toggleSpeak("original", original);
+            void toggleSpeak("original");
           }}
           disabled={!original.trim()}
         >
-          {speakingTarget === "original" ? "Stop" : "Speak"}
+          {speakingTarget === "original" ? "Stop" : "Speak 原文"}
         </button>
+
+        {showTranslated && (
+          <button
+            className={`c2t-btn ${speakingTarget === "translated" ? "playing" : ""}`}
+            onClick={() => {
+              void toggleSpeak("translated");
+            }}
+            disabled={!translated.trim()}
+          >
+            {speakingTarget === "translated" ? "Stop" : "Speak 譯文"}
+          </button>
+        )}
 
         <button
           className="c2t-btn"
@@ -420,8 +524,20 @@ export default function ResultView() {
           }}
           disabled={!original}
         >
-          Copy
+          Copy 原文
         </button>
+
+        {showTranslated && hasTranslatedText && (
+          <button
+            className="c2t-btn"
+            onClick={() => {
+              void copy(translated);
+            }}
+            disabled={!translated}
+          >
+            Copy 譯文
+          </button>
+        )}
 
         <button
           className="c2t-btn primary"
@@ -432,6 +548,78 @@ export default function ResultView() {
           OK
         </button>
       </div>
+
+      {fontModalOpen && (
+        <div className="font-modal-overlay" role="dialog" aria-modal="true" aria-label="Font Picker">
+          <div className="font-modal">
+            <h3 className="font-modal-title">Font</h3>
+            <label className="font-modal-field">
+              Family
+              <select
+                value={fontFamilyDraft}
+                onChange={(event) => {
+                  setFontFamilyDraft(event.target.value);
+                }}
+              >
+                {FONT_FAMILIES.map((family) => (
+                  <option key={family} value={family}>
+                    {family}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="font-modal-field">
+              Size (pt)
+              <select
+                value={fontSizeDraftPt}
+                onChange={(event) => {
+                  setFontSizeDraftPt(Number(event.target.value));
+                }}
+              >
+                {FONT_SIZES_PT.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div
+              className="font-modal-preview"
+              style={{ fontFamily: fontFamilyDraft, fontSize: `${fontSizeDraftPt}pt` }}
+            >
+              Capture2Text 預覽 Preview 123
+            </div>
+
+            <div className="font-modal-actions">
+              <button
+                className="c2t-btn primary"
+                onClick={() => {
+                  void applyFontModal();
+                }}
+              >
+                Apply
+              </button>
+              <button
+                className="c2t-btn"
+                onClick={() => {
+                  void resetFontModal();
+                }}
+              >
+                Reset to default
+              </button>
+              <button
+                className="c2t-btn"
+                onClick={() => {
+                  setFontModalOpen(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

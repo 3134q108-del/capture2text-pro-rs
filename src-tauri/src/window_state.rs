@@ -4,13 +4,19 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PopupFont {
+    pub family: String,
+    pub size_pt: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     pub popup_width: u32,
     pub popup_height: u32,
     pub popup_x: Option<i32>,
     pub popup_y: Option<i32>,
     pub popup_topmost: bool,
-    pub popup_font: Option<String>,
+    pub popup_font: Option<PopupFont>,
     pub popup_show_enabled: bool,
     pub save_to_clipboard: bool,
     pub translate_append_to_clipboard: bool,
@@ -69,6 +75,12 @@ pub fn set_popup_position(x: i32, y: i32) {
 pub fn set_popup_topmost(v: bool) {
     update(|state| {
         state.popup_topmost = v;
+    });
+}
+
+pub fn set_popup_font(font: Option<PopupFont>) {
+    update(|state| {
+        state.popup_font = font;
     });
 }
 

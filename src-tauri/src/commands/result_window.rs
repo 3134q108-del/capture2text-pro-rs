@@ -1,5 +1,5 @@
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager};
-use crate::window_state;
+use crate::window_state::{self, PopupFont};
 use crate::vlm::state::{self, VlmSnapshot};
 
 #[tauri::command]
@@ -50,6 +50,18 @@ pub fn set_popup_topmost(app: AppHandle, value: bool) -> Result<(), String> {
         .set_always_on_top(value)
         .map_err(|err| err.to_string())?;
     window.show().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn set_popup_font(family: String, size_pt: u32) -> Result<(), String> {
+    window_state::set_popup_font(Some(PopupFont { family, size_pt }));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_popup_font() -> Result<(), String> {
+    window_state::set_popup_font(None);
+    Ok(())
 }
 
 #[tauri::command]

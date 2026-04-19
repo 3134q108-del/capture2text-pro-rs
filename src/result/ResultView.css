@@ -39,6 +39,7 @@
 .result-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 6px;
   border-top: 1px solid var(--c2t-border);
@@ -46,7 +47,6 @@
 }
 
 .result-topmost {
-  margin-right: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -100,4 +100,57 @@
   border-radius: var(--c2t-radius);
   padding: 12px;
   line-height: 1.5;
+}
+
+.font-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.font-modal {
+  width: min(420px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid var(--c2t-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.font-modal-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.font-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.font-modal-field select {
+  width: 100%;
+  border: 1px solid var(--c2t-border);
+  border-radius: var(--c2t-radius);
+  padding: 4px 6px;
+  background: #ffffff;
+}
+
+.font-modal-preview {
+  border: 1px solid var(--c2t-border);
+  border-radius: var(--c2t-radius);
+  background: #fafafa;
+  padding: 10px;
+  line-height: 1.5;
+}
+
+.font-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }

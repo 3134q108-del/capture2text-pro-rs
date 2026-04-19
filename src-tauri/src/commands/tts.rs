@@ -1,14 +1,27 @@
 use crate::tts::{self, TtsConfig, TtsVoiceOption};
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-pub fn speak(text: String, lang: String) -> Result<(), String> {
+pub fn speak(app: AppHandle, text: String, lang: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("empty text".to_string());
     }
 
-    let voice_code = tts::current_voice_for_lang(lang.as_str());
-    let bytes = tts::synthesize_with_voice(&text, &voice_code).map_err(|err| err.to_string())?;
-    tts::play_mp3(&bytes).map_err(|err| err.to_string())?;
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let voice_code = tts::current_voice_for_lang(lang.as_str());
+            let bytes =
+                tts::synthesize_with_voice(&text, &voice_code).map_err(|err| err.to_string())?;
+            tts::play_mp3(&bytes).map_err(|err| err.to_string())?;
+            Ok(())
+        })();
+
+        if let Err(err) = result {
+            eprintln!("[tts] speak worker failed: {}", err);
+        }
+        let _ = app.emit("tts-done", ());
+    });
+
     Ok(())
 }
 
