@@ -25,7 +25,13 @@ pub struct BoundingBoxScreen {
     pub h: i32,
 }
 
-pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<BoundingBoxScreen>> {
+pub struct CaptureOutcome {
+    pub rect: BoundingBoxScreen,
+    pub png_bytes: Vec<u8>,
+    pub mode: HotkeyKind,
+}
+
+pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<CaptureOutcome>> {
     match request {
         CaptureRequest::Hotkey {
             kind,
@@ -41,7 +47,7 @@ fn run_for_hotkey_event(
     kind: HotkeyKind,
     cursor: CursorPoint,
     queued_at: Instant,
-) -> io::Result<Option<BoundingBoxScreen>> {
+) -> io::Result<Option<CaptureOutcome>> {
     let t0 = Instant::now();
     let perf = perf_enabled();
 
@@ -118,31 +124,37 @@ fn run_for_hotkey_event(
         return Ok(None);
     }
 
+    let detected = image::imageops::crop_imm(
+        &capture.image,
+        result.bbox_unscaled.x as u32,
+        result.bbox_unscaled.y as u32,
+        result.bbox_unscaled.w as u32,
+        result.bbox_unscaled.h as u32,
+    )
+    .to_image();
+
     if matches!(kind, HotkeyKind::W | HotkeyKind::E) {
-        let detected = image::imageops::crop_imm(
-            &capture.image,
-            result.bbox_unscaled.x as u32,
-            result.bbox_unscaled.y as u32,
-            result.bbox_unscaled.w as u32,
-            result.bbox_unscaled.h as u32,
-        )
-        .to_image();
         maybe_debug_save_capture(kind, &detected);
     }
+    let outcome_png = encode_png(&detected)?;
 
     if perf {
         print_perf(kind, t_queue, t_cap, t_enc, t_pix, t_ext, t_total);
     }
 
-    Ok(Some(BoundingBoxScreen {
-        x: capture.monitor_x + capture.crop_x + result.bbox_unscaled.x + 1,
-        y: capture.monitor_y + capture.crop_y + result.bbox_unscaled.y + 1,
-        w: result.bbox_unscaled.w,
-        h: result.bbox_unscaled.h,
+    Ok(Some(CaptureOutcome {
+        rect: BoundingBoxScreen {
+            x: capture.monitor_x + capture.crop_x + result.bbox_unscaled.x + 1,
+            y: capture.monitor_y + capture.crop_y + result.bbox_unscaled.y + 1,
+            w: result.bbox_unscaled.w,
+            h: result.bbox_unscaled.h,
+        },
+        png_bytes: outcome_png,
+        mode: kind,
     }))
 }
 
-fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Option<BoundingBoxScreen>> {
+fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Option<CaptureOutcome>> {
     let t0 = Instant::now();
     let perf = perf_enabled();
 
@@ -161,6 +173,7 @@ fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Opt
     }
 
     maybe_debug_save_capture(HotkeyKind::Q, &image);
+    let png_bytes = encode_png(&image)?;
 
     if perf {
         println!(
@@ -171,11 +184,15 @@ fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Opt
         );
     }
 
-    Ok(Some(BoundingBoxScreen {
-        x: clipped_rect.x,
-        y: clipped_rect.y,
-        w: clipped_rect.w,
-        h: clipped_rect.h,
+    Ok(Some(CaptureOutcome {
+        rect: BoundingBoxScreen {
+            x: clipped_rect.x,
+            y: clipped_rect.y,
+            w: clipped_rect.w,
+            h: clipped_rect.h,
+        },
+        png_bytes,
+        mode: HotkeyKind::Q,
     }))
 }
 

@@ -1,4 +1,5 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::capture::pipeline;
@@ -6,6 +7,7 @@ use crate::capture::{self, CaptureRequest};
 use crate::drag_overlay;
 use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
+use crate::vlm::{self, TargetLang};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -45,18 +47,27 @@ fn drain_mouse_events() {
 }
 
 fn process_request(request: CaptureRequest) {
-    let mode = pipeline::request_label(request);
     match pipeline::run_for_request(request) {
-        Ok(Some(rect)) => {
+        Ok(Some(outcome)) => {
             println!(
                 "[pipeline] mode={} detected screen=({},{},{},{})",
-                mode,
-                rect.x,
-                rect.y,
-                rect.w,
-                rect.h
+                pipeline::mode_label(outcome.mode),
+                outcome.rect.x,
+                outcome.rect.y,
+                outcome.rect.w,
+                outcome.rect.h
             );
-            overlay::show(rect);
+            overlay::show(outcome.rect);
+
+            let png = outcome.png_bytes;
+            thread::spawn(move || match vlm::ocr_and_translate(&png, TargetLang::Chinese) {
+                Ok(out) => {
+                    println!("[vlm] original: {}", out.original);
+                    println!("[vlm] translated: {}", out.translated);
+                    println!("[vlm] duration_ms: {}", out.duration_ms);
+                }
+                Err(err) => eprintln!("[vlm] failed: {err}"),
+            });
         }
         Ok(None) => {
             println!("[pipeline] no text block");
