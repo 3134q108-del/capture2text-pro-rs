@@ -446,22 +446,78 @@ export default function ResultView() {
           </div>
         ) : (
           <>
-            <textarea
-              ref={originalTextareaRef}
-              className="result-text"
-              value={original}
-              onChange={(event) => setOriginal(event.target.value)}
-              placeholder={status === "idle" ? "Waiting for capture..." : ""}
-              style={textStyle}
-            />
-            {showTranslated && (
+            <section className="result-section">
               <textarea
+                ref={originalTextareaRef}
                 className="result-text"
-                value={translated}
-                readOnly
+                value={original}
+                onChange={(event) => setOriginal(event.target.value)}
                 placeholder={status === "idle" ? "Waiting for capture..." : ""}
                 style={textStyle}
               />
+              <div className="result-section-toolbar">
+                <button
+                  className={`c2t-btn ${speakingTarget === "original" ? "playing" : ""}`}
+                  onClick={() => {
+                    void toggleSpeak("original");
+                  }}
+                  disabled={!original.trim()}
+                >
+                  {speakingTarget === "original" ? "Stop" : "Speak 原文"}
+                </button>
+                <button
+                  className="c2t-btn"
+                  onClick={() => {
+                    void copy(original);
+                  }}
+                  disabled={!original}
+                >
+                  Copy 原文
+                </button>
+              </div>
+            </section>
+
+            {showTranslated && (
+              <section className="result-section">
+                <textarea
+                  className="result-text"
+                  value={translated}
+                  readOnly
+                  placeholder={status === "idle" ? "Waiting for capture..." : ""}
+                  style={textStyle}
+                />
+                <div className="result-section-toolbar">
+                  <button
+                    className="c2t-btn"
+                    onClick={() => {
+                      void retranslate();
+                    }}
+                    disabled={!original.trim() || status === "loading"}
+                  >
+                    Retranslate
+                  </button>
+                  <button
+                    className={`c2t-btn ${speakingTarget === "translated" ? "playing" : ""}`}
+                    onClick={() => {
+                      void toggleSpeak("translated");
+                    }}
+                    disabled={!translated.trim()}
+                  >
+                    {speakingTarget === "translated" ? "Stop" : "Speak 譯文"}
+                  </button>
+                  {hasTranslatedText && (
+                    <button
+                      className="c2t-btn"
+                      onClick={() => {
+                        void copy(translated);
+                      }}
+                      disabled={!translated}
+                    >
+                      Copy 譯文
+                    </button>
+                  )}
+                </div>
+              </section>
             )}
           </>
         )}
@@ -479,74 +535,19 @@ export default function ResultView() {
           Topmost
         </label>
 
-        <button className="c2t-btn" onClick={openFontModal}>
-          Font...
-        </button>
-
-        {showTranslated && (
-          <button
-            className="c2t-btn"
-            onClick={() => {
-              void retranslate();
-            }}
-            disabled={!original.trim() || status === "loading"}
-          >
-            Retranslate
+        <div className="result-controls-actions">
+          <button className="c2t-btn" onClick={openFontModal}>
+            Font...
           </button>
-        )}
-
-        <button
-          className={`c2t-btn ${speakingTarget === "original" ? "playing" : ""}`}
-          onClick={() => {
-            void toggleSpeak("original");
-          }}
-          disabled={!original.trim()}
-        >
-          {speakingTarget === "original" ? "Stop" : "Speak 原文"}
-        </button>
-
-        {showTranslated && (
           <button
-            className={`c2t-btn ${speakingTarget === "translated" ? "playing" : ""}`}
+            className="c2t-btn primary"
             onClick={() => {
-              void toggleSpeak("translated");
+              void onOk();
             }}
-            disabled={!translated.trim()}
           >
-            {speakingTarget === "translated" ? "Stop" : "Speak 譯文"}
+            OK
           </button>
-        )}
-
-        <button
-          className="c2t-btn"
-          onClick={() => {
-            void copy(original);
-          }}
-          disabled={!original}
-        >
-          Copy 原文
-        </button>
-
-        {showTranslated && hasTranslatedText && (
-          <button
-            className="c2t-btn"
-            onClick={() => {
-              void copy(translated);
-            }}
-            disabled={!translated}
-          >
-            Copy 譯文
-          </button>
-        )}
-
-        <button
-          className="c2t-btn primary"
-          onClick={() => {
-            void onOk();
-          }}
-        >
-          OK
-        </button>
+        </div>
       </div>
 
       {fontModalOpen && (

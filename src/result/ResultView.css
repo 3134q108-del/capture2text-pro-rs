@@ -13,8 +13,24 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: 4px;
+  gap: 8px;
   padding: 6px;
+}
+
+.result-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 4px;
+}
+
+.result-section-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
 }
 
 .result-text {
@@ -51,6 +67,13 @@
   align-items: center;
   gap: 6px;
   color: var(--c2t-text);
+}
+
+.result-controls-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .c2t-btn {
