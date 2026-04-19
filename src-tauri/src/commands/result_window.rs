@@ -1,4 +1,10 @@
 use tauri::{AppHandle, Manager};
+use crate::vlm::state::{self, VlmSnapshot};
+
+#[tauri::command]
+pub fn get_latest_vlm_state() -> Option<VlmSnapshot> {
+    state::snapshot()
+}
 
 #[tauri::command]
 pub fn show_result_window(app: AppHandle) -> Result<(), String> {

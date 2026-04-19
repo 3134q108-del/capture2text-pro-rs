@@ -21,6 +21,16 @@ type VlmPartialEventPayload = {
   translated: string;
 };
 
+type VlmSnapshot = {
+  source: string;
+  status: "loading" | "success" | "error";
+  original: string;
+  translated: string;
+  duration_ms: number;
+  error: string | null;
+  updated_at: number;
+};
+
 export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
   const [source, setSource] = useState<string>("");
@@ -31,41 +41,96 @@ export default function ResultView() {
   const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
   const playRequestRef = useRef(0);
 
-  useEffect(() => {
-    const unlistenFinalPromise = listen<VlmEventPayload>("vlm-result", (event) => {
-      const p = event.payload;
-      setSource(p.source);
-      if (p.status === "success") {
-        setStatus("success");
-        setOriginal(p.original);
-        setTranslated(p.translated);
-        setDurationMs(p.duration_ms);
-        setErrorMsg("");
-      } else {
-        setStatus("error");
-        setErrorMsg(p.error ?? "unknown error");
-        setOriginal("");
-        setTranslated("");
-        setDurationMs(0);
-      }
-    });
+  function applyFinalPayload(p: VlmEventPayload) {
+    setSource(p.source);
+    if (p.status === "success") {
+      setStatus("success");
+      setOriginal(p.original);
+      setTranslated(p.translated);
+      setDurationMs(p.duration_ms);
+      setErrorMsg("");
+    } else {
+      setStatus("error");
+      setErrorMsg(p.error ?? "unknown error");
+      setOriginal("");
+      setTranslated("");
+      setDurationMs(0);
+    }
+  }
 
-    const unlistenPartialPromise = listen<VlmPartialEventPayload>(
-      "vlm-result-partial",
-      (event) => {
-        const p = event.payload;
-        setSource(p.source);
-        setStatus("loading");
-        setOriginal(p.original);
-        setTranslated(p.translated);
-        setDurationMs(0);
-        setErrorMsg("");
-      },
-    );
+  function applyPartialPayload(p: VlmPartialEventPayload) {
+    setSource(p.source);
+    setStatus("loading");
+    setOriginal(p.original);
+    setTranslated(p.translated);
+    setDurationMs(0);
+    setErrorMsg("");
+  }
+
+  function applySnapshot(snapshot: VlmSnapshot) {
+    setSource(snapshot.source);
+    setOriginal(snapshot.original);
+    setTranslated(snapshot.translated);
+    if (snapshot.status === "success") {
+      setStatus("success");
+      setDurationMs(snapshot.duration_ms);
+      setErrorMsg("");
+    } else if (snapshot.status === "error") {
+      setStatus("error");
+      setDurationMs(0);
+      setErrorMsg(snapshot.error ?? "unknown error");
+    } else {
+      setStatus("loading");
+      setDurationMs(0);
+      setErrorMsg("");
+    }
+  }
+
+  useEffect(() => {
+    let disposed = false;
+    let hasLiveEvent = false;
+    let offFinal: null | (() => void) = null;
+    let offPartial: null | (() => void) = null;
+
+    const setup = async () => {
+      offFinal = await listen<VlmEventPayload>("vlm-result", (event) => {
+        hasLiveEvent = true;
+        applyFinalPayload(event.payload);
+      });
+      if (disposed) {
+        offFinal();
+        offFinal = null;
+        return;
+      }
+
+      offPartial = await listen<VlmPartialEventPayload>("vlm-result-partial", (event) => {
+        hasLiveEvent = true;
+        applyPartialPayload(event.payload);
+      });
+      if (disposed) {
+        offPartial();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
+        return;
+      }
+
+      try {
+        const latest = await invoke<VlmSnapshot | null>("get_latest_vlm_state");
+        if (!disposed && !hasLiveEvent && latest) {
+          applySnapshot(latest);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void setup();
 
     return () => {
-      unlistenFinalPromise.then((off) => off());
-      unlistenPartialPromise.then((off) => off());
+      disposed = true;
+      offFinal?.();
+      offPartial?.();
     };
   }, []);
 

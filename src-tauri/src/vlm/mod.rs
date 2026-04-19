@@ -12,6 +12,8 @@ use thiserror::Error;
 
 use crate::scenarios;
 
+pub mod state;
+
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
@@ -167,12 +169,14 @@ pub fn init_worker(app_handle: AppHandle) {
     if VLM_RUNTIME.get().is_some() {
         return;
     }
+    state::init();
 
     let (tx, rx) = sync_channel::<VlmJob>(VLM_QUEUE_CAPACITY);
     let join = match thread::Builder::new()
         .name("vlm-worker".to_string())
         .spawn(move || {
             while let Ok(job) = rx.recv() {
+                state::set_loading(job_source(&job));
                 let (source, result) = match job {
                     VlmJob::OcrAndTranslate {
                         png_bytes,
@@ -302,11 +306,25 @@ fn job_source(job: &VlmJob) -> &'static str {
 }
 
 fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
+    match payload.status.as_str() {
+        "success" => state::set_success(
+            &payload.source,
+            &payload.original,
+            &payload.translated,
+            payload.duration_ms,
+        ),
+        "error" => state::set_error(
+            &payload.source,
+            payload.error.as_deref().unwrap_or("unknown error"),
+        ),
+        _ => {}
+    }
     ensure_result_window_visible(app_handle);
     let _ = app_handle.emit_to("result", "vlm-result", &payload);
 }
 
 fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayload) {
+    state::set_partial(&payload.source, &payload.original, &payload.translated);
     ensure_result_window_visible(app_handle);
     let _ = app_handle.emit_to("result", "vlm-result-partial", &payload);
 }

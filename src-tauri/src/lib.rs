@@ -69,6 +69,7 @@ pub fn run() {
             commands::result_window::hide_result_window,
             commands::result_window::show_settings_window,
             commands::result_window::hide_settings_window,
+            commands::result_window::get_latest_vlm_state,
             commands::scenarios::list_scenarios,
             commands::scenarios::save_scenario,
             commands::scenarios::delete_scenario,
