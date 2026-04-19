@@ -12,7 +12,7 @@ pub use crate::capture::preprocess;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .setup(|_app| {
+        .setup(|app| {
             match vlm::check_health() {
                 vlm::HealthStatus::Healthy => {
                     println!("[vlm] ollama health: OK");
@@ -30,7 +30,8 @@ pub fn run() {
                     eprintln!("[vlm] ollama health: unknown status ({})", msg);
                 }
             }
-            vlm::init_worker();
+            let app_handle = app.handle().clone();
+            vlm::init_worker(app_handle);
             overlay::init()?;
             drag_overlay::init()?;
             capture::start_worker()?;

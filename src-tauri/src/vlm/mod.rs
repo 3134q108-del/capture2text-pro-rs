@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
@@ -76,6 +77,16 @@ pub struct VlmJob {
     pub source: &'static str,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct VlmEventPayload {
+    pub source: String,
+    pub status: String,
+    pub original: String,
+    pub translated: String,
+    pub duration_ms: u64,
+    pub error: Option<String>,
+}
+
 impl TargetLang {
     fn as_prompt_lang(self) -> &'static str {
         match self {
@@ -92,7 +103,7 @@ pub struct VlmOutput {
     pub duration_ms: u64,
 }
 
-pub fn init_worker() {
+pub fn init_worker(app_handle: AppHandle) {
     if VLM_RUNTIME.get().is_some() {
         return;
     }
@@ -107,8 +118,32 @@ pub fn init_worker() {
                         println!("[vlm] source={} original: {}", job.source, out.original);
                         println!("[vlm] source={} translated: {}", job.source, out.translated);
                         println!("[vlm] source={} duration_ms: {}", job.source, out.duration_ms);
+                        emit_vlm_event(
+                            &app_handle,
+                            VlmEventPayload {
+                                source: job.source.to_string(),
+                                status: "success".to_string(),
+                                original: out.original,
+                                translated: out.translated,
+                                duration_ms: out.duration_ms,
+                                error: None,
+                            },
+                        );
                     }
-                    Err(err) => eprintln!("[vlm] source={} failed: {err}", job.source),
+                    Err(err) => {
+                        eprintln!("[vlm] source={} failed: {err}", job.source);
+                        emit_vlm_event(
+                            &app_handle,
+                            VlmEventPayload {
+                                source: job.source.to_string(),
+                                status: "error".to_string(),
+                                original: String::new(),
+                                translated: String::new(),
+                                duration_ms: 0,
+                                error: Some(err.to_string()),
+                            },
+                        );
+                    }
                 }
             }
         }) {
@@ -140,6 +175,14 @@ pub fn try_submit(job: VlmJob) {
             eprintln!("[vlm] worker disconnected, dropping source={}", job.source);
         }
     }
+}
+
+fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
+    if let Some(window) = app_handle.get_webview_window("result") {
+        let _ = window.center();
+        let _ = window.show();
+    }
+    let _ = app_handle.emit_to("result", "vlm-result", &payload);
 }
 
 pub fn check_health() -> HealthStatus {
