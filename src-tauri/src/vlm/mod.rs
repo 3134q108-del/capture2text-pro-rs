@@ -2,16 +2,50 @@ use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
 const VLM_QUEUE_CAPACITY: usize = 4;
 const QWEN3VL_MIN_DIM: u32 = 32;
+const REQUEST_TIMEOUT_MS: u64 = 30_000;
+
+pub type VlmResult<T> = std::result::Result<T, VlmError>;
+
+#[derive(Debug, Error)]
+pub enum VlmError {
+    #[error("ollama connection refused (is ollama running?)")]
+    OllamaDown,
+
+    #[error("ollama returned HTTP {status}: {body}")]
+    OllamaHttpError { status: u16, body: String },
+
+    #[error("vlm request timed out after {}ms", .0)]
+    Timeout(u64),
+
+    #[error("image preprocessing failed: {0}")]
+    ImagePreprocessing(String),
+
+    #[error(
+        "response JSON decode failed: {source_error}; raw={raw_preview}",
+        raw_preview = .raw.chars().take(200).collect::<String>()
+    )]
+    ResponseDecode { raw: String, source_error: String },
+
+    #[error("internal: {0}")]
+    Internal(String),
+}
+
+impl From<io::Error> for VlmError {
+    fn from(err: io::Error) -> Self {
+        VlmError::Internal(err.to_string())
+    }
+}
 
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
 
@@ -98,7 +132,7 @@ pub fn try_submit(job: VlmJob) {
     }
 }
 
-pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Result<VlmOutput> {
+pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult<VlmOutput> {
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
@@ -127,20 +161,41 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Resul
         ],
     };
 
-    let response = reqwest::blocking::Client::new()
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+        .build()
+        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+
+    let response = client
         .post(OLLAMA_CHAT_URL)
         .json(&request)
         .send()
-        .and_then(|res| res.error_for_status())
-        .map_err(|err| io::Error::other(format!("ollama request failed: {err}")))?
-        .json::<OllamaChatResponse>()
-        .map_err(|err| io::Error::other(format!("ollama response json parse failed: {err}")))?;
+        .map_err(map_reqwest_send_error)?;
+
+    let status = response.status();
+    let raw = response.text().map_err(map_reqwest_send_error)?;
+    if !status.is_success() {
+        return Err(VlmError::OllamaHttpError {
+            status: status.as_u16(),
+            body: raw,
+        });
+    }
+
+    let response = serde_json::from_str::<OllamaChatResponse>(&raw).map_err(|err| {
+        VlmError::ResponseDecode {
+            raw,
+            source_error: err.to_string(),
+        }
+    })?;
 
     let content = response
         .message
         .as_ref()
         .map(|message| message.content.as_str())
-        .ok_or_else(|| io::Error::other("ollama response missing message.content"))?;
+        .ok_or_else(|| VlmError::ResponseDecode {
+            raw: "<missing message.content>".to_string(),
+            source_error: "missing message.content".to_string(),
+        })?;
 
     let parsed = parse_model_output(content)?;
 
@@ -156,13 +211,15 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Resul
     })
 }
 
-fn ensure_min_dimension(png_bytes: &[u8]) -> io::Result<Vec<u8>> {
+fn ensure_min_dimension(png_bytes: &[u8]) -> VlmResult<Vec<u8>> {
     let img = image::load_from_memory(png_bytes)
-        .map_err(|err| io::Error::other(format!("decode png failed: {err}")))?;
+        .map_err(|err| VlmError::ImagePreprocessing(format!("decode png failed: {err}")))?;
     let (w, h) = (img.width(), img.height());
 
     if w == 0 || h == 0 {
-        return Err(io::Error::other("decode png failed: zero-sized image"));
+        return Err(VlmError::ImagePreprocessing(
+            "decode png failed: zero-sized image".to_string(),
+        ));
     }
     if w >= QWEN3VL_MIN_DIM && h >= QWEN3VL_MIN_DIM {
         return Ok(png_bytes.to_vec());
@@ -177,20 +234,34 @@ fn ensure_min_dimension(png_bytes: &[u8]) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     scaled
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-        .map_err(|err| io::Error::other(format!("encode png failed: {err}")))?;
+        .map_err(|err| VlmError::ImagePreprocessing(format!("encode png failed: {err}")))?;
     Ok(out)
 }
 
-fn parse_model_output(content: &str) -> io::Result<ModelOutput> {
+fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
     if let Ok(parsed) = serde_json::from_str::<ModelOutput>(content) {
         return Ok(parsed);
     }
 
-    let json_body = extract_first_json_object(content)
-        .ok_or_else(|| io::Error::other("model content does not contain a JSON object"))?;
+    let json_body = extract_first_json_object(content).ok_or_else(|| VlmError::ResponseDecode {
+        raw: content.to_string(),
+        source_error: "model content does not contain a JSON object".to_string(),
+    })?;
 
-    serde_json::from_str::<ModelOutput>(json_body)
-        .map_err(|err| io::Error::other(format!("model JSON parse failed: {err}")))
+    serde_json::from_str::<ModelOutput>(json_body).map_err(|err| VlmError::ResponseDecode {
+        raw: content.to_string(),
+        source_error: format!("model JSON parse failed: {err}"),
+    })
+}
+
+fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
+    if err.is_timeout() {
+        VlmError::Timeout(REQUEST_TIMEOUT_MS)
+    } else if err.is_connect() {
+        VlmError::OllamaDown
+    } else {
+        VlmError::Internal(format!("ollama request failed: {err}"))
+    }
 }
 
 fn extract_first_json_object(content: &str) -> Option<&str> {

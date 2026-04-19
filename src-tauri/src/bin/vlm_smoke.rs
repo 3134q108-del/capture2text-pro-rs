@@ -33,7 +33,8 @@ fn run() -> io::Result<()> {
     };
 
     let png_bytes = fs::read(png_path)?;
-    let output = ocr_and_translate(&png_bytes, target_lang)?;
+    let output = ocr_and_translate(&png_bytes, target_lang)
+        .map_err(|err| io::Error::other(err.to_string()))?;
     let output_json = serde_json::to_string_pretty(&output)
         .map_err(|err| io::Error::other(format!("serialize output failed: {err}")))?;
 
