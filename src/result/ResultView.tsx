@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import "./ResultView.css";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
@@ -131,6 +132,106 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let offResized: null | (() => void) = null;
+    let offMoved: null | (() => void) = null;
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+    const geometry = {
+      x: null as number | null,
+      y: null as number | null,
+      w: null as number | null,
+      h: null as number | null,
+    };
+
+    const scheduleSave = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        if (disposed) return;
+        const { x, y, w, h } = geometry;
+        if (x == null || y == null || w == null || h == null) return;
+        try {
+          await invoke("save_popup_window_geometry", { x, y, w, h });
+        } catch {
+          // ignore
+        }
+      }, 300);
+    };
+
+    const updateFromMoved = async (payload: {
+      toLogical: (scale: number) => { x: number; y: number };
+    }) => {
+      try {
+        const scale = await appWindow.scaleFactor();
+        const logical = new LogicalPosition(payload.toLogical(scale));
+        geometry.x = Math.round(logical.x);
+        geometry.y = Math.round(logical.y);
+        scheduleSave();
+      } catch {
+        // ignore
+      }
+    };
+
+    const updateFromResized = async (payload: {
+      toLogical: (scale: number) => { width: number; height: number };
+    }) => {
+      try {
+        const scale = await appWindow.scaleFactor();
+        const logical = new LogicalSize(payload.toLogical(scale));
+        geometry.w = Math.max(1, Math.round(logical.width));
+        geometry.h = Math.max(1, Math.round(logical.height));
+        scheduleSave();
+      } catch {
+        // ignore
+      }
+    };
+
+    const seedGeometry = async () => {
+      try {
+        const [scale, posPhysical, sizePhysical] = await Promise.all([
+          appWindow.scaleFactor(),
+          appWindow.outerPosition(),
+          appWindow.outerSize(),
+        ]);
+        const pos = new LogicalPosition(posPhysical.toLogical(scale));
+        const size = new LogicalSize(sizePhysical.toLogical(scale));
+        geometry.x = Math.round(pos.x);
+        geometry.y = Math.round(pos.y);
+        geometry.w = Math.max(1, Math.round(size.width));
+        geometry.h = Math.max(1, Math.round(size.height));
+      } catch {
+        // ignore
+      }
+    };
+
+    const setup = async () => {
+      offResized = await appWindow.onResized(({ payload }) => {
+        void updateFromResized(payload);
+      });
+      offMoved = await appWindow.onMoved(({ payload }) => {
+        void updateFromMoved(payload);
+      });
+
+      if (disposed) {
+        offResized?.();
+        offMoved?.();
+        return;
+      }
+
+      await seedGeometry();
+    };
+
+    void setup();
+
+    return () => {
+      disposed = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      offResized?.();
+      offMoved?.();
     };
   }, []);
 

@@ -10,6 +10,7 @@ mod output_lang;
 mod scenarios;
 mod tray;
 mod tts;
+mod window_state;
 pub mod leptonica;
 pub mod mouse_hook;
 pub mod vlm;
@@ -24,6 +25,7 @@ pub fn run() {
         .setup(|app| {
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
+            window_state::init_runtime();
             tts::init_config_runtime().map_err(std::io::Error::other)?;
             let health = vlm::check_health();
             match &health {
@@ -70,6 +72,8 @@ pub fn run() {
             commands::result_window::show_settings_window,
             commands::result_window::hide_settings_window,
             commands::result_window::get_latest_vlm_state,
+            commands::result_window::set_popup_topmost,
+            commands::result_window::save_popup_window_geometry,
             commands::scenarios::list_scenarios,
             commands::scenarios::save_scenario,
             commands::scenarios::delete_scenario,

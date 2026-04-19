@@ -21,15 +21,17 @@
       },
       {
         "label": "result",
-        "title": "Capture2Text Result",
-        "width": 500,
-        "height": 400,
+        "title": "Capture2Text - OCR Text",
+        "width": 661,
+        "height": 371,
         "visible": false,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "alwaysOnTop": true,
-        "decorations": false,
+        "decorations": true,
         "resizable": true,
-        "focus": false
+        "focus": false,
+        "minWidth": 360,
+        "minHeight": 180
       },
       {
         "label": "settings",

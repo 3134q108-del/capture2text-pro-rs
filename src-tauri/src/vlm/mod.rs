@@ -336,7 +336,6 @@ fn ensure_result_window_visible(app_handle: &AppHandle) {
     if window.is_visible().ok().unwrap_or(false) {
         return;
     }
-    let _ = window.center();
     let _ = window.show();
 }
 
