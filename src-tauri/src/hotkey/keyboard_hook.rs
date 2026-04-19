@@ -17,7 +17,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, PostThreadMessageW,
     SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_QUIT, WM_SYSKEYDOWN,
+    WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 const VK_Q: u32 = 0x51;
@@ -228,6 +228,18 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     return LRESULT(1);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    if message == WM_KEYUP || message == WM_SYSKEYUP {
+        let kbd = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let vk = kbd.vkCode;
+
+        if matches!(vk, VK_Q | VK_W | VK_E) {
+            let win_down = key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0));
+            if win_down {
+                return LRESULT(1);
             }
         }
     }
