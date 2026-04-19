@@ -5,6 +5,7 @@ mod error;
 mod hotkey;
 mod overlay;
 pub mod leptonica;
+pub mod mouse_hook;
 pub mod vlm;
 pub use crate::capture::preprocess;
 
