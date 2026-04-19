@@ -6,7 +6,7 @@ use crate::capture::{self, CaptureRequest};
 use crate::drag_overlay;
 use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
-use crate::vlm::{self, TargetLang, VlmJob};
+use crate::vlm::{self, TargetLang};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -58,11 +58,11 @@ fn process_request(request: CaptureRequest) {
             );
             overlay::show(outcome.rect);
 
-            vlm::try_submit(VlmJob {
-                png_bytes: outcome.png_bytes,
-                target_lang: TargetLang::Chinese,
-                source: pipeline::mode_label(outcome.mode),
-            });
+            vlm::try_submit_ocr(
+                outcome.png_bytes,
+                TargetLang::Chinese,
+                pipeline::mode_label(outcome.mode),
+            );
         }
         Ok(None) => {
             println!("[pipeline] no text block");

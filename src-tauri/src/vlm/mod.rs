@@ -71,10 +71,17 @@ pub enum TargetLang {
     English,
 }
 
-pub struct VlmJob {
-    pub png_bytes: Vec<u8>,
-    pub target_lang: TargetLang,
-    pub source: &'static str,
+pub enum VlmJob {
+    OcrAndTranslate {
+        png_bytes: Vec<u8>,
+        target_lang: TargetLang,
+        source: &'static str,
+    },
+    TranslateText {
+        text: String,
+        target_lang: TargetLang,
+        source: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,24 +134,56 @@ pub fn init_worker(app_handle: AppHandle) {
         .name("vlm-worker".to_string())
         .spawn(move || {
             while let Ok(job) = rx.recv() {
-                match ocr_and_translate_streaming(&job.png_bytes, job.target_lang, |partial| {
-                    emit_vlm_partial_event(
-                        &app_handle,
-                        VlmPartialEventPayload {
-                            source: job.source.to_string(),
-                            original: partial.original.clone().unwrap_or_default(),
-                            translated: partial.translated.clone().unwrap_or_default(),
-                        },
-                    );
-                }) {
+                let (source, result) = match job {
+                    VlmJob::OcrAndTranslate {
+                        png_bytes,
+                        target_lang,
+                        source,
+                    } => {
+                        let source_label = source.to_string();
+                        let source_for_partial = source_label.clone();
+                        let result = ocr_and_translate_streaming(&png_bytes, target_lang, |partial| {
+                            emit_vlm_partial_event(
+                                &app_handle,
+                                VlmPartialEventPayload {
+                                    source: source_for_partial.clone(),
+                                    original: partial.original.clone().unwrap_or_default(),
+                                    translated: partial.translated.clone().unwrap_or_default(),
+                                },
+                            );
+                        });
+                        (source_label, result)
+                    }
+                    VlmJob::TranslateText {
+                        text,
+                        target_lang,
+                        source,
+                    } => {
+                        let source_label = source.to_string();
+                        let source_for_partial = source_label.clone();
+                        let result = translate_text_streaming(&text, target_lang, |partial| {
+                            emit_vlm_partial_event(
+                                &app_handle,
+                                VlmPartialEventPayload {
+                                    source: source_for_partial.clone(),
+                                    original: partial.original.clone().unwrap_or_default(),
+                                    translated: partial.translated.clone().unwrap_or_default(),
+                                },
+                            );
+                        });
+                        (source_label, result)
+                    }
+                };
+
+                match result {
                     Ok(out) => {
-                        println!("[vlm] source={} original: {}", job.source, out.original);
-                        println!("[vlm] source={} translated: {}", job.source, out.translated);
-                        println!("[vlm] source={} duration_ms: {}", job.source, out.duration_ms);
+                        println!("[vlm] source={} original: {}", source, out.original);
+                        println!("[vlm] source={} translated: {}", source, out.translated);
+                        println!("[vlm] source={} duration_ms: {}", source, out.duration_ms);
                         emit_vlm_event(
                             &app_handle,
                             VlmEventPayload {
-                                source: job.source.to_string(),
+                                source,
                                 status: "success".to_string(),
                                 original: out.original,
                                 translated: out.translated,
@@ -154,11 +193,11 @@ pub fn init_worker(app_handle: AppHandle) {
                         );
                     }
                     Err(err) => {
-                        eprintln!("[vlm] source={} failed: {err}", job.source);
+                        eprintln!("[vlm] source={} failed: {err}", source);
                         emit_vlm_event(
                             &app_handle,
                             VlmEventPayload {
-                                source: job.source.to_string(),
+                                source,
                                 status: "error".to_string(),
                                 original: String::new(),
                                 translated: String::new(),
@@ -183,7 +222,23 @@ pub fn init_worker(app_handle: AppHandle) {
     });
 }
 
-pub fn try_submit(job: VlmJob) {
+pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: TargetLang, source: &'static str) {
+    try_submit(VlmJob::OcrAndTranslate {
+        png_bytes,
+        target_lang,
+        source,
+    });
+}
+
+pub fn try_submit_text(text: String, target_lang: TargetLang, source: &'static str) {
+    try_submit(VlmJob::TranslateText {
+        text,
+        target_lang,
+        source,
+    });
+}
+
+fn try_submit(job: VlmJob) {
     let Some(runtime) = VLM_RUNTIME.get() else {
         eprintln!("[vlm] worker not initialized, dropping request");
         return;
@@ -192,11 +247,18 @@ pub fn try_submit(job: VlmJob) {
     match runtime.tx.try_send(job) {
         Ok(()) => {}
         Err(TrySendError::Full(job)) => {
-            eprintln!("[vlm] queue full, dropping source={}", job.source);
+            eprintln!("[vlm] queue full, dropping source={}", job_source(&job));
         }
         Err(TrySendError::Disconnected(job)) => {
-            eprintln!("[vlm] worker disconnected, dropping source={}", job.source);
+            eprintln!("[vlm] worker disconnected, dropping source={}", job_source(&job));
         }
+    }
+}
+
+fn job_source(job: &VlmJob) -> &'static str {
+    match job {
+        VlmJob::OcrAndTranslate { source, .. } => source,
+        VlmJob::TranslateText { source, .. } => source,
     }
 }
 
@@ -359,6 +421,103 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
 
     Ok(VlmOutput {
         original: parsed.original,
+        translated: parsed.translated,
+        duration_ms,
+    })
+}
+
+pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
+    text: &str,
+    target_lang: TargetLang,
+    mut on_partial: F,
+) -> VlmResult<VlmOutput> {
+    let started_at = Instant::now();
+
+    let system_prompt = format!(
+        "You are a precise translation assistant. Return strict JSON only: \
+{{\"original\":\"<keep original language>\",\"translated\":\"<translate to {}>\"}}. \
+No markdown, no explanations.",
+        target_lang.as_prompt_lang()
+    );
+
+    let request = OllamaChatRequest {
+        model: OLLAMA_MODEL.to_string(),
+        stream: true,
+        messages: vec![
+            OllamaMessage {
+                role: "system".to_string(),
+                content: system_prompt,
+                images: None,
+            },
+            OllamaMessage {
+                role: "user".to_string(),
+                content: text.to_string(),
+                images: None,
+            },
+        ],
+    };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+        .build()
+        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+
+    let response = client
+        .post(OLLAMA_CHAT_URL)
+        .json(&request)
+        .send()
+        .map_err(map_reqwest_send_error)?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let raw = response.text().map_err(map_reqwest_send_error)?;
+        return Err(VlmError::OllamaHttpError {
+            status: status.as_u16(),
+            body: raw,
+        });
+    }
+
+    let mut raw_accumulated = String::new();
+    let mut final_duration_ns: Option<u64> = None;
+    let reader = BufReader::new(response);
+    for line in reader.lines() {
+        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
+            VlmError::ResponseDecode {
+                raw: trimmed.to_string(),
+                source_error: format!("stream chunk parse failed: {err}"),
+            }
+        })?;
+
+        if let Some(message) = chunk.message {
+            if !message.content.is_empty() {
+                raw_accumulated.push_str(&message.content);
+                on_partial(&PartialOutput {
+                    raw_accumulated: raw_accumulated.clone(),
+                    original: Some(text.to_string()),
+                    translated: extract_partial_json_string(&raw_accumulated, "translated"),
+                });
+            }
+        }
+
+        if chunk.done {
+            final_duration_ns = chunk.total_duration;
+            break;
+        }
+    }
+
+    let parsed = parse_model_output(&raw_accumulated)?;
+    let duration_ms = final_duration_ns
+        .map(|ns| ns / 1_000_000)
+        .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
+
+    Ok(VlmOutput {
+        original: text.to_string(),
         translated: parsed.translated,
         duration_ms,
     })

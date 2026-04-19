@@ -83,6 +83,23 @@ export default function ResultView() {
     }
   }
 
+  async function retranslate() {
+    const text = original.trim();
+    if (!text) return;
+    try {
+      setStatus("loading");
+      setSource("Retrans");
+      setTranslated("");
+      setDurationMs(0);
+      setErrorMsg("");
+      await invoke("retranslate", { text });
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(String(err));
+      setDurationMs(0);
+    }
+  }
+
   return (
     <div className="result-root">
       <header className="result-header" data-tauri-drag-region>
@@ -109,18 +126,27 @@ export default function ResultView() {
           <section className="result-section">
             <div className="result-section-header">
               <span>原文</span>
-              <button
-                className="result-btn-copy"
-                onClick={() => copy(original)}
-                disabled={!original}
-              >
-                複製
-              </button>
+              <div className="result-section-actions">
+                <button
+                  className="result-btn-copy"
+                  onClick={() => copy(original)}
+                  disabled={!original}
+                >
+                  複製
+                </button>
+                <button
+                  className="result-btn-copy"
+                  onClick={retranslate}
+                  disabled={!original.trim()}
+                >
+                  重新翻譯
+                </button>
+              </div>
             </div>
             <textarea
               className="result-text"
               value={original}
-              readOnly
+              onChange={(event) => setOriginal(event.target.value)}
               placeholder={status === "idle" ? "等待擷取..." : ""}
             />
           </section>

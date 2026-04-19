@@ -42,7 +42,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::files::read_file,
             commands::result_window::show_result_window,
-            commands::result_window::hide_result_window
+            commands::result_window::hide_result_window,
+            commands::translate::retranslate
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

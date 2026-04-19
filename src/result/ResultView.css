@@ -78,6 +78,12 @@
   color: #999;
 }
 
+.result-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .result-btn-copy {
   background: #3a3a3a;
   border: 1px solid #4a4a4a;
