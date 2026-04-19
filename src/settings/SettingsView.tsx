@@ -9,6 +9,17 @@ type Scenario = {
   builtin: boolean;
 };
 
+type TtsVoiceOption = {
+  code: string;
+  display_name: string;
+  lang: string;
+};
+
+type TtsConfig = {
+  active_zh: string;
+  active_en: string;
+};
+
 const EMPTY_SCENARIO: Scenario = {
   id: "",
   name: "",
@@ -21,6 +32,11 @@ export default function SettingsView() {
   const [activeId, setActiveId] = useState<string>("default");
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState<Scenario>(EMPTY_SCENARIO);
+  const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
+  const [ttsConfig, setTtsConfig] = useState<TtsConfig>({
+    active_zh: "",
+    active_en: "",
+  });
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   useEffect(() => {
@@ -32,13 +48,34 @@ export default function SettingsView() {
     [scenarios, selectedId],
   );
 
+  const zhVoices = useMemo(
+    () => voices.filter((voice) => voice.lang === "zh"),
+    [voices],
+  );
+  const enVoices = useMemo(
+    () => voices.filter((voice) => voice.lang === "en"),
+    [voices],
+  );
+
   async function refresh() {
     try {
-      const list = await invoke<Scenario[]>("list_scenarios");
-      const active = await invoke<string>("get_active_scenario");
+      const [list, active, voiceList, config] = await Promise.all([
+        invoke<Scenario[]>("list_scenarios"),
+        invoke<string>("get_active_scenario"),
+        invoke<TtsVoiceOption[]>("list_tts_voices"),
+        invoke<TtsConfig>("get_tts_config"),
+      ]);
+
       setScenarios(list);
       setActiveId(active);
-      const fallback = list.find((item) => item.id === active) ?? list[0] ?? null;
+      setVoices(voiceList);
+      setTtsConfig(config);
+
+      const fallback =
+        list.find((item) => item.id === selectedId) ??
+        list.find((item) => item.id === active) ??
+        list[0] ??
+        null;
       if (fallback) {
         setSelectedId(fallback.id);
         setDraft({ ...fallback });
@@ -61,24 +98,24 @@ export default function SettingsView() {
     const id = `custom_${Date.now()}`;
     const next: Scenario = {
       id,
-      name: "新情境",
+      name: "New Scenario",
       prompt: "",
       builtin: false,
     };
     setSelectedId(id);
     setDraft(next);
-    setStatusMsg("新情境尚未儲存");
+    setStatusMsg("Created draft scenario.");
   }
 
   async function saveScenario() {
     const id = draft.id.trim();
     const name = draft.name.trim();
     if (!id) {
-      setStatusMsg("ID 不能為空");
+      setStatusMsg("Scenario ID is required.");
       return;
     }
     if (!name) {
-      setStatusMsg("名稱不能為空");
+      setStatusMsg("Scenario name is required.");
       return;
     }
     try {
@@ -87,7 +124,7 @@ export default function SettingsView() {
       });
       await refresh();
       setSelectedId(id);
-      setStatusMsg("已儲存");
+      setStatusMsg("Scenario saved.");
     } catch (err) {
       setStatusMsg(String(err));
     }
@@ -98,7 +135,7 @@ export default function SettingsView() {
     try {
       await invoke("delete_scenario", { id: selectedScenario.id });
       await refresh();
-      setStatusMsg("已刪除");
+      setStatusMsg("Scenario deleted.");
     } catch (err) {
       setStatusMsg(String(err));
     }
@@ -109,7 +146,21 @@ export default function SettingsView() {
     try {
       await invoke("set_active_scenario", { id: draft.id.trim() });
       await refresh();
-      setStatusMsg("已設為使用中");
+      setStatusMsg("Active scenario updated.");
+    } catch (err) {
+      setStatusMsg(String(err));
+    }
+  }
+
+  async function setVoice(lang: "zh" | "en", code: string) {
+    try {
+      await invoke("set_tts_voice", { lang, code });
+      setTtsConfig((prev) =>
+        lang === "zh"
+          ? { ...prev, active_zh: code }
+          : { ...prev, active_en: code },
+      );
+      setStatusMsg("TTS voice updated.");
     } catch (err) {
       setStatusMsg(String(err));
     }
@@ -126,16 +177,16 @@ export default function SettingsView() {
   return (
     <div className="settings-root">
       <header className="settings-header">
-        <h1>情境管理</h1>
+        <h1>Settings</h1>
         <button className="settings-btn" onClick={closeSettings}>
-          關閉
+          Close
         </button>
       </header>
       <div className="settings-layout">
         <aside className="settings-sidebar">
           <div className="settings-sidebar-actions">
             <button className="settings-btn" onClick={createScenario}>
-              新增
+              New Scenario
             </button>
           </div>
           <ul className="settings-list">
@@ -148,7 +199,9 @@ export default function SettingsView() {
                   <span>{item.name}</span>
                   <span className="settings-badges">
                     {item.builtin && <small className="badge">Built-in</small>}
-                    {item.id === activeId && <small className="badge active">使用中</small>}
+                    {item.id === activeId && (
+                      <small className="badge active">Active</small>
+                    )}
                   </span>
                 </button>
               </li>
@@ -157,42 +210,81 @@ export default function SettingsView() {
         </aside>
         <main className="settings-editor">
           <label>
-            ID
+            Scenario ID
             <input
               value={draft.id}
               disabled={draft.builtin}
-              onChange={(event) => setDraft((prev) => ({ ...prev, id: event.target.value }))}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, id: event.target.value }))
+              }
             />
           </label>
           <label>
-            名稱
+            Scenario Name
             <input
               value={draft.name}
-              onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, name: event.target.value }))
+              }
             />
           </label>
           <label className="settings-prompt-label">
             Prompt
             <textarea
               value={draft.prompt}
-              onChange={(event) => setDraft((prev) => ({ ...prev, prompt: event.target.value }))}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, prompt: event.target.value }))
+              }
             />
           </label>
           <div className="settings-editor-actions">
             <button className="settings-btn primary" onClick={saveScenario}>
-              儲存
+              Save
             </button>
             <button className="settings-btn" onClick={applyActiveScenario}>
-              設為使用中
+              Set Active
             </button>
             <button
               className="settings-btn danger"
               onClick={deleteScenario}
               disabled={Boolean(selectedScenario?.builtin)}
             >
-              刪除
+              Delete
             </button>
           </div>
+
+          <section className="settings-tts">
+            <h2>TTS Voice</h2>
+            <div className="settings-tts-grid">
+              <label>
+                Chinese (zh-TW)
+                <select
+                  value={ttsConfig.active_zh}
+                  onChange={(event) => setVoice("zh", event.target.value)}
+                >
+                  {zhVoices.map((voice) => (
+                    <option key={voice.code} value={voice.code}>
+                      {voice.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                English (en-US)
+                <select
+                  value={ttsConfig.active_en}
+                  onChange={(event) => setVoice("en", event.target.value)}
+                >
+                  {enVoices.map((voice) => (
+                    <option key={voice.code} value={voice.code}>
+                      {voice.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+
           {statusMsg && <div className="settings-status">{statusMsg}</div>}
         </main>
       </div>

@@ -16,6 +16,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             scenarios::init_runtime()?;
+            tts::init_config_runtime().map_err(std::io::Error::other)?;
             match vlm::check_health() {
                 vlm::HealthStatus::Healthy => {
                     println!("[vlm] ollama health: OK");
@@ -54,6 +55,10 @@ pub fn run() {
             commands::scenarios::get_active_scenario,
             commands::scenarios::set_active_scenario,
             commands::tts::speak,
+            commands::tts::stop_speaking,
+            commands::tts::list_tts_voices,
+            commands::tts::get_tts_config,
+            commands::tts::set_tts_voice,
             commands::translate::retranslate
         ])
         .build(tauri::generate_context!())

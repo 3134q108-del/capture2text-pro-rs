@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./ResultView.css";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
+type SpeakingTarget = "original" | "translated" | null;
 
 type VlmEventPayload = {
   source: string;
@@ -27,6 +28,8 @@ export default function ResultView() {
   const [translated, setTranslated] = useState<string>("");
   const [durationMs, setDurationMs] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
+  const playRequestRef = useRef(0);
 
   useEffect(() => {
     const unlistenFinalPromise = listen<VlmEventPayload>("vlm-result", (event) => {
@@ -112,14 +115,38 @@ export default function ResultView() {
     return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
   }
 
-  async function speakText(text: string) {
+  async function toggleSpeak(target: Exclude<SpeakingTarget, null>, text: string) {
     const content = text.trim();
+
+    if (speakingTarget === target) {
+      playRequestRef.current += 1;
+      try {
+        await invoke("stop_speaking");
+      } catch {
+        // ignore
+      }
+      setSpeakingTarget(null);
+      return;
+    }
+
     if (!content) return;
+
+    const requestId = playRequestRef.current + 1;
+    playRequestRef.current = requestId;
+
     try {
+      if (speakingTarget !== null) {
+        await invoke("stop_speaking");
+      }
+      setSpeakingTarget(target);
       await invoke("speak", { text: content, lang: detectLang(content) });
     } catch (err) {
       setStatus("error");
       setErrorMsg(String(err));
+    } finally {
+      if (playRequestRef.current == requestId) {
+        setSpeakingTarget(null);
+      }
     }
   }
 
@@ -151,28 +178,28 @@ export default function ResultView() {
         <div className="result-body">
           <section className="result-section">
             <div className="result-section-header">
-              <span>原文</span>
+              <span>Original</span>
               <div className="result-section-actions">
                 <button
                   className="result-btn-copy"
                   onClick={() => copy(original)}
                   disabled={!original}
                 >
-                  複製
+                  Copy
                 </button>
                 <button
-                  className="result-btn-copy"
-                  onClick={() => speakText(original)}
+                  className={`result-btn-copy ${speakingTarget === "original" ? "playing" : ""}`}
+                  onClick={() => toggleSpeak("original", original)}
                   disabled={!original.trim()}
                 >
-                  ▶ 朗讀
+                  {speakingTarget === "original" ? "Stop" : "Speak"}
                 </button>
                 <button
                   className="result-btn-copy"
                   onClick={retranslate}
                   disabled={!original.trim()}
                 >
-                  重新翻譯
+                  Retranslate
                 </button>
               </div>
             </div>
@@ -180,26 +207,26 @@ export default function ResultView() {
               className="result-text"
               value={original}
               onChange={(event) => setOriginal(event.target.value)}
-              placeholder={status === "idle" ? "等待擷取..." : ""}
+              placeholder={status === "idle" ? "Waiting for capture..." : ""}
             />
           </section>
           <section className="result-section">
             <div className="result-section-header">
-              <span>譯文</span>
+              <span>Translated</span>
               <div className="result-section-actions">
                 <button
                   className="result-btn-copy"
                   onClick={() => copy(translated)}
                   disabled={!translated}
                 >
-                  複製
+                  Copy
                 </button>
                 <button
-                  className="result-btn-copy"
-                  onClick={() => speakText(translated)}
+                  className={`result-btn-copy ${speakingTarget === "translated" ? "playing" : ""}`}
+                  onClick={() => toggleSpeak("translated", translated)}
                   disabled={!translated.trim()}
                 >
-                  ▶ 朗讀
+                  {speakingTarget === "translated" ? "Stop" : "Speak"}
                 </button>
               </div>
             </div>
@@ -207,7 +234,7 @@ export default function ResultView() {
               className="result-text"
               value={translated}
               readOnly
-              placeholder={status === "idle" ? "等待擷取..." : ""}
+              placeholder={status === "idle" ? "Waiting for capture..." : ""}
             />
           </section>
         </div>

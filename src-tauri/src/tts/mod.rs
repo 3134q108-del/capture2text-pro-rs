@@ -1,9 +1,14 @@
+pub mod config;
+
 use std::io::Cursor;
-use std::thread;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use edge_tts_rust::{EdgeTtsClient, SpeakOptions};
 use rodio::{Decoder, OutputStream, Sink};
 use thiserror::Error;
+
+pub use config::{TtsConfig, TtsVoiceOption};
 
 #[derive(Debug, Error)]
 pub enum TtsError {
@@ -17,24 +22,50 @@ pub enum TtsError {
     AudioOutput(String),
     #[error("audio playback failed: {0}")]
     PlaybackFailed(String),
+    #[error("config error: {0}")]
+    Config(String),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum TtsVoice {
-    Chinese,
-    English,
+struct PlaybackState {
+    sink: Arc<Sink>,
+    generation: u64,
 }
 
-impl TtsVoice {
-    fn as_name(self) -> &'static str {
-        match self {
-            Self::Chinese => "zh-TW-HsiaoChenNeural",
-            Self::English => "en-US-AvaNeural",
-        }
+static ACTIVE_PLAYBACK: OnceLock<Mutex<Option<PlaybackState>>> = OnceLock::new();
+static PLAYBACK_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn playback_slot() -> &'static Mutex<Option<PlaybackState>> {
+    ACTIVE_PLAYBACK.get_or_init(|| Mutex::new(None))
+}
+
+pub fn init_config_runtime() -> Result<(), TtsError> {
+    config::init_runtime().map_err(|err| TtsError::Config(err.to_string()))
+}
+
+pub fn available_voices() -> Vec<TtsVoiceOption> {
+    config::available_voices()
+}
+
+pub fn get_config() -> Result<TtsConfig, TtsError> {
+    config::get_config_runtime().map_err(|err| TtsError::Config(err.to_string()))
+}
+
+pub fn set_voice(lang: &str, code: String) -> Result<(), TtsError> {
+    match lang {
+        "zh" => config::set_active_zh(code).map_err(|err| TtsError::Config(err.to_string())),
+        "en" => config::set_active_en(code).map_err(|err| TtsError::Config(err.to_string())),
+        _ => Err(TtsError::Config("unsupported language".to_string())),
     }
 }
 
-pub fn synthesize(text: &str, voice: TtsVoice) -> Result<Vec<u8>, TtsError> {
+pub fn current_voice_for_lang(lang: &str) -> String {
+    match lang {
+        "en" => config::current_en_voice(),
+        _ => config::current_zh_voice(),
+    }
+}
+
+pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, TtsError> {
     if text.trim().is_empty() {
         return Err(TtsError::EmptyText);
     }
@@ -47,7 +78,7 @@ pub fn synthesize(text: &str, voice: TtsVoice) -> Result<Vec<u8>, TtsError> {
     runtime.block_on(async move {
         let client = EdgeTtsClient::new().map_err(|err| TtsError::RequestFailed(err.to_string()))?;
         let options = SpeakOptions {
-            voice: voice.as_name().to_string(),
+            voice: voice_code.to_string(),
             ..SpeakOptions::default()
         };
         let result = client
@@ -63,27 +94,49 @@ pub fn play_mp3(bytes: &[u8]) -> Result<(), TtsError> {
         return Err(TtsError::PlaybackFailed("empty audio bytes".to_string()));
     }
 
-    let audio = bytes.to_vec();
-    thread::Builder::new()
-        .name("tts-playback".to_string())
-        .spawn(move || {
-            let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
-                eprintln!("[tts] audio output unavailable");
-                return;
-            };
-            let Ok(sink) = Sink::try_new(&stream_handle) else {
-                eprintln!("[tts] sink init failed");
-                return;
-            };
-            let cursor = Cursor::new(audio);
-            let Ok(source) = Decoder::new(cursor) else {
-                eprintln!("[tts] decoder init failed");
-                return;
-            };
-            sink.append(source);
-            sink.sleep_until_end();
-        })
-        .map_err(|err| TtsError::AudioOutput(err.to_string()))?;
+    stop_current();
+
+    let (stream, stream_handle) =
+        OutputStream::try_default().map_err(|err| TtsError::AudioOutput(err.to_string()))?;
+    let sink = Arc::new(Sink::try_new(&stream_handle).map_err(|err| {
+        TtsError::AudioOutput(format!("create sink failed: {err}"))
+    })?);
+    let source = Decoder::new(Cursor::new(bytes.to_vec()))
+        .map_err(|err| TtsError::PlaybackFailed(format!("decode mp3 failed: {err}")))?;
+
+    sink.append(source);
+
+    let generation = PLAYBACK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    {
+        let mut guard = playback_slot()
+            .lock()
+            .map_err(|_| TtsError::PlaybackFailed("playback lock poisoned".to_string()))?;
+        *guard = Some(PlaybackState {
+            sink: Arc::clone(&sink),
+            generation,
+        });
+    }
+
+    sink.sleep_until_end();
+    drop(stream);
+
+    if let Ok(mut guard) = playback_slot().lock() {
+        if guard
+            .as_ref()
+            .map(|state| state.generation == generation)
+            .unwrap_or(false)
+        {
+            let _ = guard.take();
+        }
+    }
 
     Ok(())
+}
+
+pub fn stop_current() {
+    if let Ok(mut guard) = playback_slot().lock() {
+        if let Some(state) = guard.take() {
+            state.sink.stop();
+        }
+    }
 }

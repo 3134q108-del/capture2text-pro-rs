@@ -103,6 +103,12 @@
   cursor: default;
 }
 
+.result-btn-copy.playing {
+  background: #8b2a2a;
+  border-color: #a83a3a;
+  color: #fff;
+}
+
 .result-text {
   flex: 1;
   background: #1e1e1e;
