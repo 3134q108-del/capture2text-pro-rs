@@ -306,6 +306,13 @@ fn job_source(job: &VlmJob) -> &'static str {
 }
 
 fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
+    eprintln!(
+        "[emit] vlm-result status={} source={} original.len={} translated.len={}",
+        payload.status,
+        payload.source,
+        payload.original.len(),
+        payload.translated.len()
+    );
     match payload.status.as_str() {
         "success" => state::set_success(
             &payload.source,
@@ -324,6 +331,12 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
 }
 
 fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayload) {
+    eprintln!(
+        "[emit] vlm-result-partial source={} original.len={} translated.len={}",
+        payload.source,
+        payload.original.len(),
+        payload.translated.len()
+    );
     state::set_partial(&payload.source, &payload.original, &payload.translated);
     ensure_result_window_visible(app_handle);
     let _ = app_handle.emit_to("result", "vlm-result-partial", &payload);
@@ -331,12 +344,22 @@ fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayloa
 
 fn ensure_result_window_visible(app_handle: &AppHandle) {
     let Some(window) = app_handle.get_webview_window("result") else {
+        eprintln!(
+            "[emit] ensure_result_window_visible: window_exists={} was_visible={}",
+            false, false
+        );
         return;
     };
-    if window.is_visible().ok().unwrap_or(false) {
+    let was_visible = window.is_visible().ok().unwrap_or(false);
+    eprintln!(
+        "[emit] ensure_result_window_visible: window_exists={} was_visible={}",
+        true, was_visible
+    );
+    if was_visible {
         return;
     }
     let _ = window.show();
+    thread::sleep(Duration::from_millis(50));
 }
 
 pub fn check_health() -> HealthStatus {

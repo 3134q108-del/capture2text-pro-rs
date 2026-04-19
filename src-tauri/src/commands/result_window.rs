@@ -4,6 +4,7 @@ use crate::vlm::state::{self, VlmSnapshot};
 
 #[tauri::command]
 pub fn get_latest_vlm_state() -> Option<VlmSnapshot> {
+    eprintln!("[cmd] get_latest_vlm_state called");
     state::snapshot()
 }
 

@@ -48,6 +48,7 @@ export default function ResultView() {
   const showTranslated = translated.trim().length > 0 || status === "loading";
 
   function applyFinalPayload(p: VlmEventPayload) {
+    console.log("[ResultView] applyFinal", p);
     if (p.status === "success") {
       setStatus("success");
       setOriginal(p.original);
@@ -62,6 +63,7 @@ export default function ResultView() {
   }
 
   function applyPartialPayload(p: VlmPartialEventPayload) {
+    console.log("[ResultView] applyPartial", p);
     setStatus("loading");
     setOriginal(p.original);
     setTranslated(p.translated);
@@ -69,6 +71,7 @@ export default function ResultView() {
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
+    console.log("[ResultView] applySnapshot", snapshot);
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
     if (snapshot.status === "success") {
@@ -84,18 +87,36 @@ export default function ResultView() {
   }
 
   useEffect(() => {
+    console.log("[ResultView] listener-effect mount");
     let disposed = false;
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
 
     const setup = async () => {
+      console.log("[ResultView] setup start");
       offFinal = await listen<VlmEventPayload>("vlm-result", (event) => {
         hasLiveEvent = true;
         applyFinalPayload(event.payload);
       });
+      console.log("[ResultView] vlm-result listener registered, disposed=", disposed);
       if (disposed) {
         offFinal();
+        offFinal = null;
+        return;
+      }
+
+      try {
+        const latest = await invoke<VlmSnapshot | null>("get_latest_vlm_state");
+        console.log("[ResultView] snapshot", latest);
+        if (!disposed && !hasLiveEvent && latest) {
+          applySnapshot(latest);
+        }
+      } catch {
+        // ignore
+      }
+      if (disposed) {
+        offFinal?.();
         offFinal = null;
         return;
       }
@@ -104,6 +125,7 @@ export default function ResultView() {
         hasLiveEvent = true;
         applyPartialPayload(event.payload);
       });
+      console.log("[ResultView] vlm-result-partial listener registered, disposed=", disposed);
       if (disposed) {
         offPartial();
         offPartial = null;
@@ -111,20 +133,12 @@ export default function ResultView() {
         offFinal = null;
         return;
       }
-
-      try {
-        const latest = await invoke<VlmSnapshot | null>("get_latest_vlm_state");
-        if (!disposed && !hasLiveEvent && latest) {
-          applySnapshot(latest);
-        }
-      } catch {
-        // ignore
-      }
     };
 
     void setup();
 
     return () => {
+      console.log("[ResultView] listener-effect cleanup");
       disposed = true;
       offFinal?.();
       offPartial?.();
@@ -132,6 +146,7 @@ export default function ResultView() {
   }, []);
 
   useEffect(() => {
+    console.log("[ResultView] topmost-effect mount");
     let disposed = false;
 
     const loadTopmost = async () => {
@@ -153,6 +168,7 @@ export default function ResultView() {
   }, []);
 
   useEffect(() => {
+    console.log("[ResultView] geometry-effect mount");
     const appWindow = getCurrentWindow();
     let disposed = false;
     let offResized: null | (() => void) = null;

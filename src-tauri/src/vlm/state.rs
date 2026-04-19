@@ -32,6 +32,7 @@ pub fn set_loading(source: impl AsRef<str>) {
 }
 
 pub fn set_partial(source: impl AsRef<str>, original: impl AsRef<str>, translated: impl AsRef<str>) {
+    eprintln!("[state] set_partial source={}", source.as_ref());
     update(VlmSnapshot {
         source: source.as_ref().to_string(),
         status: "loading".to_string(),
@@ -49,6 +50,11 @@ pub fn set_success(
     translated: impl AsRef<str>,
     duration_ms: u64,
 ) {
+    eprintln!(
+        "[state] set_success source={} original.len={}",
+        source.as_ref(),
+        original.as_ref().len()
+    );
     update(VlmSnapshot {
         source: source.as_ref().to_string(),
         status: "success".to_string(),
@@ -61,6 +67,7 @@ pub fn set_success(
 }
 
 pub fn set_error(source: impl AsRef<str>, error: impl Into<String>) {
+    eprintln!("[state] set_error source={}", source.as_ref());
     update(VlmSnapshot {
         source: source.as_ref().to_string(),
         status: "error".to_string(),
@@ -74,7 +81,10 @@ pub fn set_error(source: impl AsRef<str>, error: impl Into<String>) {
 
 pub fn snapshot() -> Option<VlmSnapshot> {
     let slot = LATEST.get_or_init(|| Mutex::new(None));
-    match slot.lock() {
+    let guard = slot.lock();
+    let is_some = guard.as_ref().ok().map(|g| g.is_some()).unwrap_or(false);
+    eprintln!("[state] snapshot get: is_some={}", is_some);
+    match guard {
         Ok(guard) => guard.clone(),
         Err(_) => None,
     }
