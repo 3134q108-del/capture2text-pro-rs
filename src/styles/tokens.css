@@ -1,0 +1,17 @@
+:root {
+  --c2t-bg: #ffffff;
+  --c2t-text: #000000;
+  --c2t-text-muted: #606060;
+  --c2t-border: #bfbfbf;
+  --c2t-border-focus: #0078d4;
+  --c2t-panel-bg: #f5f5f5;
+  --c2t-btn-bg: #f0f0f0;
+  --c2t-btn-hover: #e5e5e5;
+  --c2t-btn-active: #d0d0d0;
+  --c2t-btn-primary-bg: #0078d4;
+  --c2t-btn-primary-hover: #106ebe;
+  --c2t-btn-primary-text: #ffffff;
+  --c2t-font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+  --c2t-font-size: 13px;
+  --c2t-radius: 3px;
+}

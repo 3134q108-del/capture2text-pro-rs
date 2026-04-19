@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
@@ -32,57 +32,53 @@ type VlmSnapshot = {
   updated_at: number;
 };
 
+type WindowState = {
+  popup_topmost: boolean;
+};
+
 export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
-  const [source, setSource] = useState<string>("");
   const [original, setOriginal] = useState<string>("");
   const [translated, setTranslated] = useState<string>("");
-  const [durationMs, setDurationMs] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
+  const [isTopmost, setIsTopmost] = useState<boolean>(true);
   const playRequestRef = useRef(0);
 
+  const showTranslated = translated.trim().length > 0 || status === "loading";
+
   function applyFinalPayload(p: VlmEventPayload) {
-    setSource(p.source);
     if (p.status === "success") {
       setStatus("success");
       setOriginal(p.original);
       setTranslated(p.translated);
-      setDurationMs(p.duration_ms);
       setErrorMsg("");
     } else {
       setStatus("error");
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
-      setDurationMs(0);
     }
   }
 
   function applyPartialPayload(p: VlmPartialEventPayload) {
-    setSource(p.source);
     setStatus("loading");
     setOriginal(p.original);
     setTranslated(p.translated);
-    setDurationMs(0);
     setErrorMsg("");
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
-    setSource(snapshot.source);
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
     if (snapshot.status === "success") {
       setStatus("success");
-      setDurationMs(snapshot.duration_ms);
       setErrorMsg("");
     } else if (snapshot.status === "error") {
       setStatus("error");
-      setDurationMs(0);
       setErrorMsg(snapshot.error ?? "unknown error");
     } else {
       setStatus("loading");
-      setDurationMs(0);
       setErrorMsg("");
     }
   }
@@ -132,6 +128,27 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const loadTopmost = async () => {
+      try {
+        const state = await invoke<WindowState>("get_window_state");
+        if (!disposed) {
+          setIsTopmost(Boolean(state.popup_topmost));
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void loadTopmost();
+
+    return () => {
+      disposed = true;
     };
   }, []);
 
@@ -244,36 +261,17 @@ export default function ResultView() {
     }
   }
 
-  async function hide() {
-    try {
-      await invoke("hide_result_window");
-    } catch {
-      // ignore
-    }
-  }
-
-  async function openSettings() {
-    try {
-      await invoke("show_settings_window");
-    } catch {
-      // ignore
-    }
-  }
-
   async function retranslate() {
     const text = original.trim();
     if (!text) return;
     try {
       setStatus("loading");
-      setSource("Retrans");
       setTranslated("");
-      setDurationMs(0);
       setErrorMsg("");
       await invoke("retranslate", { text });
     } catch (err) {
       setStatus("error");
       setErrorMsg(String(err));
-      setDurationMs(0);
     }
   }
 
@@ -316,95 +314,108 @@ export default function ResultView() {
     }
   }
 
+  async function handleTopmostToggle(next: boolean) {
+    try {
+      await invoke("set_popup_topmost", { value: next });
+      setIsTopmost(next);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function onOk() {
+    try {
+      await invoke("hide_result_window");
+    } catch {
+      // ignore
+    }
+  }
+
   return (
     <div className="result-root">
-      <header className="result-header" data-tauri-drag-region>
-        <span className="result-title">
-          {source ? `Capture2Text · ${source}` : "Capture2Text"}
-        </span>
-        <div className="result-header-actions">
-          {status === "success" && (
-            <span className="result-duration">{durationMs} ms</span>
-          )}
-          <button className="result-close" onClick={openSettings} aria-label="Settings">
-            ⚙
-          </button>
-          <button className="result-close" onClick={hide} aria-label="Close">
-            ×
-          </button>
-        </div>
-      </header>
-
-      {status === "error" ? (
-        <div className="result-error">
-          <strong>Error:</strong>
-          <div>{errorMsg}</div>
-        </div>
-      ) : (
-        <div className="result-body">
-          <section className="result-section">
-            <div className="result-section-header">
-              <span>Original</span>
-              <div className="result-section-actions">
-                <button
-                  className="result-btn-copy"
-                  onClick={() => copy(original)}
-                  disabled={!original}
-                >
-                  Copy
-                </button>
-                <button
-                  className={`result-btn-copy ${speakingTarget === "original" ? "playing" : ""}`}
-                  onClick={() => toggleSpeak("original", original)}
-                  disabled={!original.trim()}
-                >
-                  {speakingTarget === "original" ? "Stop" : "Speak"}
-                </button>
-                <button
-                  className="result-btn-copy"
-                  onClick={retranslate}
-                  disabled={!original.trim()}
-                >
-                  Retranslate
-                </button>
-              </div>
-            </div>
+      <div className="result-body">
+        {status === "error" ? (
+          <div className="result-error">
+            <strong>Error:</strong>
+            <div>{errorMsg}</div>
+          </div>
+        ) : (
+          <>
             <textarea
               className="result-text"
               value={original}
               onChange={(event) => setOriginal(event.target.value)}
               placeholder={status === "idle" ? "Waiting for capture..." : ""}
             />
-          </section>
-          <section className="result-section">
-            <div className="result-section-header">
-              <span>Translated</span>
-              <div className="result-section-actions">
-                <button
-                  className="result-btn-copy"
-                  onClick={() => copy(translated)}
-                  disabled={!translated}
-                >
-                  Copy
-                </button>
-                <button
-                  className={`result-btn-copy ${speakingTarget === "translated" ? "playing" : ""}`}
-                  onClick={() => toggleSpeak("translated", translated)}
-                  disabled={!translated.trim()}
-                >
-                  {speakingTarget === "translated" ? "Stop" : "Speak"}
-                </button>
-              </div>
-            </div>
-            <textarea
-              className="result-text"
-              value={translated}
-              readOnly
-              placeholder={status === "idle" ? "Waiting for capture..." : ""}
-            />
-          </section>
-        </div>
-      )}
+            {showTranslated && (
+              <textarea
+                className="result-text"
+                value={translated}
+                readOnly
+                placeholder={status === "idle" ? "Waiting for capture..." : ""}
+              />
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="result-controls">
+        <label className="result-topmost">
+          <input
+            type="checkbox"
+            checked={isTopmost}
+            onChange={(event) => {
+              void handleTopmostToggle(event.target.checked);
+            }}
+          />
+          Topmost
+        </label>
+
+        <button className="c2t-btn" disabled>
+          Font...
+        </button>
+
+        {showTranslated && (
+          <button
+            className="c2t-btn"
+            onClick={() => {
+              void retranslate();
+            }}
+            disabled={!original.trim() || status === "loading"}
+          >
+            Retranslate
+          </button>
+        )}
+
+        <button
+          className={`c2t-btn ${speakingTarget === "original" ? "playing" : ""}`}
+          onClick={() => {
+            void toggleSpeak("original", original);
+          }}
+          disabled={!original.trim()}
+        >
+          {speakingTarget === "original" ? "Stop" : "Speak"}
+        </button>
+
+        <button
+          className="c2t-btn"
+          onClick={() => {
+            void copy(original);
+          }}
+          disabled={!original}
+        >
+          Copy
+        </button>
+
+        <button
+          className="c2t-btn primary"
+          onClick={() => {
+            void onOk();
+          }}
+        >
+          OK
+        </button>
+      </div>
     </div>
   );
 }

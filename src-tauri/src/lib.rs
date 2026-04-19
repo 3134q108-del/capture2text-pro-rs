@@ -72,6 +72,7 @@ pub fn run() {
             commands::result_window::show_settings_window,
             commands::result_window::hide_settings_window,
             commands::result_window::get_latest_vlm_state,
+            commands::result_window::get_window_state,
             commands::result_window::set_popup_topmost,
             commands::result_window::save_popup_window_geometry,
             commands::scenarios::list_scenarios,

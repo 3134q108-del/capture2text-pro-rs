@@ -8,6 +8,11 @@ pub fn get_latest_vlm_state() -> Option<VlmSnapshot> {
 }
 
 #[tauri::command]
+pub fn get_window_state() -> crate::window_state::WindowState {
+    crate::window_state::get()
+}
+
+#[tauri::command]
 pub fn show_result_window(app: AppHandle) -> Result<(), String> {
     let state = window_state::get();
     let window = app

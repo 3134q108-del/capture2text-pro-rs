@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import "./styles/tokens.css";
 import App from "./App";
 import ResultView from "./result/ResultView";
 import SettingsView from "./settings/SettingsView";
