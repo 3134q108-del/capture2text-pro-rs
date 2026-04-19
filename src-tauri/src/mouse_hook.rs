@@ -120,6 +120,10 @@ pub fn is_active() -> bool {
         .unwrap_or(false)
 }
 
+pub fn right_button_held() -> bool {
+    RIGHT_MOUSE_BUTTON_HELD.load(Ordering::Relaxed)
+}
+
 pub fn try_recv_event() -> Option<MouseEvent> {
     let runtime = MOUSE_HOOK_RUNTIME.get()?;
     let rx_guard = runtime.rx.lock().ok()?;

@@ -31,6 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::capture::pipeline::{MIN_OCR_HEIGHT, MIN_OCR_WIDTH};
 use crate::capture::ScreenRect as CaptureScreenRect;
+use crate::mouse_hook;
 
 const DRAG_OVERLAY_CHANNEL_CAPACITY: usize = 8;
 const DRAG_OVERLAY_INIT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -41,10 +42,8 @@ const WM_APP_CMD: u32 = WM_APP + 101;
 const TIMER_ID: usize = 1;
 const TIMER_INTERVAL_MS: u32 = 10;
 
-// QColor(255, 0, 0, 64) premultiplied to BGRA bytes.
-const FILL_BGRA_PREMULT: u32 = u32::from_le_bytes([0, 0, 64, 64]);
-// QColor(255, 0, 0, 255) BGRA bytes.
-const BORDER_BGRA_PREMULT: u32 = u32::from_le_bytes([0, 0, 255, 255]);
+const FILL_BGRA_PREMULT: u32 = premult_bgra(255, 0, 0, 64);
+const BORDER_BGRA_PREMULT: u32 = premult_bgra(255, 0, 0, 255);
 
 static DRAG_OVERLAY_RUNTIME: OnceLock<DragOverlayRuntime> = OnceLock::new();
 static DRAG_OVERLAY_HWND_RAW: AtomicIsize = AtomicIsize::new(0);
@@ -89,6 +88,8 @@ struct DragOverlayContext {
     window_x: i32,
     window_y: i32,
     mode: DragMode,
+    move_box_size: Option<(i32, i32)>,
+    right_held_prev: bool,
 }
 
 pub fn init() -> io::Result<()> {
@@ -220,6 +221,8 @@ fn run_drag_overlay_thread(
         window_x: 0,
         window_y: 0,
         mode: DragMode::Idle,
+        move_box_size: None,
+        right_held_prev: false,
     });
 
     ensure_dib_size(&mut context, 1, 1)?;
@@ -300,6 +303,8 @@ fn begin_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
         pivot: (cursor.x, cursor.y),
         current: (cursor.x, cursor.y),
     };
+    context.move_box_size = None;
+    context.right_held_prev = false;
     DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
 
     unsafe {
@@ -323,6 +328,8 @@ fn begin_fixed_mode(context: &mut DragOverlayContext, rect: CaptureScreenRect) -
     });
 
     context.mode = DragMode::Fixed;
+    context.move_box_size = None;
+    context.right_held_prev = false;
     DRAG_OVERLAY_ACTIVE.store(true, Ordering::Relaxed);
 
     unsafe {
@@ -334,6 +341,8 @@ fn begin_fixed_mode(context: &mut DragOverlayContext, rect: CaptureScreenRect) -
 
 fn hide_overlay(context: &mut DragOverlayContext) -> io::Result<()> {
     context.mode = DragMode::Idle;
+    context.move_box_size = None;
+    context.right_held_prev = false;
     DRAG_OVERLAY_ACTIVE.store(false, Ordering::Relaxed);
 
     unsafe {
@@ -378,21 +387,55 @@ fn tick_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
         return Ok(());
     };
 
+    let right_held = mouse_hook::right_button_held();
+    let current_rect = normalize_rect(rect_from_points(pivot, current));
+    if right_held && !context.right_held_prev {
+        context.move_box_size = Some((current_rect.w, current_rect.h));
+    } else if !right_held && context.right_held_prev {
+        context.move_box_size = None;
+    }
+    context.right_held_prev = right_held;
+
     let Some(cursor) = cursor_pos() else {
         return Ok(());
     };
 
     let current_xy = (cursor.x, cursor.y);
-    if current_xy == current {
+    if current_xy == current && !right_held {
         return Ok(());
     }
 
+    let mut next_pivot = pivot;
+    let next_current = current_xy;
+
+    if right_held {
+        let (box_w, box_h) = context
+            .move_box_size
+            .unwrap_or((current_rect.w.max(1), current_rect.h.max(1)));
+
+        if current_xy.0 < next_pivot.0 {
+            let x1 = current_xy.0;
+            next_pivot.0 = x1 + box_w;
+        } else {
+            let x2 = current_xy.0;
+            next_pivot.0 = x2 - box_w;
+        }
+
+        if current_xy.1 < next_pivot.1 {
+            let y1 = current_xy.1;
+            next_pivot.1 = y1 + box_h;
+        } else {
+            let y2 = current_xy.1;
+            next_pivot.1 = y2 - box_h;
+        }
+    }
+
     context.mode = DragMode::Growing {
-        pivot,
-        current: current_xy,
+        pivot: next_pivot,
+        current: next_current,
     };
 
-    apply_rect(context, rect_from_points(pivot, current_xy))
+    apply_rect(context, rect_from_points(next_pivot, next_current))
 }
 
 fn rect_from_points(a: (i32, i32), b: (i32, i32)) -> DragRect {
@@ -614,6 +657,19 @@ fn draw_box(context: &DragOverlayContext, w: i32, h: i32) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+const fn premult_channel(channel: u8, alpha: u8) -> u8 {
+    ((channel as u16 * alpha as u16 + 127) / 255) as u8
+}
+
+const fn premult_bgra(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    u32::from_le_bytes([
+        premult_channel(b, a),
+        premult_channel(g, a),
+        premult_channel(r, a),
+        a,
+    ])
 }
 
 fn update_layered(context: &DragOverlayContext) -> io::Result<()> {
