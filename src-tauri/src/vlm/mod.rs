@@ -1,4 +1,7 @@
 use std::io;
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::{Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use base64::engine::general_purpose::STANDARD;
@@ -7,11 +10,25 @@ use serde::{Deserialize, Serialize};
 
 const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
+const VLM_QUEUE_CAPACITY: usize = 4;
+
+static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
+
+struct VlmRuntime {
+    tx: SyncSender<VlmJob>,
+    _join: Mutex<Option<JoinHandle<()>>>,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum TargetLang {
     Chinese,
     English,
+}
+
+pub struct VlmJob {
+    pub png_bytes: Vec<u8>,
+    pub target_lang: TargetLang,
+    pub source: &'static str,
 }
 
 impl TargetLang {
@@ -28,6 +45,56 @@ pub struct VlmOutput {
     pub original: String,
     pub translated: String,
     pub duration_ms: u64,
+}
+
+pub fn init_worker() {
+    if VLM_RUNTIME.get().is_some() {
+        return;
+    }
+
+    let (tx, rx) = sync_channel::<VlmJob>(VLM_QUEUE_CAPACITY);
+    let join = match thread::Builder::new()
+        .name("vlm-worker".to_string())
+        .spawn(move || {
+            while let Ok(job) = rx.recv() {
+                match ocr_and_translate(&job.png_bytes, job.target_lang) {
+                    Ok(out) => {
+                        println!("[vlm] source={} original: {}", job.source, out.original);
+                        println!("[vlm] source={} translated: {}", job.source, out.translated);
+                        println!("[vlm] source={} duration_ms: {}", job.source, out.duration_ms);
+                    }
+                    Err(err) => eprintln!("[vlm] source={} failed: {err}", job.source),
+                }
+            }
+        }) {
+        Ok(handle) => handle,
+        Err(err) => {
+            eprintln!("[vlm] worker spawn failed: {err}");
+            return;
+        }
+    };
+
+    let _ = VLM_RUNTIME.set(VlmRuntime {
+        tx,
+        _join: Mutex::new(Some(join)),
+    });
+}
+
+pub fn try_submit(job: VlmJob) {
+    let Some(runtime) = VLM_RUNTIME.get() else {
+        eprintln!("[vlm] worker not initialized, dropping request");
+        return;
+    };
+
+    match runtime.tx.try_send(job) {
+        Ok(()) => {}
+        Err(TrySendError::Full(job)) => {
+            eprintln!("[vlm] queue full, dropping source={}", job.source);
+        }
+        Err(TrySendError::Disconnected(job)) => {
+            eprintln!("[vlm] worker disconnected, dropping source={}", job.source);
+        }
+    }
 }
 
 pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> io::Result<VlmOutput> {

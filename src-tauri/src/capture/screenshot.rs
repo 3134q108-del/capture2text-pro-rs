@@ -1,5 +1,4 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::capture::pipeline;
@@ -7,7 +6,7 @@ use crate::capture::{self, CaptureRequest};
 use crate::drag_overlay;
 use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
-use crate::vlm::{self, TargetLang};
+use crate::vlm::{self, TargetLang, VlmJob};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -59,14 +58,10 @@ fn process_request(request: CaptureRequest) {
             );
             overlay::show(outcome.rect);
 
-            let png = outcome.png_bytes;
-            thread::spawn(move || match vlm::ocr_and_translate(&png, TargetLang::Chinese) {
-                Ok(out) => {
-                    println!("[vlm] original: {}", out.original);
-                    println!("[vlm] translated: {}", out.translated);
-                    println!("[vlm] duration_ms: {}", out.duration_ms);
-                }
-                Err(err) => eprintln!("[vlm] failed: {err}"),
+            vlm::try_submit(VlmJob {
+                png_bytes: outcome.png_bytes,
+                target_lang: TargetLang::Chinese,
+                source: pipeline::mode_label(outcome.mode),
             });
         }
         Ok(None) => {

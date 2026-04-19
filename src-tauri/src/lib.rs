@@ -13,6 +13,7 @@ pub use crate::capture::preprocess;
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|_app| {
+            vlm::init_worker();
             overlay::init()?;
             drag_overlay::init()?;
             capture::start_worker()?;
