@@ -20,6 +20,16 @@
   font-size: 16px;
 }
 
+.health-warning {
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid #8b2d2d;
+  border-radius: 6px;
+  background: #3b1818;
+  color: #ffb3b3;
+  font-size: 12px;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: 260px 1fr;

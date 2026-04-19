@@ -1,3 +1,5 @@
+use tauri::{Emitter, Manager};
+
 mod capture;
 mod commands;
 mod drag_overlay;
@@ -23,7 +25,8 @@ pub fn run() {
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
             tts::init_config_runtime().map_err(std::io::Error::other)?;
-            match vlm::check_health() {
+            let health = vlm::check_health();
+            match &health {
                 vlm::HealthStatus::Healthy => {
                     println!("[vlm] ollama health: OK");
                 }
@@ -39,6 +42,16 @@ pub fn run() {
                 vlm::HealthStatus::Unknown(msg) => {
                     eprintln!("[vlm] ollama health: unknown status ({})", msg);
                 }
+            }
+            if let Some(warning) = health.to_warning() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(window) = app_handle.get_webview_window("settings") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    let _ = app_handle.emit_to("settings", "health-warning", warning);
+                });
             }
             let app_handle = app.handle().clone();
             vlm::init_worker(app_handle);

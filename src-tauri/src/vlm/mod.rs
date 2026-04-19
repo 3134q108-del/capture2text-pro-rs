@@ -55,6 +55,48 @@ pub enum HealthStatus {
     Unknown(String),
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HealthWarning {
+    pub status: String,
+    pub message: String,
+}
+
+impl HealthStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::OllamaDown => "ollama-down",
+            Self::ModelMissing { .. } => "model-missing",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::Healthy => "OK".to_string(),
+            Self::OllamaDown => {
+                "Ollama daemon 未啟動。請執行 'ollama serve' 或安裝 Ollama (https://ollama.com)"
+                    .to_string()
+            }
+            Self::ModelMissing { model } => {
+                format!("找不到模型 '{model}'。請執行 'ollama pull {model}'")
+            }
+            Self::Unknown(msg) => msg.clone(),
+        }
+    }
+
+    pub fn to_warning(&self) -> Option<HealthWarning> {
+        if matches!(self, Self::Healthy) {
+            None
+        } else {
+            Some(HealthWarning {
+                status: self.label().to_string(),
+                message: self.message(),
+            })
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum TargetLang {
     Chinese,

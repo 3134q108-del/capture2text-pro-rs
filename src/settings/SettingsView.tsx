@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./SettingsView.css";
 
 type Scenario = {
@@ -20,6 +21,11 @@ type TtsConfig = {
   active_en: string;
 };
 
+type HealthWarning = {
+  status: string;
+  message: string;
+};
+
 const EMPTY_SCENARIO: Scenario = {
   id: "",
   name: "",
@@ -37,10 +43,17 @@ export default function SettingsView() {
     active_zh: "",
     active_en: "",
   });
+  const [healthWarning, setHealthWarning] = useState<HealthWarning | null>(null);
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   useEffect(() => {
     void refresh();
+    const unlistenPromise = listen<HealthWarning>("health-warning", (event) => {
+      setHealthWarning(event.payload);
+    });
+    return () => {
+      unlistenPromise.then((off) => off());
+    };
   }, []);
 
   const selectedScenario = useMemo(
@@ -182,6 +195,9 @@ export default function SettingsView() {
           Close
         </button>
       </header>
+      {healthWarning && (
+        <div className="health-warning">⚠ {healthWarning.message}</div>
+      )}
       <div className="settings-layout">
         <aside className="settings-sidebar">
           <div className="settings-sidebar-actions">
