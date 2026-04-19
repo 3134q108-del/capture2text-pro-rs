@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, BufRead, BufReader};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -87,6 +87,20 @@ pub struct VlmEventPayload {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct VlmPartialEventPayload {
+    pub source: String,
+    pub original: String,
+    pub translated: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PartialOutput {
+    pub raw_accumulated: String,
+    pub original: Option<String>,
+    pub translated: Option<String>,
+}
+
 impl TargetLang {
     fn as_prompt_lang(self) -> &'static str {
         match self {
@@ -113,7 +127,16 @@ pub fn init_worker(app_handle: AppHandle) {
         .name("vlm-worker".to_string())
         .spawn(move || {
             while let Ok(job) = rx.recv() {
-                match ocr_and_translate(&job.png_bytes, job.target_lang) {
+                match ocr_and_translate_streaming(&job.png_bytes, job.target_lang, |partial| {
+                    emit_vlm_partial_event(
+                        &app_handle,
+                        VlmPartialEventPayload {
+                            source: job.source.to_string(),
+                            original: partial.original.clone().unwrap_or_default(),
+                            translated: partial.translated.clone().unwrap_or_default(),
+                        },
+                    );
+                }) {
                     Ok(out) => {
                         println!("[vlm] source={} original: {}", job.source, out.original);
                         println!("[vlm] source={} translated: {}", job.source, out.translated);
@@ -178,11 +201,24 @@ pub fn try_submit(job: VlmJob) {
 }
 
 fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
-    if let Some(window) = app_handle.get_webview_window("result") {
-        let _ = window.center();
-        let _ = window.show();
-    }
+    ensure_result_window_visible(app_handle);
     let _ = app_handle.emit_to("result", "vlm-result", &payload);
+}
+
+fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayload) {
+    ensure_result_window_visible(app_handle);
+    let _ = app_handle.emit_to("result", "vlm-result-partial", &payload);
+}
+
+fn ensure_result_window_visible(app_handle: &AppHandle) {
+    let Some(window) = app_handle.get_webview_window("result") else {
+        return;
+    };
+    if window.is_visible().ok().unwrap_or(false) {
+        return;
+    }
+    let _ = window.center();
+    let _ = window.show();
 }
 
 pub fn check_health() -> HealthStatus {
@@ -227,6 +263,105 @@ pub fn check_health() -> HealthStatus {
             model: OLLAMA_MODEL.to_string(),
         }
     }
+}
+
+pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
+    png_bytes: &[u8],
+    target_lang: TargetLang,
+    mut on_partial: F,
+) -> VlmResult<VlmOutput> {
+    let png_bytes = ensure_min_dimension(png_bytes)?;
+    let started_at = Instant::now();
+    let image_b64 = STANDARD.encode(&png_bytes);
+
+    let system_prompt = format!(
+        "你是精準的翻譯助理。分析提供的圖片，輸出嚴格 JSON：\n\
+{{\"original\":\"<圖片中的完整原文，保留原語言>\",\"translated\":\"<翻譯成 {} 的結果>\"}}\n\
+禁止 thinking、禁止解釋、禁止 markdown。",
+        target_lang.as_prompt_lang()
+    );
+
+    let request = OllamaChatRequest {
+        model: OLLAMA_MODEL.to_string(),
+        stream: true,
+        messages: vec![
+            OllamaMessage {
+                role: "system".to_string(),
+                content: system_prompt,
+                images: None,
+            },
+            OllamaMessage {
+                role: "user".to_string(),
+                content: "請分析這張圖".to_string(),
+                images: Some(vec![image_b64]),
+            },
+        ],
+    };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+        .build()
+        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+
+    let response = client
+        .post(OLLAMA_CHAT_URL)
+        .json(&request)
+        .send()
+        .map_err(map_reqwest_send_error)?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let raw = response.text().map_err(map_reqwest_send_error)?;
+        return Err(VlmError::OllamaHttpError {
+            status: status.as_u16(),
+            body: raw,
+        });
+    }
+
+    let mut raw_accumulated = String::new();
+    let mut final_duration_ns: Option<u64> = None;
+    let reader = BufReader::new(response);
+    for line in reader.lines() {
+        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
+            VlmError::ResponseDecode {
+                raw: trimmed.to_string(),
+                source_error: format!("stream chunk parse failed: {err}"),
+            }
+        })?;
+
+        if let Some(message) = chunk.message {
+            if !message.content.is_empty() {
+                raw_accumulated.push_str(&message.content);
+                on_partial(&PartialOutput {
+                    raw_accumulated: raw_accumulated.clone(),
+                    original: extract_partial_json_string(&raw_accumulated, "original"),
+                    translated: extract_partial_json_string(&raw_accumulated, "translated"),
+                });
+            }
+        }
+
+        if chunk.done {
+            final_duration_ns = chunk.total_duration;
+            break;
+        }
+    }
+
+    let parsed = parse_model_output(&raw_accumulated)?;
+    let duration_ms = final_duration_ns
+        .map(|ns| ns / 1_000_000)
+        .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
+
+    Ok(VlmOutput {
+        original: parsed.original,
+        translated: parsed.translated,
+        duration_ms,
+    })
 }
 
 pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult<VlmOutput> {
@@ -370,6 +505,39 @@ fn extract_first_json_object(content: &str) -> Option<&str> {
     Some(&content[start..=end])
 }
 
+fn extract_partial_json_string(raw: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let key_idx = raw.find(&needle)?;
+    let after_key = &raw[(key_idx + needle.len())..];
+    let colon_idx = after_key.find(':')?;
+    let value = after_key[(colon_idx + 1)..].trim_start();
+    let value = value.strip_prefix('"')?;
+
+    let mut out = String::new();
+    let mut escaped = false;
+    for ch in value.chars() {
+        if escaped {
+            match ch {
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                other => out.push(other),
+            }
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some(out),
+            other => out.push(other),
+        }
+    }
+    Some(out)
+}
+
 #[derive(Debug, Serialize)]
 struct OllamaChatRequest {
     model: String,
@@ -388,6 +556,13 @@ struct OllamaMessage {
 #[derive(Debug, Deserialize)]
 struct OllamaChatResponse {
     message: Option<OllamaMessageResponse>,
+    total_duration: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaChatStreamChunk {
+    message: Option<OllamaMessageResponse>,
+    done: bool,
     total_duration: Option<u64>,
 }
 

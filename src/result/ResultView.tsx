@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import "./ResultView.css";
 
-type VlmStatus = "idle" | "success" | "error";
+type VlmStatus = "idle" | "loading" | "success" | "error";
 
 type VlmEventPayload = {
   source: string;
@@ -12,6 +12,12 @@ type VlmEventPayload = {
   translated: string;
   duration_ms: number;
   error: string | null;
+};
+
+type VlmPartialEventPayload = {
+  source: string;
+  original: string;
+  translated: string;
 };
 
 export default function ResultView() {
@@ -23,7 +29,7 @@ export default function ResultView() {
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   useEffect(() => {
-    const unlistenPromise = listen<VlmEventPayload>("vlm-result", (event) => {
+    const unlistenFinalPromise = listen<VlmEventPayload>("vlm-result", (event) => {
       const p = event.payload;
       setSource(p.source);
       if (p.status === "success") {
@@ -40,8 +46,23 @@ export default function ResultView() {
         setDurationMs(0);
       }
     });
+
+    const unlistenPartialPromise = listen<VlmPartialEventPayload>(
+      "vlm-result-partial",
+      (event) => {
+        const p = event.payload;
+        setSource(p.source);
+        setStatus("loading");
+        setOriginal(p.original);
+        setTranslated(p.translated);
+        setDurationMs(0);
+        setErrorMsg("");
+      },
+    );
+
     return () => {
-      unlistenPromise.then((off) => off());
+      unlistenFinalPromise.then((off) => off());
+      unlistenPartialPromise.then((off) => off());
     };
   }, []);
 
