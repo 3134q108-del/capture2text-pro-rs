@@ -6,6 +6,7 @@ use crate::capture::{self, CaptureRequest};
 use crate::drag_overlay;
 use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
+use crate::output_lang;
 use crate::vlm::{self, TargetLang};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -60,7 +61,7 @@ fn process_request(request: CaptureRequest) {
 
             vlm::try_submit_ocr(
                 outcome.png_bytes,
-                TargetLang::Chinese,
+                current_target_lang(),
                 pipeline::mode_label(outcome.mode),
             );
         }
@@ -70,5 +71,13 @@ fn process_request(request: CaptureRequest) {
         Err(err) => {
             eprintln!("[pipeline] failed: {err}");
         }
+    }
+}
+
+fn current_target_lang() -> TargetLang {
+    if output_lang::current() == "en" {
+        TargetLang::English
+    } else {
+        TargetLang::Chinese
     }
 }

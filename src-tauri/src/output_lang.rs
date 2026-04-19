@@ -1,0 +1,72 @@
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
+const DEFAULT_LANG: &str = "zh";
+
+static ACTIVE_OUTPUT_LANG: OnceLock<Mutex<String>> = OnceLock::new();
+
+pub fn init_runtime() -> io::Result<()> {
+    if ACTIVE_OUTPUT_LANG.get().is_some() {
+        return Ok(());
+    }
+
+    let path = storage_path()?;
+    let lang = if path.exists() {
+        let raw = fs::read_to_string(&path)?;
+        sanitize(raw.trim())
+    } else {
+        DEFAULT_LANG.to_string()
+    };
+
+    persist(&lang)?;
+    let _ = ACTIVE_OUTPUT_LANG.set(Mutex::new(lang));
+    Ok(())
+}
+
+pub fn current() -> String {
+    let Some(slot) = ACTIVE_OUTPUT_LANG.get() else {
+        return DEFAULT_LANG.to_string();
+    };
+
+    match slot.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => DEFAULT_LANG.to_string(),
+    }
+}
+
+pub fn set(lang: &str) -> io::Result<()> {
+    let next = sanitize(lang);
+    persist(&next)?;
+
+    if let Some(slot) = ACTIVE_OUTPUT_LANG.get() {
+        if let Ok(mut guard) = slot.lock() {
+            *guard = next;
+        }
+    }
+    Ok(())
+}
+
+fn sanitize(lang: &str) -> String {
+    if lang.eq_ignore_ascii_case("en") {
+        "en".to_string()
+    } else {
+        DEFAULT_LANG.to_string()
+    }
+}
+
+fn persist(lang: &str) -> io::Result<()> {
+    let path = storage_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, lang)?;
+    Ok(())
+}
+
+fn storage_path() -> io::Result<PathBuf> {
+    let local = dirs::data_local_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "local appdata not found"))?;
+    Ok(local.join("Capture2TextPro").join("output_lang.txt"))
+}

@@ -4,7 +4,9 @@ mod drag_overlay;
 mod error;
 mod hotkey;
 mod overlay;
+mod output_lang;
 mod scenarios;
+mod tray;
 mod tts;
 pub mod leptonica;
 pub mod mouse_hook;
@@ -14,8 +16,12 @@ pub use crate::capture::preprocess;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            let _ = crate::commands::result_window::show_settings_window(app.clone());
+        }))
         .setup(|app| {
             scenarios::init_runtime()?;
+            output_lang::init_runtime()?;
             tts::init_config_runtime().map_err(std::io::Error::other)?;
             match vlm::check_health() {
                 vlm::HealthStatus::Healthy => {
@@ -36,6 +42,7 @@ pub fn run() {
             }
             let app_handle = app.handle().clone();
             vlm::init_worker(app_handle);
+            tray::install(&app.handle().clone())?;
             overlay::init()?;
             drag_overlay::init()?;
             capture::start_worker()?;
