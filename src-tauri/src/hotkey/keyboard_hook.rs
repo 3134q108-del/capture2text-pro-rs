@@ -214,12 +214,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 }
                 VK_W | VK_E => {
                     if drag_overlay::is_active() {
-                        if vk == VK_W {
-                            trace_consumed(TraceKind::W);
-                        } else {
-                            trace_consumed(TraceKind::E);
-                        }
-                        return LRESULT(1);
+                        drag_overlay::cancel();
                     }
 
                     let kind = if vk == VK_W {
@@ -281,6 +276,10 @@ fn read_cursor_point() -> Option<CursorPoint> {
 }
 
 unsafe fn send_ctrl_tap() {
+    if matches!(env::var("C2T_NO_SHELL_TAP").ok().as_deref(), Some("1")) {
+        return;
+    }
+
     // Use VK_F18 (not VK_CONTROL) to avoid IME switching the input language:
     // Chinese IME on Win11 intercepts Ctrl taps and toggles EN/CH mode.
     // Any unused key (F13-F24) works; F18 picked per MS virtual-key docs.
