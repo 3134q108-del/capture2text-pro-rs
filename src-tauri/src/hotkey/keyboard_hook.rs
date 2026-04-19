@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use crate::capture::{self, CursorPoint, HotkeyKind};
 use crate::drag_overlay;
-use crate::mouse_hook;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -192,7 +191,6 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         if vk == VK_ESCAPE && no_modifiers {
             if drag_overlay::is_active() {
                 drag_overlay::cancel();
-                mouse_hook::uninstall();
                 return LRESULT(1);
             }
             return unsafe { CallNextHookEx(None, code, wparam, lparam) };
@@ -206,20 +204,14 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     let _reserved_q = HotkeyKind::Q;
                     if drag_overlay::is_active() {
                         drag_overlay::cancel();
-                        mouse_hook::uninstall();
                     } else {
-                        if mouse_hook::install().is_ok() {
-                            drag_overlay::begin_drag();
-                        } else {
-                            mouse_hook::uninstall();
-                        }
+                        drag_overlay::begin_drag();
                     }
                     return LRESULT(1);
                 }
                 VK_W | VK_E => {
                     if drag_overlay::is_active() {
                         drag_overlay::cancel();
-                        mouse_hook::uninstall();
                     }
 
                     let kind = if vk == VK_W {

@@ -279,9 +279,14 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
                 let _ = reply_tx.send(rect);
                 Ok(())
             }
-            DragOverlayCommand::Cancel => hide_overlay(context),
+            DragOverlayCommand::Cancel => {
+                let result = hide_overlay(context);
+                mouse_hook::uninstall();
+                result
+            }
             DragOverlayCommand::Exit => {
                 let _ = hide_overlay(context);
+                mouse_hook::uninstall();
                 unsafe {
                     let _ = DestroyWindow(context.hwnd);
                 }
@@ -298,6 +303,8 @@ fn drain_commands(rx: &Receiver<DragOverlayCommand>, context: &mut DragOverlayCo
 }
 
 fn begin_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
+    mouse_hook::install()?;
+
     let cursor = cursor_pos().ok_or_else(|| io::Error::other("failed to read cursor position"))?;
     context.mode = DragMode::Growing {
         pivot: (cursor.x, cursor.y),
@@ -364,11 +371,13 @@ fn finalize_rect(context: &mut DragOverlayContext) -> Option<CaptureScreenRect> 
         },
         DragMode::Idle => {
             let _ = hide_overlay(context);
+            mouse_hook::uninstall();
             return None;
         }
     };
 
     let _ = hide_overlay(context);
+    mouse_hook::uninstall();
     let rect = normalize_rect(rect);
     if rect.w < MIN_OCR_WIDTH || rect.h < MIN_OCR_HEIGHT {
         return None;

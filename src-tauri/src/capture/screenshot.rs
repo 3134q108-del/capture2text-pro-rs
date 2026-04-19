@@ -32,7 +32,6 @@ fn drain_mouse_events() {
         match event {
             MouseEvent::LeftDown => {
                 let rect = drag_overlay::finalize_and_get_rect();
-                mouse_hook::uninstall();
                 if let Some(rect) = rect {
                     capture::try_enqueue_request(CaptureRequest::SelectedRect {
                         rect,
