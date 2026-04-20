@@ -108,7 +108,6 @@ export default function ResultView() {
     } else {
       setCacheReady({ original: false, translated: false });
     }
-    setSpeakingTarget(null);
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
@@ -132,7 +131,6 @@ export default function ResultView() {
       } else {
         setCacheReady({ original: false, translated: false });
       }
-      setSpeakingTarget(null);
     }
   }
 

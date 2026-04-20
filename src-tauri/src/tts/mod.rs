@@ -36,6 +36,7 @@ struct PlaybackState {
 static ACTIVE_PLAYBACK: OnceLock<Mutex<Option<PlaybackState>>> = OnceLock::new();
 static PLAYBACK_GENERATION: AtomicU64 = AtomicU64::new(0);
 static TTS_CACHE: OnceLock<Mutex<HashMap<(String, String), Vec<u8>>>> = OnceLock::new();
+static TTS_SYNTH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn playback_slot() -> &'static Mutex<Option<PlaybackState>> {
     ACTIVE_PLAYBACK.get_or_init(|| Mutex::new(None))
@@ -43,6 +44,10 @@ fn playback_slot() -> &'static Mutex<Option<PlaybackState>> {
 
 fn cache_slot() -> &'static Mutex<HashMap<(String, String), Vec<u8>>> {
     TTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn synth_lock() -> &'static Mutex<()> {
+    TTS_SYNTH_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 pub fn cache_init() {
@@ -178,6 +183,15 @@ pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, Tt
     }
 
     let processed = preprocess_for_speech(text, voice_code);
+    let _guard = synth_lock()
+        .lock()
+        .map_err(|_| TtsError::RequestFailed("synth lock poisoned".to_string()))?;
+    eprintln!(
+        "[tts-synth] acquired lock voice={} text_len={}",
+        voice_code,
+        text.len()
+    );
+
     eprintln!(
         "[tts-synth] start voice={} text_len={}",
         voice_code,
