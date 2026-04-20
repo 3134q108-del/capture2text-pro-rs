@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,6 +6,8 @@ import "./ResultView.css";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
 type SpeakingTarget = "original" | "translated" | null;
+type TtsTarget = Exclude<SpeakingTarget, null>;
+type CacheReadyState = { original: boolean; translated: boolean };
 type PopupFont = { family: string; size_pt: number } | null;
 
 type VlmEventPayload = {
@@ -59,13 +61,12 @@ export default function ResultView() {
   const [translated, setTranslated] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
+  const [cacheReady, setCacheReady] = useState<CacheReadyState>({ original: false, translated: false });
   const [isTopmost, setIsTopmost] = useState<boolean>(true);
   const [popupFont, setPopupFont] = useState<PopupFont>(null);
   const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
   const [fontFamilyDraft, setFontFamilyDraft] = useState<string>("Segoe UI");
   const [fontSizeDraftPt, setFontSizeDraftPt] = useState<number>(13);
-  const playRequestRef = useRef(0);
-  const originalTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
@@ -81,11 +82,14 @@ export default function ResultView() {
       setOriginal(p.original);
       setTranslated(p.translated);
       setErrorMsg("");
+      setCacheReady({ original: false, translated: false });
     } else {
       setStatus("error");
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
+      setCacheReady({ original: false, translated: false });
+      setSpeakingTarget(null);
     }
   }
 
@@ -95,6 +99,8 @@ export default function ResultView() {
     setOriginal(p.original);
     setTranslated(p.translated);
     setErrorMsg("");
+    setCacheReady({ original: false, translated: false });
+    setSpeakingTarget(null);
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
@@ -104,12 +110,17 @@ export default function ResultView() {
     if (snapshot.status === "success") {
       setStatus("success");
       setErrorMsg("");
+      setCacheReady({ original: false, translated: false });
     } else if (snapshot.status === "error") {
       setStatus("error");
       setErrorMsg(snapshot.error ?? "unknown error");
+      setCacheReady({ original: false, translated: false });
+      setSpeakingTarget(null);
     } else {
       setStatus("loading");
       setErrorMsg("");
+      setCacheReady({ original: false, translated: false });
+      setSpeakingTarget(null);
     }
   }
 
@@ -119,6 +130,7 @@ export default function ResultView() {
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
+    let offPrefetchDone: null | (() => void) = null;
     let offTtsDone: null | (() => void) = null;
 
     const setup = async () => {
@@ -162,13 +174,35 @@ export default function ResultView() {
         return;
       }
 
-      offTtsDone = await listen("tts-done", () => {
-        console.log("[tts-done] received, clearing");
-        setSpeakingTarget(null);
+      offPrefetchDone = await listen<{ target?: string }>("tts-prefetch-done", (event) => {
+        const target = event.payload?.target;
+        if (target === "original" || target === "translated") {
+          setCacheReady((prev) => ({ ...prev, [target]: true }));
+        }
+      });
+      if (disposed) {
+        offPrefetchDone();
+        offPrefetchDone = null;
+        offTtsDone?.();
+        offTtsDone = null;
+        offPartial?.();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
+        return;
+      }
+
+      offTtsDone = await listen<{ target?: string }>("tts-done", (event) => {
+        const target = event.payload?.target;
+        if (target === "original" || target === "translated") {
+          setSpeakingTarget((prev) => (prev === target ? null : prev));
+        }
       });
       if (disposed) {
         offTtsDone();
         offTtsDone = null;
+        offPrefetchDone?.();
+        offPrefetchDone = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -183,9 +217,42 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+      offPrefetchDone?.();
       offTtsDone?.();
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshCacheReady = async () => {
+      if (status !== "success") return;
+
+      const originalText = original.trim();
+      const translatedText = translated.trim();
+
+      const [originalReady, translatedReady] = await Promise.all([
+        originalText
+          ? invoke<boolean>("is_tts_cached", { text: originalText, lang: detectLang(originalText) })
+              .catch(() => false)
+          : Promise.resolve(false),
+        translatedText
+          ? invoke<boolean>("is_tts_cached", { text: translatedText, lang: detectLang(translatedText) })
+              .catch(() => false)
+          : Promise.resolve(false),
+      ]);
+
+      if (!disposed) {
+        setCacheReady({ original: originalReady, translated: translatedReady });
+      }
+    };
+
+    void refreshCacheReady();
+
+    return () => {
+      disposed = true;
+    };
+  }, [status, original, translated]);
 
   useEffect(() => {
     console.log("[ResultView] window-state-effect mount");
@@ -369,30 +436,11 @@ export default function ResultView() {
     }
   }
 
-  async function toggleSpeak(target: Exclude<SpeakingTarget, null>) {
+  async function toggleSpeak(target: TtsTarget) {
     console.log("[toggleSpeak] enter target=", target, "current=", speakingTarget);
-    let content = "";
-
-    if (target === "original") {
-      const originalTextarea = originalTextareaRef.current;
-      if (
-        originalTextarea &&
-        originalTextarea.selectionStart !== null &&
-        originalTextarea.selectionEnd !== null &&
-        originalTextarea.selectionStart < originalTextarea.selectionEnd
-      ) {
-        content = original
-          .substring(originalTextarea.selectionStart, originalTextarea.selectionEnd)
-          .trim();
-      } else {
-        content = original.trim();
-      }
-    } else {
-      content = translated.trim();
-    }
+    const content = target === "original" ? original.trim() : translated.trim();
 
     if (speakingTarget === target) {
-      playRequestRef.current += 1;
       try {
         await invoke("stop_speaking");
       } catch {
@@ -403,26 +451,17 @@ export default function ResultView() {
     }
 
     if (!content) return;
-
-    const requestId = playRequestRef.current + 1;
-    playRequestRef.current = requestId;
+    const lang = detectLang(content);
 
     try {
       if (speakingTarget !== null) {
         await invoke("stop_speaking");
       }
-      console.log("[toggleSpeak] before setSpeakingTarget target=", target, "requestId=", requestId);
       setSpeakingTarget(target);
-      console.log("[toggleSpeak] after setSpeakingTarget target=", target, "requestId=", requestId);
-      console.log("[toggleSpeak] before invoke speak requestId=", requestId);
-      await invoke("speak", { text: content, lang: detectLang(content) });
-      console.log("[toggleSpeak] after invoke speak requestId=", requestId);
+      await invoke("speak", { target, text: content, lang });
     } catch (err) {
-      if (playRequestRef.current === requestId) {
-        setSpeakingTarget(null);
-      }
-      setStatus("error");
-      setErrorMsg(String(err));
+      console.warn("[speak] failed", err);
+      setSpeakingTarget(null);
     }
   }
 
@@ -455,7 +494,6 @@ export default function ResultView() {
           <>
             <section className="result-section">
               <textarea
-                ref={originalTextareaRef}
                 className="result-text"
                 value={original}
                 onChange={(event) => setOriginal(event.target.value)}
@@ -468,9 +506,17 @@ export default function ResultView() {
                   onClick={() => {
                     void toggleSpeak("original");
                   }}
-                  disabled={!original.trim()}
+                  disabled={
+                    !original.trim() ||
+                    !cacheReady.original ||
+                    (speakingTarget !== null && speakingTarget !== "original")
+                  }
                 >
-                  {speakingTarget === "original" ? "Stop" : "Speak 原文"}
+                  {!cacheReady.original && original.trim()
+                    ? "合成中…"
+                    : speakingTarget === "original"
+                      ? "Stop"
+                      : "Speak 原文"}
                 </button>
                 <button
                   className="c2t-btn"
@@ -508,9 +554,17 @@ export default function ResultView() {
                     onClick={() => {
                       void toggleSpeak("translated");
                     }}
-                    disabled={!translated.trim()}
+                    disabled={
+                      !translated.trim() ||
+                      !cacheReady.translated ||
+                      (speakingTarget !== null && speakingTarget !== "translated")
+                    }
                   >
-                    {speakingTarget === "translated" ? "Stop" : "Speak 譯文"}
+                    {!cacheReady.translated && translated.trim()
+                      ? "合成中…"
+                      : speakingTarget === "translated"
+                        ? "Stop"
+                        : "Speak 譯文"}
                   </button>
                   {hasTranslatedText && (
                     <button

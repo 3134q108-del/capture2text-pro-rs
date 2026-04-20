@@ -90,6 +90,7 @@ pub fn run() {
             commands::scenarios::get_active_scenario,
             commands::scenarios::set_active_scenario,
             commands::tts::speak,
+            commands::tts::is_tts_cached,
             commands::tts::stop_speaking,
             commands::tts::list_tts_voices,
             commands::tts::get_tts_config,

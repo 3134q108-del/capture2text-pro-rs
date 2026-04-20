@@ -2,43 +2,39 @@ use crate::tts::{self, TtsConfig, TtsVoiceOption};
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-pub fn speak(app: AppHandle, text: String, lang: String) -> Result<(), String> {
+pub fn speak(app: AppHandle, target: String, text: String, lang: String) -> Result<(), String> {
     if text.trim().is_empty() {
-        return Err("empty text".to_string());
+        return Ok(());
     }
 
-    std::thread::spawn(move || {
-        let result = (|| -> Result<(), String> {
-            let voice_code = tts::current_voice_for_lang(lang.as_str());
-            let bytes = if let Some(cached) = tts::cache_get(&text, &voice_code) {
-                eprintln!(
-                    "[tts] speak cache hit voice={} text_len={}",
-                    voice_code,
-                    text.len()
-                );
-                cached
-            } else {
-                eprintln!(
-                    "[tts] speak cache miss voice={} text_len={}",
-                    voice_code,
-                    text.len()
-                );
-                let generated = tts::synthesize_with_voice(&text, &voice_code)
-                    .map_err(|err| err.to_string())?;
-                tts::cache_put(&text, &voice_code, generated.clone());
-                generated
-            };
-            tts::play_mp3(&bytes).map_err(|err| err.to_string())?;
-            Ok(())
-        })();
+    let voice_code = tts::current_voice_for_lang(lang.as_str());
+    let Some(mp3) = tts::cache_get(&text, &voice_code) else {
+        eprintln!(
+            "[tts] cache miss voice={} text_len={} refusing synthesize (wait prefetch)",
+            voice_code,
+            text.len()
+        );
+        return Err("not-ready".to_string());
+    };
 
-        if let Err(err) = result {
-            eprintln!("[tts] speak worker failed: {}", err);
+    std::thread::spawn(move || {
+        if let Err(err) = tts::play_mp3(&mp3) {
+            eprintln!("[tts] play failed: {}", err);
         }
-        let _ = app.emit("tts-done", ());
+        let _ = app.emit("tts-done", serde_json::json!({ "target": target }));
     });
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn is_tts_cached(text: String, lang: String) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+
+    let voice_code = tts::current_voice_for_lang(lang.as_str());
+    tts::cache_get(&text, &voice_code).is_some()
 }
 
 #[tauri::command]
