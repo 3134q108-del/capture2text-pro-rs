@@ -315,20 +315,22 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
     );
 
     if payload.status == "success" {
-        let app = app_handle.clone();
-        let original = payload.original.clone();
-        thread::spawn(move || {
-            if original.trim().is_empty() {
-                return;
-            }
-            let lang = if contains_chinese(&original) { "zh" } else { "en" };
-            let voice_code = tts::current_voice_for_lang(lang);
-            tts::prefetch(&original, &voice_code);
-            let _ = app.emit(
-                "tts-prefetch-done",
-                serde_json::json!({ "target": "original" }),
-            );
-        });
+        if payload.source != "Retrans" {
+            let app = app_handle.clone();
+            let original = payload.original.clone();
+            thread::spawn(move || {
+                if original.trim().is_empty() {
+                    return;
+                }
+                let lang = if contains_chinese(&original) { "zh" } else { "en" };
+                let voice_code = tts::current_voice_for_lang(lang);
+                tts::prefetch(&original, &voice_code);
+                let _ = app.emit(
+                    "tts-prefetch-done",
+                    serde_json::json!({ "target": "original" }),
+                );
+            });
+        }
 
         let app = app_handle.clone();
         let translated = payload.translated.clone();

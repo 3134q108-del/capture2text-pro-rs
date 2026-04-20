@@ -137,11 +137,46 @@ pub fn current_voice_for_lang(lang: &str) -> String {
     }
 }
 
+pub fn preprocess_for_speech(text: &str, voice_code: &str) -> String {
+    let is_zh_voice = voice_code.to_ascii_lowercase().starts_with("zh-");
+    let replacements = if is_zh_voice {
+        [
+            (">=", "大於等於"),
+            ("<=", "小於等於"),
+            ("!=", "不等於"),
+            ("==", "等於"),
+            (">", "大於"),
+            ("<", "小於"),
+        ]
+    } else {
+        [
+            (">=", " greater than or equal to "),
+            ("<=", " less than or equal to "),
+            ("!=", " not equal to "),
+            ("==", " equals "),
+            (">", " greater than "),
+            ("<", " less than "),
+        ]
+    };
+
+    let mut processed = text.to_string();
+    for (pattern, replacement) in replacements {
+        processed = processed.replace(pattern, replacement);
+    }
+
+    for symbol in ['*', '_', '`', '#', '"'] {
+        processed = processed.replace(symbol, "");
+    }
+
+    processed
+}
+
 pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, TtsError> {
     if text.trim().is_empty() {
         return Err(TtsError::EmptyText);
     }
 
+    let processed = preprocess_for_speech(text, voice_code);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -154,7 +189,7 @@ pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, Tt
             ..SpeakOptions::default()
         };
         let result = client
-            .synthesize(text, options)
+            .synthesize(processed.as_str(), options)
             .await
             .map_err(|err| TtsError::RequestFailed(err.to_string()))?;
         Ok(result.audio)
@@ -216,5 +251,47 @@ pub fn stop_current() {
         if let Some(state) = guard.take() {
             state.sink.stop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preprocess_for_speech;
+
+    #[test]
+    fn preprocess_replaces_operators_for_en_voice() {
+        let text = r#"a >= b <= c != d == e > f < g * _ ` # " ~"#;
+        let processed = preprocess_for_speech(text, "en-US-AndrewNeural");
+
+        assert!(processed.contains("greater than or equal to"));
+        assert!(processed.contains("less than or equal to"));
+        assert!(processed.contains("not equal to"));
+        assert!(processed.contains("equals"));
+        assert!(processed.contains("greater than"));
+        assert!(processed.contains("less than"));
+        assert!(!processed.contains(">="));
+        assert!(!processed.contains("<="));
+        assert!(!processed.contains("!="));
+        assert!(!processed.contains("=="));
+        assert!(!processed.contains('*'));
+        assert!(!processed.contains('_'));
+        assert!(!processed.contains('`'));
+        assert!(!processed.contains('#'));
+        assert!(!processed.contains('"'));
+        assert!(processed.contains('~'));
+    }
+
+    #[test]
+    fn preprocess_replaces_operators_for_zh_voice() {
+        let text = "a>=b<=c!=d==e>f<g~";
+        let processed = preprocess_for_speech(text, "zh-TW-HsiaoChenNeural");
+
+        assert!(processed.contains("大於等於"));
+        assert!(processed.contains("小於等於"));
+        assert!(processed.contains("不等於"));
+        assert!(processed.contains("等於"));
+        assert!(processed.contains("大於"));
+        assert!(processed.contains("小於"));
+        assert!(processed.contains('~'));
     }
 }
