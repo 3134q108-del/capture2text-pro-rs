@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use edge_tts_rust::{EdgeTtsClient, SpeakOptions};
 use rodio::{Decoder, OutputStream, Sink};
@@ -177,13 +178,30 @@ pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, Tt
     }
 
     let processed = preprocess_for_speech(text, voice_code);
+    eprintln!(
+        "[tts-synth] start voice={} text_len={}",
+        voice_code,
+        text.len()
+    );
+    let t0 = Instant::now();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|err| TtsError::RuntimeInit(err.to_string()))?;
+    let t1 = Instant::now();
+    eprintln!(
+        "[tts-synth] runtime_ms={}",
+        t1.duration_since(t0).as_millis()
+    );
 
     runtime.block_on(async move {
+        let t2 = Instant::now();
         let client = EdgeTtsClient::new().map_err(|err| TtsError::RequestFailed(err.to_string()))?;
+        let t3 = Instant::now();
+        eprintln!(
+            "[tts-synth] client_ms={}",
+            t3.duration_since(t2).as_millis()
+        );
         let options = SpeakOptions {
             voice: voice_code.to_string(),
             ..SpeakOptions::default()
@@ -192,6 +210,13 @@ pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, Tt
             .synthesize(processed.as_str(), options)
             .await
             .map_err(|err| TtsError::RequestFailed(err.to_string()))?;
+        let t4 = Instant::now();
+        eprintln!(
+            "[tts-synth] synth_ms={} total_ms={} bytes={}",
+            t4.duration_since(t3).as_millis(),
+            t4.duration_since(t0).as_millis(),
+            result.audio.len()
+        );
         Ok(result.audio)
     })
 }

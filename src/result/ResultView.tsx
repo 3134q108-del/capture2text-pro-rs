@@ -103,7 +103,11 @@ export default function ResultView() {
     setOriginal(p.original);
     setTranslated(p.translated);
     setErrorMsg("");
-    setCacheReady({ original: false, translated: false });
+    if (p.source === "Retrans") {
+      setCacheReady((prev) => ({ ...prev, translated: false }));
+    } else {
+      setCacheReady({ original: false, translated: false });
+    }
     setSpeakingTarget(null);
   }
 
@@ -123,7 +127,11 @@ export default function ResultView() {
     } else {
       setStatus("loading");
       setErrorMsg("");
-      setCacheReady({ original: false, translated: false });
+      if (snapshot.source === "Retrans") {
+        setCacheReady((prev) => ({ ...prev, translated: false }));
+      } else {
+        setCacheReady({ original: false, translated: false });
+      }
       setSpeakingTarget(null);
     }
   }
