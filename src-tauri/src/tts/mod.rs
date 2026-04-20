@@ -1,5 +1,6 @@
 pub mod config;
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -33,9 +34,80 @@ struct PlaybackState {
 
 static ACTIVE_PLAYBACK: OnceLock<Mutex<Option<PlaybackState>>> = OnceLock::new();
 static PLAYBACK_GENERATION: AtomicU64 = AtomicU64::new(0);
+static TTS_CACHE: OnceLock<Mutex<HashMap<(String, String), Vec<u8>>>> = OnceLock::new();
 
 fn playback_slot() -> &'static Mutex<Option<PlaybackState>> {
     ACTIVE_PLAYBACK.get_or_init(|| Mutex::new(None))
+}
+
+fn cache_slot() -> &'static Mutex<HashMap<(String, String), Vec<u8>>> {
+    TTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn cache_init() {
+    let _ = cache_slot();
+}
+
+pub fn cache_get(text: &str, voice_code: &str) -> Option<Vec<u8>> {
+    let key = (text.to_string(), voice_code.to_string());
+    let guard = match cache_slot().lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            eprintln!("[tts-cache] cache_get lock poisoned");
+            return None;
+        }
+    };
+    guard.get(&key).cloned()
+}
+
+pub fn cache_put(text: &str, voice_code: &str, mp3: Vec<u8>) {
+    let key = (text.to_string(), voice_code.to_string());
+    match cache_slot().lock() {
+        Ok(mut guard) => {
+            guard.insert(key, mp3);
+        }
+        Err(_) => {
+            eprintln!("[tts-cache] cache_put lock poisoned");
+        }
+    }
+}
+
+pub fn prefetch(text: &str, voice_code: &str) {
+    if cache_get(text, voice_code).is_some() {
+        eprintln!(
+            "[tts-cache] prefetch cache hit voice={} text_len={}",
+            voice_code,
+            text.len()
+        );
+        return;
+    }
+
+    eprintln!(
+        "[tts-cache] prefetch cache miss voice={} text_len={}",
+        voice_code,
+        text.len()
+    );
+
+    match synthesize_with_voice(text, voice_code) {
+        Ok(mp3) => {
+            let size = mp3.len();
+            cache_put(text, voice_code, mp3);
+            eprintln!(
+                "[tts-cache] prefetched {} bytes voice={} text_len={}",
+                size,
+                voice_code,
+                text.len()
+            );
+        }
+        Err(err) => {
+            eprintln!(
+                "[tts-cache] prefetch failed voice={} text_len={} err={}",
+                voice_code,
+                text.len(),
+                err
+            );
+        }
+    }
 }
 
 pub fn init_config_runtime() -> Result<(), TtsError> {

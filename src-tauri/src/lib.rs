@@ -27,6 +27,7 @@ pub fn run() {
             output_lang::init_runtime()?;
             window_state::init_runtime();
             tts::init_config_runtime().map_err(std::io::Error::other)?;
+            tts::cache_init();
             let health = vlm::check_health();
             match &health {
                 vlm::HealthStatus::Healthy => {

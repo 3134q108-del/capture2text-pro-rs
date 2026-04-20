@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 
-use crate::scenarios;
+use crate::{scenarios, tts};
 
 pub mod state;
 
@@ -313,6 +313,23 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
         payload.original.len(),
         payload.translated.len()
     );
+
+    if payload.status == "success" {
+        let original = payload.original.clone();
+        thread::spawn(move || {
+            let lang = if contains_chinese(&original) { "zh" } else { "en" };
+            let voice_code = tts::current_voice_for_lang(lang);
+            tts::prefetch(&original, &voice_code);
+        });
+
+        let translated = payload.translated.clone();
+        thread::spawn(move || {
+            let lang = if contains_chinese(&translated) { "zh" } else { "en" };
+            let voice_code = tts::current_voice_for_lang(lang);
+            tts::prefetch(&translated, &voice_code);
+        });
+    }
+
     match payload.status.as_str() {
         "success" => state::set_success(
             &payload.source,
@@ -714,6 +731,15 @@ fn extract_partial_json_string(raw: &str, key: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+fn contains_chinese(s: &str) -> bool {
+    s.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}'
+        )
+    })
 }
 
 #[derive(Debug, Serialize)]

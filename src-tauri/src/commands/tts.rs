@@ -10,8 +10,24 @@ pub fn speak(app: AppHandle, text: String, lang: String) -> Result<(), String> {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), String> {
             let voice_code = tts::current_voice_for_lang(lang.as_str());
-            let bytes =
-                tts::synthesize_with_voice(&text, &voice_code).map_err(|err| err.to_string())?;
+            let bytes = if let Some(cached) = tts::cache_get(&text, &voice_code) {
+                eprintln!(
+                    "[tts] speak cache hit voice={} text_len={}",
+                    voice_code,
+                    text.len()
+                );
+                cached
+            } else {
+                eprintln!(
+                    "[tts] speak cache miss voice={} text_len={}",
+                    voice_code,
+                    text.len()
+                );
+                let generated = tts::synthesize_with_voice(&text, &voice_code)
+                    .map_err(|err| err.to_string())?;
+                tts::cache_put(&text, &voice_code, generated.clone());
+                generated
+            };
             tts::play_mp3(&bytes).map_err(|err| err.to_string())?;
             Ok(())
         })();
