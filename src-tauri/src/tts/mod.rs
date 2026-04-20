@@ -189,7 +189,13 @@ pub fn play_mp3(bytes: &[u8]) -> Result<(), TtsError> {
         });
     }
 
+    eprintln!(
+        "[tts] play_mp3 started bytes={} generation={}",
+        bytes.len(),
+        generation
+    );
     sink.sleep_until_end();
+    eprintln!("[tts] play_mp3 finished generation={}", generation);
     drop(stream);
 
     if let Ok(mut guard) = playback_slot().lock() {

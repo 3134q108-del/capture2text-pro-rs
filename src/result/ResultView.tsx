@@ -163,6 +163,7 @@ export default function ResultView() {
       }
 
       offTtsDone = await listen("tts-done", () => {
+        console.log("[tts-done] received, clearing");
         setSpeakingTarget(null);
       });
       if (disposed) {
@@ -369,6 +370,7 @@ export default function ResultView() {
   }
 
   async function toggleSpeak(target: Exclude<SpeakingTarget, null>) {
+    console.log("[toggleSpeak] enter target=", target, "current=", speakingTarget);
     let content = "";
 
     if (target === "original") {
@@ -409,11 +411,16 @@ export default function ResultView() {
       if (speakingTarget !== null) {
         await invoke("stop_speaking");
       }
+      console.log("[toggleSpeak] before setSpeakingTarget target=", target, "requestId=", requestId);
+      setSpeakingTarget(target);
+      console.log("[toggleSpeak] after setSpeakingTarget target=", target, "requestId=", requestId);
+      console.log("[toggleSpeak] before invoke speak requestId=", requestId);
       await invoke("speak", { text: content, lang: detectLang(content) });
-      if (playRequestRef.current === requestId) {
-        setSpeakingTarget(target);
-      }
+      console.log("[toggleSpeak] after invoke speak requestId=", requestId);
     } catch (err) {
+      if (playRequestRef.current === requestId) {
+        setSpeakingTarget(null);
+      }
       setStatus("error");
       setErrorMsg(String(err));
     }

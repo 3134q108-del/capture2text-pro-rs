@@ -58,13 +58,8 @@ pub fn run() {
             }
             for label in ["result", "settings"] {
                 if let Some(window) = app.get_webview_window(label) {
-                    let window_cloned = window.clone();
-                    window.on_window_event(move |event| {
-                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = window_cloned.hide();
-                        }
-                    });
+                    eprintln!("[window] attach_close_handler label={}", label);
+                    commands::result_window::attach_close_handler(window);
                 }
             }
             let app_handle = app.handle().clone();

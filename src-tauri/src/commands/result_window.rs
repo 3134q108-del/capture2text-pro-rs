@@ -1,6 +1,51 @@
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager};
+use tauri::{
+    AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow, WebviewWindowBuilder,
+};
 use crate::window_state::{self, PopupFont};
 use crate::vlm::state::{self, VlmSnapshot};
+
+pub fn attach_close_handler(window: WebviewWindow) {
+    let label = window.label().to_string();
+    let window_cloned = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            eprintln!(
+                "[window] CloseRequested label={} -> prevent_close + hide",
+                label
+            );
+            api.prevent_close();
+            let _ = window_cloned.hide();
+        }
+    });
+}
+
+pub fn ensure_webview_window(app: AppHandle, label: &str) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(label) {
+        return Ok(window);
+    }
+
+    eprintln!(
+        "[window] ensure_webview_window label={} missing, rebuilding",
+        label
+    );
+
+    let window_config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == label)
+        .ok_or_else(|| format!("window config not found for label={label}"))?;
+
+    let window = WebviewWindowBuilder::from_config(&app, window_config)
+        .map_err(|err| err.to_string())?
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    attach_close_handler(window.clone());
+    eprintln!("[window] ensure_webview_window label={} rebuilt", label);
+    Ok(window)
+}
 
 #[tauri::command]
 pub fn get_latest_vlm_state() -> Option<VlmSnapshot> {
@@ -15,10 +60,9 @@ pub fn get_window_state() -> crate::window_state::WindowState {
 
 #[tauri::command]
 pub fn show_result_window(app: AppHandle) -> Result<(), String> {
+    eprintln!("[window] show_result_window called");
     let state = window_state::get();
-    let window = app
-        .get_webview_window("result")
-        .ok_or_else(|| "result window not found".to_string())?;
+    let window = ensure_webview_window(app, "result")?;
 
     window
         .set_size(LogicalSize::new(
@@ -82,9 +126,8 @@ pub fn hide_result_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn show_settings_window(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window("settings")
-        .ok_or_else(|| "settings window not found".to_string())?;
+    eprintln!("[window] show_settings_window called");
+    let window = ensure_webview_window(app, "settings")?;
 
     window.center().map_err(|err| err.to_string())?;
     window.show().map_err(|err| err.to_string())

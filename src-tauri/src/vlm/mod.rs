@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
 use crate::{scenarios, tts};
@@ -360,12 +360,18 @@ fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayloa
 }
 
 fn ensure_result_window_visible(app_handle: &AppHandle) {
-    let Some(window) = app_handle.get_webview_window("result") else {
-        eprintln!(
-            "[emit] ensure_result_window_visible: window_exists={} was_visible={}",
-            false, false
-        );
-        return;
+    let window = match crate::commands::result_window::ensure_webview_window(
+        app_handle.clone(),
+        "result",
+    ) {
+        Ok(window) => window,
+        Err(err) => {
+            eprintln!(
+                "[emit] ensure_result_window_visible: window_exists={} was_visible={} err={}",
+                false, false, err
+            );
+            return;
+        }
     };
     let was_visible = window.is_visible().ok().unwrap_or(false);
     eprintln!(
@@ -375,7 +381,13 @@ fn ensure_result_window_visible(app_handle: &AppHandle) {
     if was_visible {
         return;
     }
-    let _ = window.show();
+    if let Err(err) = window.show() {
+        eprintln!(
+            "[emit] ensure_result_window_visible: show failed err={}",
+            err
+        );
+        return;
+    }
     thread::sleep(Duration::from_millis(50));
 }
 
