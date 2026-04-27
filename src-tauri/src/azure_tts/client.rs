@@ -46,6 +46,13 @@ impl AzureProvider {
             self.base_url.trim_end_matches('/')
         )
     }
+
+    fn synthesize_url(&self) -> String {
+        format!(
+            "{}/cognitiveservices/v1",
+            self.base_url.trim_end_matches('/')
+        )
+    }
 }
 
 impl fmt::Debug for AzureProvider {
@@ -101,11 +108,40 @@ impl TtsProvider for AzureProvider {
 
     async fn synthesize(
         &self,
-        _text: &str,
-        _voice_id: &str,
-        _rate: f32,
+        text: &str,
+        voice_id: &str,
+        rate: f32,
     ) -> Result<Vec<u8>, TtsError> {
-        Err(TtsError::NotImplemented)
+        let ssml = build_ssml(text, voice_id, rate);
+        let response = self
+            .http
+            .post(self.synthesize_url())
+            .header("Ocp-Apim-Subscription-Key", &self.key)
+            .header("Content-Type", "application/ssml+xml")
+            .header(
+                "X-Microsoft-OutputFormat",
+                "audio-24khz-48kbitrate-mono-mp3",
+            )
+            .header("User-Agent", "capture2text-pro")
+            .body(ssml)
+            .send()
+            .await
+            .map_err(|err| TtsError::Network(err.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_else(|err| err.to_string());
+            return Err(match status.as_u16() {
+                400 => TtsError::VoiceNotFound(voice_id.to_string()),
+                _ => map_status(status, &self.region, message),
+            });
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| TtsError::Network(err.to_string()))?;
+        Ok(bytes.to_vec())
     }
 }
 
@@ -167,9 +203,52 @@ fn voice_level(short_name: &str) -> VoiceLevel {
     }
 }
 
+fn build_ssml(text: &str, voice_id: &str, rate: f32) -> String {
+    let lang = lang_from_voice_id(voice_id);
+    let escaped_text = escape_xml(text);
+    let rate_pct = rate_percent(rate);
+    format!(
+        r#"<speak version="1.0" xml:lang="{lang}"><voice name="{voice_id}"><prosody rate="{rate_pct}">{escaped_text}</prosody></voice></speak>"#
+    )
+}
+
+fn lang_from_voice_id(voice_id: &str) -> String {
+    let mut parts = voice_id.split('-');
+    match (parts.next(), parts.next()) {
+        (Some(lang), Some(region)) if !lang.is_empty() && !region.is_empty() => {
+            format!("{lang}-{region}")
+        }
+        _ => "en-US".to_string(),
+    }
+}
+
+fn rate_percent(rate: f32) -> String {
+    let pct = ((rate.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32;
+    if pct > 0 {
+        format!("+{pct}%")
+    } else {
+        format!("{pct}%")
+    }
+}
+
+fn escape_xml(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 #[cfg(test)]
 mod azure_voices {
-    use wiremock::matchers::{header, method, path};
+    use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
@@ -241,6 +320,66 @@ mod azure_voices {
             server.uri(),
         );
         let err = provider.list_voices("zh-TW").await.unwrap_err();
+
+        assert!(matches!(err, TtsError::Auth));
+    }
+
+    #[tokio::test]
+    async fn azure_synthesize_posts_ssml_and_returns_audio_bytes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/cognitiveservices/v1"))
+            .and(header("Ocp-Apim-Subscription-Key", "test-key"))
+            .and(header(
+                "X-Microsoft-OutputFormat",
+                "audio-24khz-48kbitrate-mono-mp3",
+            ))
+            .and(body_string_contains(
+                r#"<voice name="zh-TW-HsiaoChenNeural">"#,
+            ))
+            .and(body_string_contains(
+                "hello &amp; &lt;world&gt; &quot;quoted&quot; &apos;ok&apos;",
+            ))
+            .and(body_string_contains(r#"<prosody rate="+20%">"#))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1, 2, 3, 4]))
+            .mount(&server)
+            .await;
+
+        let provider = AzureProvider::with_base_url(
+            "eastasia".to_string(),
+            "test-key".to_string(),
+            server.uri(),
+        );
+        let bytes = provider
+            .synthesize(
+                "hello & <world> \"quoted\" 'ok'",
+                "zh-TW-HsiaoChenNeural",
+                1.2,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, vec![1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn azure_synthesize_maps_401_to_auth() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/cognitiveservices/v1"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("bad key"))
+            .mount(&server)
+            .await;
+
+        let provider = AzureProvider::with_base_url(
+            "eastasia".to_string(),
+            "bad-key".to_string(),
+            server.uri(),
+        );
+        let err = provider
+            .synthesize("hello", "zh-TW-HsiaoChenNeural", 1.0)
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, TtsError::Auth));
     }
