@@ -13,7 +13,6 @@ mod overlay;
 mod output_lang;
 mod app_handle;
 mod scenarios;
-mod qwen_tts;
 mod tray;
 mod tts;
 mod window_state;
@@ -33,21 +32,6 @@ pub fn run() {
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
             window_state::init_runtime();
-            let app_handle_tts = app.handle().clone();
-            std::thread::spawn(move || {
-                match crate::tts::init_runtime() {
-                    Ok(()) => {
-                        eprintln!("[tts] runtime ready");
-                        use tauri::Emitter;
-                        let _ = app_handle_tts.emit("tts-ready", ());
-                    }
-                    Err(err) => {
-                        eprintln!("[tts] runtime init failed: {err}");
-                        use tauri::Emitter;
-                        let _ = app_handle_tts.emit("tts-init-failed", err);
-                    }
-                }
-            });
             let app_handle_for_bootstrap = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(err) = crate::llama_runtime::bootstrap(
