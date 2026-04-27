@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::azure_tts::{AzureProvider, TtsProvider, Voice};
 
@@ -56,6 +57,26 @@ pub async fn list_azure_voices(lang: String) -> Result<Vec<Voice>, String> {
         .list_voices(&lang)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn get_voice_routing() -> HashMap<String, String> {
+    crate::window_state::azure_voice_map()
+}
+
+#[tauri::command]
+pub fn set_voice_routing(lang: String, voice_id: String) -> Result<(), String> {
+    let lang = lang.trim();
+    let voice_id = voice_id.trim();
+    if lang.is_empty() {
+        return Err("language is required".to_string());
+    }
+    if voice_id.is_empty() {
+        crate::window_state::clear_azure_voice_for_lang(lang);
+    } else {
+        crate::window_state::set_azure_voice_for_lang(lang.to_string(), voice_id.to_string());
+    }
+    Ok(())
 }
 
 fn provider_from_config() -> Result<AzureProvider, String> {

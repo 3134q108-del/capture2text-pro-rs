@@ -30,7 +30,11 @@ pub async fn speak(
     let key = crate::azure_tts::keyring::get_key()
         .map_err(|err| err.to_string())?
         .ok_or_else(not_configured_message)?;
-    let voice_id = default_voice_for_lang(&lang).to_string();
+    let normalized_lang = normalize_lang(&lang);
+    let voice_id = crate::window_state::azure_voice_map()
+        .get(normalized_lang)
+        .cloned()
+        .unwrap_or_else(|| default_voice_for_lang(normalized_lang).to_string());
     let playback = state.inner().playback.clone();
     let current_task = state.inner().current_task.clone();
 
@@ -120,6 +124,18 @@ fn default_voice_for_lang(lang: &str) -> &'static str {
         "de-DE" | "de" => "de-DE-SeraphinaMultilingualNeural",
         "fr-FR" | "fr" => "fr-FR-VivienneMultilingualNeural",
         _ => "en-US-AvaMultilingualNeural",
+    }
+}
+
+fn normalize_lang(lang: &str) -> &str {
+    match lang {
+        "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" => lang,
+        "en" | "en-GB" => "en-US",
+        "ja" => "ja-JP",
+        "ko" => "ko-KR",
+        "de" => "de-DE",
+        "fr" => "fr-FR",
+        _ => lang,
     }
 }
 

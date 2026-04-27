@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -66,6 +67,8 @@ pub struct WindowState {
     pub speech_active_preset: String,
     #[serde(default)]
     pub azure_region: Option<String>,
+    #[serde(default)]
+    pub azure_voice_map: HashMap<String, String>,
 }
 
 impl Default for WindowState {
@@ -89,6 +92,7 @@ impl Default for WindowState {
             speech_enabled: default_speech_enabled(),
             speech_active_preset: default_active_preset(),
             azure_region: None,
+            azure_voice_map: HashMap::new(),
         }
     }
 }
@@ -216,6 +220,22 @@ pub fn azure_region() -> Option<String> {
 pub fn set_azure_region(v: Option<String>) {
     update(|state| {
         state.azure_region = v;
+    });
+}
+
+pub fn azure_voice_map() -> HashMap<String, String> {
+    get().azure_voice_map
+}
+
+pub fn set_azure_voice_for_lang(lang: String, voice_id: String) {
+    update(|state| {
+        state.azure_voice_map.insert(lang, voice_id);
+    });
+}
+
+pub fn clear_azure_voice_for_lang(lang: &str) {
+    update(|state| {
+        state.azure_voice_map.remove(lang);
     });
 }
 

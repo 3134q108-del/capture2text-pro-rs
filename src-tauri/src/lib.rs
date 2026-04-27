@@ -110,6 +110,8 @@ pub fn run() {
             commands::azure_tts::delete_azure_credentials,
             commands::azure_tts::test_azure_connection,
             commands::azure_tts::list_azure_voices,
+            commands::azure_tts::get_voice_routing,
+            commands::azure_tts::set_voice_routing,
             commands::tts::speak,
             commands::tts::is_tts_cached,
             commands::tts::stop_speaking,

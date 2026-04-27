@@ -35,3 +35,11 @@ export function testAzureConnection(): Promise<void> {
 export function listAzureVoices(lang: string): Promise<AzureVoice[]> {
   return invoke("list_azure_voices", { lang });
 }
+
+export function getVoiceRouting(): Promise<Record<string, string>> {
+  return invoke("get_voice_routing");
+}
+
+export function setVoiceRouting(lang: string, voiceId: string): Promise<void> {
+  return invoke("set_voice_routing", { lang, voiceId });
+}
