@@ -461,7 +461,7 @@ export default function ResultView() {
                   }}
                   disabled={!original}
                 >
-                  Copy ??
+                  Copy 原文
                 </button>
               </div>
             </section>
@@ -502,7 +502,7 @@ export default function ResultView() {
                       }}
                       disabled={!translated}
                     >
-                      Copy 霅舀?
+                      Copy 譯文
                     </button>
                   )}
                 </div>
