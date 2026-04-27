@@ -12,6 +12,7 @@ mod ollama_boot;
 mod overlay;
 mod output_lang;
 mod app_handle;
+mod azure_tts;
 mod scenarios;
 mod tray;
 mod tts;
@@ -103,6 +104,11 @@ pub fn run() {
             commands::scenarios::delete_scenario,
             commands::scenarios::get_active_scenario,
             commands::scenarios::set_active_scenario,
+            commands::azure_tts::save_azure_credentials,
+            commands::azure_tts::get_azure_credentials_status,
+            commands::azure_tts::delete_azure_credentials,
+            commands::azure_tts::test_azure_connection,
+            commands::azure_tts::list_azure_voices,
             commands::tts::speak,
             commands::tts::is_tts_cached,
             commands::tts::stop_speaking,

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -63,6 +64,8 @@ pub struct WindowState {
     pub speech_enabled: bool,
     #[serde(default = "default_active_preset")]
     pub speech_active_preset: String,
+    #[serde(default)]
+    pub azure_region: Option<String>,
 }
 
 impl Default for WindowState {
@@ -85,6 +88,7 @@ impl Default for WindowState {
             capture_box_fill_rgba: [255, 0, 0, 64],
             speech_enabled: default_speech_enabled(),
             speech_active_preset: default_active_preset(),
+            azure_region: None,
         }
     }
 }
@@ -205,6 +209,16 @@ pub fn set_speech_active_preset(v: String) {
     });
 }
 
+pub fn azure_region() -> Option<String> {
+    get().azure_region
+}
+
+pub fn set_azure_region(v: Option<String>) {
+    update(|state| {
+        state.azure_region = v;
+    });
+}
+
 pub fn set_clipboard_mode(v: ClipboardMode) {
     update(|state| {
         state.clipboard_mode = v;
@@ -254,8 +268,41 @@ fn persist_best_effort(state: &WindowState) {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(raw) = serde_json::to_string_pretty(state) {
-        let _ = fs::write(path, raw);
+        let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
+        if let Ok(mut file) = fs::File::create(&tmp_path) {
+            if file.write_all(raw.as_bytes()).is_ok() && file.sync_all().is_ok() {
+                drop(file);
+                let _ = atomic_replace(&tmp_path, &path);
+            } else {
+                let _ = fs::remove_file(&tmp_path);
+            }
+        }
     }
+}
+
+#[cfg(windows)]
+fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from_wide.as_ptr()),
+            PCWSTR(to_wide.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    fs::rename(from, to)
 }
 
 fn storage_path() -> std::io::Result<PathBuf> {
