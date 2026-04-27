@@ -10,25 +10,23 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
-use crate::{scenarios, tts};
+use crate::{llama_runtime, scenarios};
 
 pub mod state;
 
-const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
-const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
-const OLLAMA_MODEL: &str = "qwen3-vl:8b-instruct";
+const LLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/v1/chat/completions";
+const CHAT_MODEL_NAME: &str = "local";
 const VLM_QUEUE_CAPACITY: usize = 4;
 const QWEN3VL_MIN_DIM: u32 = 32;
-const REQUEST_TIMEOUT_MS: u64 = 30_000;
-const HEALTH_TIMEOUT_SECS: u64 = 5;
+const REQUEST_TIMEOUT_MS: u64 = 90_000;
 
 pub type VlmResult<T> = std::result::Result<T, VlmError>;
 
 #[derive(Debug, Error)]
 pub enum VlmError {
-    #[error("ollama connection refused (is ollama running?)")]
+    #[error("llama-server connection refused (is runtime running?)")]
     OllamaDown,
-    #[error("ollama returned HTTP {status}: {body}")]
+    #[error("llama-server returned HTTP {status}: {body}")]
     OllamaHttpError { status: u16, body: String },
     #[error("vlm request timed out after {}ms", .0)]
     Timeout(u64),
@@ -76,13 +74,8 @@ impl HealthStatus {
     pub fn message(&self) -> String {
         match self {
             Self::Healthy => "OK".to_string(),
-            Self::OllamaDown => {
-                "Ollama daemon 未啟動。請執行 'ollama serve' 或安裝 Ollama (https://ollama.com)"
-                    .to_string()
-            }
-            Self::ModelMissing { model } => {
-                format!("找不到模型 '{model}'。請執行 'ollama pull {model}'")
-            }
+            Self::OllamaDown => "llama.cpp runtime is not ready".to_string(),
+            Self::ModelMissing { model } => format!("model missing: {model}"),
             Self::Unknown(msg) => msg.clone(),
         }
     }
@@ -99,17 +92,27 @@ impl HealthStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetLang {
-    Chinese,
+    TraditionalChinese,
+    SimplifiedChinese,
     English,
+    Japanese,
+    Korean,
+    German,
+    French,
 }
 
 impl TargetLang {
     fn display_name(self) -> &'static str {
         match self {
-            Self::Chinese => "繁體中文",
-            Self::English => "English",
+            Self::TraditionalChinese => "繁體中文",
+            Self::SimplifiedChinese => "簡體中文",
+            Self::English => "英文",
+            Self::Japanese => "日文",
+            Self::Korean => "韓文",
+            Self::German => "德文",
+            Self::French => "法文",
         }
     }
 }
@@ -177,6 +180,27 @@ pub fn init_worker(app_handle: AppHandle) {
         .spawn(move || {
             while let Ok(job) = rx.recv() {
                 state::set_loading(job_source(&job));
+                let source_label = job_source(&job).to_string();
+                let lang_code = target_lang_to_code(job_target_lang(&job));
+                if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
+                    let message = format!(
+                        "switch model for lang {lang_code} failed: {err}"
+                    );
+                    eprintln!("[vlm] source={} failed: {}", source_label, message);
+                    emit_vlm_event(
+                        &app_handle,
+                        VlmEventPayload {
+                            source: source_label,
+                            status: "error".to_string(),
+                            original: String::new(),
+                            translated: String::new(),
+                            duration_ms: 0,
+                            error: Some(message),
+                        },
+                    );
+                    continue;
+                }
+
                 let (source, result) = match job {
                     VlmJob::OcrAndTranslate {
                         png_bytes,
@@ -305,6 +329,25 @@ fn job_source(job: &VlmJob) -> &'static str {
     }
 }
 
+fn job_target_lang(job: &VlmJob) -> TargetLang {
+    match job {
+        VlmJob::OcrAndTranslate { target_lang, .. } => *target_lang,
+        VlmJob::TranslateText { target_lang, .. } => *target_lang,
+    }
+}
+
+fn target_lang_to_code(lang: TargetLang) -> &'static str {
+    match lang {
+        TargetLang::TraditionalChinese => "zh-TW",
+        TargetLang::SimplifiedChinese => "zh-CN",
+        TargetLang::English => "en-US",
+        TargetLang::Japanese => "ja-JP",
+        TargetLang::Korean => "ko-KR",
+        TargetLang::German => "de-DE",
+        TargetLang::French => "fr-FR",
+    }
+}
+
 fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
     eprintln!(
         "[emit] vlm-result status={} source={} original.len={} translated.len={}",
@@ -315,37 +358,8 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
     );
 
     if payload.status == "success" {
-        if payload.source != "Retrans" {
-            let app = app_handle.clone();
-            let original = payload.original.clone();
-            thread::spawn(move || {
-                if original.trim().is_empty() {
-                    return;
-                }
-                let lang = if contains_chinese(&original) { "zh" } else { "en" };
-                let voice_code = tts::current_voice_for_lang(lang);
-                tts::prefetch(&original, &voice_code);
-                let _ = app.emit(
-                    "tts-prefetch-done",
-                    serde_json::json!({ "target": "original" }),
-                );
-            });
-        }
-
-        let app = app_handle.clone();
-        let translated = payload.translated.clone();
-        thread::spawn(move || {
-            if translated.trim().is_empty() {
-                return;
-            }
-            let lang = if contains_chinese(&translated) { "zh" } else { "en" };
-            let voice_code = tts::current_voice_for_lang(lang);
-            tts::prefetch(&translated, &voice_code);
-            let _ = app.emit(
-                "tts-prefetch-done",
-                serde_json::json!({ "target": "translated" }),
-            );
-        });
+        crate::capture::log::append_capture(&payload.original, &payload.translated);
+        crate::clipboard::write_capture(&payload.original, &payload.translated);
     }
 
     match payload.status.as_str() {
@@ -410,47 +424,49 @@ fn ensure_result_window_visible(app_handle: &AppHandle) {
 }
 
 pub fn check_health() -> HealthStatus {
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(HEALTH_TIMEOUT_SECS))
-        .build()
-    {
-        Ok(client) => client,
-        Err(err) => return HealthStatus::Unknown(format!("client build failed: {err}")),
-    };
-
-    let response = match client.get(OLLAMA_TAGS_URL).send() {
-        Ok(response) => response,
-        Err(err) => {
-            if err.is_connect() || err.is_timeout() {
-                return HealthStatus::OllamaDown;
-            }
-            return HealthStatus::Unknown(format!("request failed: {err}"));
-        }
-    };
-
-    let status = response.status();
-    let raw = match response.text() {
-        Ok(raw) => raw,
-        Err(err) => return HealthStatus::Unknown(format!("read body failed: {err}")),
-    };
-
-    if !status.is_success() {
-        return HealthStatus::Unknown(format!("HTTP {}: {}", status.as_u16(), raw));
-    }
-
-    let tags = match serde_json::from_str::<OllamaTagsResponse>(&raw) {
-        Ok(tags) => tags,
-        Err(err) => return HealthStatus::Unknown(format!("decode tags failed: {err}")),
-    };
-
-    let has_model = tags.models.iter().any(|item| item.name == OLLAMA_MODEL);
-    if has_model {
+    if llama_runtime::supervisor::is_healthy() {
         HealthStatus::Healthy
     } else {
-        HealthStatus::ModelMissing {
-            model: OLLAMA_MODEL.to_string(),
-        }
+        HealthStatus::OllamaDown
     }
+}
+
+pub fn warmup() {
+    thread::spawn(|| {
+        eprintln!("[vlm-warmup] start");
+        let t0 = Instant::now();
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(180_000))
+            .build()
+        {
+            Ok(client) => client,
+            Err(err) => {
+                eprintln!("[vlm-warmup] client build failed: {err}");
+                return;
+            }
+        };
+
+        let request = ChatRequest {
+            model: CHAT_MODEL_NAME.to_string(),
+            stream: false,
+            messages: vec![ChatMessage::new_text("user", "hi".to_string())],
+        };
+
+        match client.post(LLAMA_CHAT_URL).json(&request).send() {
+            Ok(resp) => {
+                let ok = resp.status().is_success();
+                eprintln!(
+                    "[vlm-warmup] done in {}ms status={} ok={}",
+                    t0.elapsed().as_millis(),
+                    resp.status(),
+                    ok
+                );
+            }
+            Err(err) => {
+                eprintln!("[vlm-warmup] failed: {err}");
+            }
+        }
+    });
 }
 
 pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
@@ -536,7 +552,7 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
         .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
 
     let response = client
-        .post(OLLAMA_CHAT_URL)
+        .post(LLAMA_CHAT_URL)
         .json(&request)
         .send()
         .map_err(map_reqwest_send_error)?;
@@ -550,7 +566,7 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
         });
     }
 
-    let response = serde_json::from_str::<OllamaChatResponse>(&raw).map_err(|err| {
+    let response = serde_json::from_str::<ChatResponse>(&raw).map_err(|err| {
         VlmError::ResponseDecode {
             raw,
             source_error: err.to_string(),
@@ -558,19 +574,17 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
     })?;
 
     let content = response
-        .message
-        .as_ref()
-        .map(|msg| msg.content.as_str())
+        .choices
+        .first()
+        .and_then(|choice| choice.message.as_ref())
+        .and_then(|msg| msg.content.as_deref())
         .ok_or_else(|| VlmError::ResponseDecode {
-            raw: "<missing message.content>".to_string(),
-            source_error: "missing message.content".to_string(),
+            raw: "<missing choices[0].message.content>".to_string(),
+            source_error: "missing choices[0].message.content".to_string(),
         })?;
 
     let parsed = parse_model_output(content)?;
-    let duration_ms = response
-        .total_duration
-        .map(|ns| ns / 1_000_000)
-        .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
+    let duration_ms = started_at.elapsed().as_millis() as u64;
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
@@ -579,7 +593,7 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
 }
 
 fn run_streaming_request<F: FnMut(&str)>(
-    request: OllamaChatRequest,
+    request: ChatRequest,
     mut on_partial_raw: F,
 ) -> VlmResult<(String, Option<u64>)> {
     let client = reqwest::blocking::Client::builder()
@@ -588,7 +602,7 @@ fn run_streaming_request<F: FnMut(&str)>(
         .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
 
     let response = client
-        .post(OLLAMA_CHAT_URL)
+        .post(LLAMA_CHAT_URL)
         .json(&request)
         .send()
         .map_err(map_reqwest_send_error)?;
@@ -603,7 +617,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     }
 
     let mut raw_accumulated = String::new();
-    let mut final_duration_ns: Option<u64> = None;
+    let final_duration_ns: Option<u64> = None;
     let reader = BufReader::new(response);
     for line in reader.lines() {
         let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
@@ -612,23 +626,27 @@ fn run_streaming_request<F: FnMut(&str)>(
             continue;
         }
 
-        let chunk = serde_json::from_str::<OllamaChatStreamChunk>(trimmed).map_err(|err| {
-            VlmError::ResponseDecode {
-                raw: trimmed.to_string(),
-                source_error: format!("stream chunk parse failed: {err}"),
+        if let Some(payload) = trimmed.strip_prefix("data:") {
+            let payload = payload.trim();
+            if payload == "[DONE]" {
+                break;
             }
-        })?;
 
-        if let Some(message) = chunk.message {
-            if !message.content.is_empty() {
-                raw_accumulated.push_str(&message.content);
-                on_partial_raw(&raw_accumulated);
+            let chunk = serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
+                VlmError::ResponseDecode {
+                    raw: payload.to_string(),
+                    source_error: format!("stream chunk parse failed: {err}"),
+                }
+            })?;
+
+            if let Some(choice) = chunk.choices.first() {
+                if let Some(content) = choice.delta.content.as_deref() {
+                    if !content.is_empty() {
+                        raw_accumulated.push_str(content);
+                        on_partial_raw(&raw_accumulated);
+                    }
+                }
             }
-        }
-
-        if chunk.done {
-            final_duration_ns = chunk.total_duration;
-            break;
         }
     }
 
@@ -649,20 +667,26 @@ fn build_chat_request(
     user_content: String,
     images: Option<Vec<String>>,
     stream: bool,
-) -> OllamaChatRequest {
-    OllamaChatRequest {
-        model: OLLAMA_MODEL.to_string(),
+) -> ChatRequest {
+    let mut user_parts = vec![ContentPart::Text { text: user_content }];
+    if let Some(images) = images {
+        for image_b64 in images {
+            user_parts.push(ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: format!("data:image/png;base64,{image_b64}"),
+                },
+            });
+        }
+    }
+
+    ChatRequest {
+        model: CHAT_MODEL_NAME.to_string(),
         stream,
         messages: vec![
-            OllamaMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-                images: None,
-            },
-            OllamaMessage {
+            ChatMessage::new_text("system", system_prompt),
+            ChatMessage {
                 role: "user".to_string(),
-                content: user_content,
-                images,
+                content: user_parts,
             },
         ],
     }
@@ -717,7 +741,7 @@ fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
     } else if err.is_connect() {
         VlmError::OllamaDown
     } else {
-        VlmError::Internal(format!("ollama request failed: {err}"))
+        VlmError::Internal(format!("llama-server request failed: {err}"))
     }
 }
 
@@ -763,60 +787,72 @@ fn extract_partial_json_string(raw: &str, key: &str) -> Option<String> {
     Some(out)
 }
 
-fn contains_chinese(s: &str) -> bool {
-    s.chars().any(|ch| {
-        matches!(
-            ch,
-            '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}'
-        )
-    })
-}
-
 #[derive(Debug, Serialize)]
-struct OllamaChatRequest {
+struct ChatRequest {
     model: String,
     stream: bool,
-    messages: Vec<OllamaMessage>,
+    messages: Vec<ChatMessage>,
 }
 
 #[derive(Debug, Serialize)]
-struct OllamaMessage {
+struct ChatMessage {
     role: String,
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    images: Option<Vec<String>>,
+    content: Vec<ContentPart>,
+}
+
+impl ChatMessage {
+    fn new_text(role: &str, text: String) -> Self {
+        Self {
+            role: role.to_string(),
+            content: vec![ContentPart::Text { text }],
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrl },
+}
+
+#[derive(Debug, Serialize)]
+struct ImageUrl {
+    url: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaChatResponse {
-    message: Option<OllamaMessageResponse>,
-    total_duration: Option<u64>,
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaChatStreamChunk {
-    message: Option<OllamaMessageResponse>,
-    done: bool,
-    total_duration: Option<u64>,
+struct ChatChoice {
+    message: Option<AssistantMessage>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OllamaMessageResponse {
-    content: String,
+struct AssistantMessage {
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatStreamChunk {
+    choices: Vec<ChatStreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatStreamChoice {
+    delta: ChatStreamDelta,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatStreamDelta {
+    content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ModelOutput {
     original: String,
     translated: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaTagsResponse {
-    models: Vec<OllamaTagModel>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OllamaTagModel {
-    name: String,
 }

@@ -75,9 +75,13 @@ fn process_request(request: CaptureRequest) {
 }
 
 fn current_target_lang() -> TargetLang {
-    if output_lang::current() == "en" {
-        TargetLang::English
-    } else {
-        TargetLang::Chinese
+    match output_lang::current().as_str() {
+        "zh-CN" => TargetLang::SimplifiedChinese,
+        "en-US" => TargetLang::English,
+        "ja-JP" => TargetLang::Japanese,
+        "ko-KR" => TargetLang::Korean,
+        "de-DE" => TargetLang::German,
+        "fr-FR" => TargetLang::French,
+        _ => TargetLang::TraditionalChinese,
     }
 }

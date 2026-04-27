@@ -39,7 +39,7 @@
         "width": 700,
         "height": 500,
         "visible": false,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "resizable": true
       }
     ],

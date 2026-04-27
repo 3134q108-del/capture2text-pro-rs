@@ -140,7 +140,9 @@ pub fn upsert_runtime(scenario: Scenario) -> io::Result<()> {
         runtime.scenarios.push(scenario);
     }
     runtime.scenarios = merge_builtin(runtime.scenarios.clone());
-    persist_runtime(&runtime)
+    persist_runtime(&runtime)?;
+    emit_scenarios_changed();
+    Ok(())
 }
 
 pub fn delete_runtime(id: &str) -> io::Result<()> {
@@ -157,7 +159,9 @@ pub fn delete_runtime(id: &str) -> io::Result<()> {
     runtime.scenarios.retain(|item| item.id != id);
     runtime.scenarios = merge_builtin(runtime.scenarios.clone());
     runtime.active_id = sanitize_active_id(&runtime.scenarios, &runtime.active_id);
-    persist_runtime(&runtime)
+    persist_runtime(&runtime)?;
+    emit_scenarios_changed();
+    Ok(())
 }
 
 pub fn get_active_scenario_id() -> String {
@@ -170,7 +174,9 @@ pub fn get_active_scenario_id() -> String {
 pub fn set_active_scenario_id(id: String) -> io::Result<()> {
     let mut runtime = runtime_guard()?;
     runtime.active_id = sanitize_active_id(&runtime.scenarios, &id);
-    persist_runtime(&runtime)
+    persist_runtime(&runtime)?;
+    emit_scenarios_changed();
+    Ok(())
 }
 
 pub fn current_scenario() -> Scenario {
@@ -264,4 +270,11 @@ fn default_scenario() -> Scenario {
             prompt: "你是精準的翻譯助理。".to_string(),
             builtin: true,
         })
+}
+
+fn emit_scenarios_changed() {
+    if let Some(app) = crate::app_handle::get() {
+        use tauri::Emitter;
+        let _ = app.emit("scenarios-changed", ());
+    }
 }

@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# T51 Qwen3-TTS isolated test outputs (experiment abandoned)
+src-tauri/isolated_test_*.wav

@@ -3,7 +3,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-const DEFAULT_LANG: &str = "zh";
+const DEFAULT_LANG: &str = "zh-TW";
 
 static ACTIVE_OUTPUT_LANG: OnceLock<Mutex<String>> = OnceLock::new();
 
@@ -42,17 +42,27 @@ pub fn set(lang: &str) -> io::Result<()> {
 
     if let Some(slot) = ACTIVE_OUTPUT_LANG.get() {
         if let Ok(mut guard) = slot.lock() {
-            *guard = next;
+            *guard = next.clone();
         }
+    }
+
+    if let Some(app) = crate::app_handle::get() {
+        use tauri::Emitter;
+        let _ = app.emit("output-language-changed", &next);
     }
     Ok(())
 }
 
 fn sanitize(lang: &str) -> String {
-    if lang.eq_ignore_ascii_case("en") {
-        "en".to_string()
-    } else {
-        DEFAULT_LANG.to_string()
+    match lang.trim().to_ascii_lowercase().as_str() {
+        "zh-tw" | "zh" => "zh-TW".to_string(),
+        "zh-cn" => "zh-CN".to_string(),
+        "en-us" | "en" => "en-US".to_string(),
+        "ja-jp" | "ja" => "ja-JP".to_string(),
+        "ko-kr" | "ko" => "ko-KR".to_string(),
+        "de-de" | "de" => "de-DE".to_string(),
+        "fr-fr" | "fr" => "fr-FR".to_string(),
+        _ => DEFAULT_LANG.to_string(),
     }
 }
 

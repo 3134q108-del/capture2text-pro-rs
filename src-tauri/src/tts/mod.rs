@@ -1,285 +1,133 @@
 pub mod config;
 
-use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 
-use edge_tts_rust::{EdgeTtsClient, SpeakOptions};
-use rodio::{Decoder, OutputStream, Sink};
-use thiserror::Error;
-
-pub use config::{TtsConfig, TtsVoiceOption};
-
-#[derive(Debug, Error)]
-pub enum TtsError {
-    #[error("empty text")]
-    EmptyText,
-    #[error("tts runtime init failed: {0}")]
-    RuntimeInit(String),
-    #[error("tts request failed: {0}")]
-    RequestFailed(String),
-    #[error("audio output unavailable: {0}")]
-    AudioOutput(String),
-    #[error("audio playback failed: {0}")]
-    PlaybackFailed(String),
-    #[error("config error: {0}")]
-    Config(String),
-}
+use rodio::cpal::traits::{DeviceTrait, HostTrait};
+use rodio::{cpal, Decoder, OutputStream, Sink};
 
 struct PlaybackState {
     sink: Arc<Sink>,
-    generation: u64,
 }
 
 static ACTIVE_PLAYBACK: OnceLock<Mutex<Option<PlaybackState>>> = OnceLock::new();
-static PLAYBACK_GENERATION: AtomicU64 = AtomicU64::new(0);
-static TTS_CACHE: OnceLock<Mutex<HashMap<(String, String), Vec<u8>>>> = OnceLock::new();
-static TTS_SYNTH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn playback_slot() -> &'static Mutex<Option<PlaybackState>> {
     ACTIVE_PLAYBACK.get_or_init(|| Mutex::new(None))
 }
 
-fn cache_slot() -> &'static Mutex<HashMap<(String, String), Vec<u8>>> {
-    TTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+pub fn init_runtime() -> Result<(), String> {
+    crate::qwen_tts::bootstrap()
 }
 
-fn synth_lock() -> &'static Mutex<()> {
-    TTS_SYNTH_LOCK.get_or_init(|| Mutex::new(()))
+pub fn synthesize_for_active_voice(text: &str, lang: &str) -> Result<Vec<u8>, String> {
+    let preset = current_active_preset();
+    crate::qwen_tts::synthesize(text, preset, lang)
 }
 
-pub fn cache_init() {
-    let _ = cache_slot();
+pub fn current_active_preset() -> crate::qwen_tts::VoicePreset {
+    let state = crate::window_state::get();
+    crate::qwen_tts::VoicePreset::from_str(&state.speech_active_preset)
+        .unwrap_or(crate::qwen_tts::VoicePreset::Ryan)
 }
 
-pub fn cache_get(text: &str, voice_code: &str) -> Option<Vec<u8>> {
-    let key = (text.to_string(), voice_code.to_string());
-    let guard = match cache_slot().lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            eprintln!("[tts-cache] cache_get lock poisoned");
-            return None;
-        }
-    };
-    guard.get(&key).cloned()
-}
-
-pub fn cache_put(text: &str, voice_code: &str, mp3: Vec<u8>) {
-    let key = (text.to_string(), voice_code.to_string());
-    match cache_slot().lock() {
-        Ok(mut guard) => {
-            guard.insert(key, mp3);
-        }
-        Err(_) => {
-            eprintln!("[tts-cache] cache_put lock poisoned");
-        }
-    }
-}
-
-pub fn prefetch(text: &str, voice_code: &str) {
-    if cache_get(text, voice_code).is_some() {
-        eprintln!(
-            "[tts-cache] prefetch cache hit voice={} text_len={}",
-            voice_code,
-            text.len()
-        );
-        return;
-    }
-
-    eprintln!(
-        "[tts-cache] prefetch cache miss voice={} text_len={}",
-        voice_code,
-        text.len()
-    );
-
-    match synthesize_with_voice(text, voice_code) {
-        Ok(mp3) => {
-            let size = mp3.len();
-            cache_put(text, voice_code, mp3);
-            eprintln!(
-                "[tts-cache] prefetched {} bytes voice={} text_len={}",
-                size,
-                voice_code,
-                text.len()
-            );
-        }
-        Err(err) => {
-            eprintln!(
-                "[tts-cache] prefetch failed voice={} text_len={} err={}",
-                voice_code,
-                text.len(),
-                err
-            );
-        }
-    }
-}
-
-pub fn init_config_runtime() -> Result<(), TtsError> {
-    config::init_runtime().map_err(|err| TtsError::Config(err.to_string()))
-}
-
-pub fn available_voices() -> Vec<TtsVoiceOption> {
-    config::available_voices()
-}
-
-pub fn get_config() -> Result<TtsConfig, TtsError> {
-    config::get_config_runtime().map_err(|err| TtsError::Config(err.to_string()))
-}
-
-pub fn set_voice(lang: &str, code: String) -> Result<(), TtsError> {
-    match lang {
-        "zh" => config::set_active_zh(code).map_err(|err| TtsError::Config(err.to_string())),
-        "en" => config::set_active_en(code).map_err(|err| TtsError::Config(err.to_string())),
-        _ => Err(TtsError::Config("unsupported language".to_string())),
-    }
-}
-
-pub fn current_voice_for_lang(lang: &str) -> String {
-    match lang {
-        "en" => config::current_en_voice(),
-        _ => config::current_zh_voice(),
-    }
-}
-
-pub fn preprocess_for_speech(text: &str, voice_code: &str) -> String {
-    let is_zh_voice = voice_code.to_ascii_lowercase().starts_with("zh-");
-    let replacements = if is_zh_voice {
-        [
-            (">=", "大於等於"),
-            ("<=", "小於等於"),
-            ("!=", "不等於"),
-            ("==", "等於"),
-            (">", "大於"),
-            ("<", "小於"),
-        ]
-    } else {
-        [
-            (">=", " greater than or equal to "),
-            ("<=", " less than or equal to "),
-            ("!=", " not equal to "),
-            ("==", " equals "),
-            (">", " greater than "),
-            ("<", " less than "),
-        ]
-    };
-
-    let mut processed = text.to_string();
-    for (pattern, replacement) in replacements {
-        processed = processed.replace(pattern, replacement);
-    }
-
-    for symbol in ['*', '_', '`', '#', '"'] {
-        processed = processed.replace(symbol, "");
-    }
-
-    processed
-}
-
-pub fn synthesize_with_voice(text: &str, voice_code: &str) -> Result<Vec<u8>, TtsError> {
-    if text.trim().is_empty() {
-        return Err(TtsError::EmptyText);
-    }
-
-    let processed = preprocess_for_speech(text, voice_code);
-    let _guard = synth_lock()
-        .lock()
-        .map_err(|_| TtsError::RequestFailed("synth lock poisoned".to_string()))?;
-    eprintln!(
-        "[tts-synth] acquired lock voice={} text_len={}",
-        voice_code,
-        text.len()
-    );
-
-    eprintln!(
-        "[tts-synth] start voice={} text_len={}",
-        voice_code,
-        text.len()
-    );
-    let t0 = Instant::now();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| TtsError::RuntimeInit(err.to_string()))?;
-    let t1 = Instant::now();
-    eprintln!(
-        "[tts-synth] runtime_ms={}",
-        t1.duration_since(t0).as_millis()
-    );
-
-    runtime.block_on(async move {
-        let t2 = Instant::now();
-        let client = EdgeTtsClient::new().map_err(|err| TtsError::RequestFailed(err.to_string()))?;
-        let t3 = Instant::now();
-        eprintln!(
-            "[tts-synth] client_ms={}",
-            t3.duration_since(t2).as_millis()
-        );
-        let options = SpeakOptions {
-            voice: voice_code.to_string(),
-            ..SpeakOptions::default()
-        };
-        let result = client
-            .synthesize(processed.as_str(), options)
-            .await
-            .map_err(|err| TtsError::RequestFailed(err.to_string()))?;
-        let t4 = Instant::now();
-        eprintln!(
-            "[tts-synth] synth_ms={} total_ms={} bytes={}",
-            t4.duration_since(t3).as_millis(),
-            t4.duration_since(t0).as_millis(),
-            result.audio.len()
-        );
-        Ok(result.audio)
-    })
-}
-
-pub fn play_mp3(bytes: &[u8]) -> Result<(), TtsError> {
+pub fn play_wav(bytes: &[u8]) -> Result<(), String> {
+    eprintln!("[tts] play_wav called bytes={}", bytes.len());
     if bytes.is_empty() {
-        return Err(TtsError::PlaybackFailed("empty audio bytes".to_string()));
+        eprintln!("[tts] play_wav: empty audio bytes");
+        return Err("empty audio bytes".to_string());
+    }
+    if bytes.len() >= 44 {
+        let riff = &bytes[0..4];
+        let wave = &bytes[8..12];
+        let fmt = &bytes[12..16];
+        let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
+        let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
+        let bit_depth = u16::from_le_bytes([bytes[34], bytes[35]]);
+        let data_size = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]);
+        eprintln!(
+            "[tts] WAV header: RIFF={:?} WAVE={:?} fmt_chunk={:?} sr={}Hz ch={} bits={} data_size={} total_bytes={}",
+            std::str::from_utf8(riff).ok(),
+            std::str::from_utf8(wave).ok(),
+            std::str::from_utf8(fmt).ok(),
+            sample_rate,
+            channels,
+            bit_depth,
+            data_size,
+            bytes.len()
+        );
+
+        if bit_depth == 16 && bytes.len() >= 44 + 2 {
+            let data_start = 44usize;
+            let sample_count = (bytes.len() - data_start) / 2;
+            let sample_check = sample_count.min(1000);
+            let preview_count = sample_count.min(40);
+            let mut max_abs = 0i32;
+            let mut sum_abs = 0i64;
+            let mut preview = Vec::with_capacity(preview_count);
+            for i in 0..sample_check {
+                let s = i16::from_le_bytes([bytes[data_start + i * 2], bytes[data_start + i * 2 + 1]]);
+                let abs = i32::from(s).abs();
+                if abs > max_abs {
+                    max_abs = abs;
+                }
+                sum_abs += i64::from(abs);
+                if i < preview_count {
+                    preview.push(s);
+                }
+            }
+            let avg_abs = if sample_check > 0 {
+                sum_abs / sample_check as i64
+            } else {
+                0
+            };
+            eprintln!("[tts] WAV sample preview (first {} i16): {:?}", preview_count, preview);
+            eprintln!(
+                "[tts] WAV samples (first {}): max_abs={} avg_abs={}",
+                sample_check,
+                max_abs,
+                avg_abs
+            );
+        }
     }
 
+    eprintln!("[tts] play_wav: stopping current playback if exists");
     stop_current();
 
-    let (stream, stream_handle) =
-        OutputStream::try_default().map_err(|err| TtsError::AudioOutput(err.to_string()))?;
-    let sink = Arc::new(Sink::try_new(&stream_handle).map_err(|err| {
-        TtsError::AudioOutput(format!("create sink failed: {err}"))
-    })?);
-    let source = Decoder::new(Cursor::new(bytes.to_vec()))
-        .map_err(|err| TtsError::PlaybackFailed(format!("decode mp3 failed: {err}")))?;
+    let host = cpal::default_host();
+    if let Some(default_dev) = host.default_output_device() {
+        let name = default_dev
+            .name()
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        eprintln!("[tts] rodio default output device: {}", name);
+    } else {
+        eprintln!("[tts] rodio default output device: <none>");
+    }
 
+    eprintln!("[tts] play_wav: initializing rodio output");
+    let (stream, stream_handle) = OutputStream::try_default().map_err(|e| e.to_string())?;
+    let sink = Arc::new(Sink::try_new(&stream_handle).map_err(|e| e.to_string())?);
+    let source = Decoder::new(Cursor::new(bytes.to_vec()))
+        .map_err(|e| format!("decode wav failed: {e}"))?;
+    eprintln!("[tts] play_wav: decoded wav, appending to sink");
     sink.append(source);
 
-    let generation = PLAYBACK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     {
         let mut guard = playback_slot()
             .lock()
-            .map_err(|_| TtsError::PlaybackFailed("playback lock poisoned".to_string()))?;
+            .map_err(|_| "playback lock poisoned".to_string())?;
         *guard = Some(PlaybackState {
             sink: Arc::clone(&sink),
-            generation,
         });
     }
 
-    eprintln!(
-        "[tts] play_mp3 started bytes={} generation={}",
-        bytes.len(),
-        generation
-    );
+    eprintln!("[tts] play_wav: waiting for playback end");
     sink.sleep_until_end();
-    eprintln!("[tts] play_mp3 finished generation={}", generation);
+    eprintln!("[tts] play_wav: playback finished");
     drop(stream);
 
     if let Ok(mut guard) = playback_slot().lock() {
-        if guard
-            .as_ref()
-            .map(|state| state.generation == generation)
-            .unwrap_or(false)
-        {
-            let _ = guard.take();
-        }
+        let _ = guard.take();
     }
 
     Ok(())
@@ -290,47 +138,5 @@ pub fn stop_current() {
         if let Some(state) = guard.take() {
             state.sink.stop();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::preprocess_for_speech;
-
-    #[test]
-    fn preprocess_replaces_operators_for_en_voice() {
-        let text = r#"a >= b <= c != d == e > f < g * _ ` # " ~"#;
-        let processed = preprocess_for_speech(text, "en-US-AndrewNeural");
-
-        assert!(processed.contains("greater than or equal to"));
-        assert!(processed.contains("less than or equal to"));
-        assert!(processed.contains("not equal to"));
-        assert!(processed.contains("equals"));
-        assert!(processed.contains("greater than"));
-        assert!(processed.contains("less than"));
-        assert!(!processed.contains(">="));
-        assert!(!processed.contains("<="));
-        assert!(!processed.contains("!="));
-        assert!(!processed.contains("=="));
-        assert!(!processed.contains('*'));
-        assert!(!processed.contains('_'));
-        assert!(!processed.contains('`'));
-        assert!(!processed.contains('#'));
-        assert!(!processed.contains('"'));
-        assert!(processed.contains('~'));
-    }
-
-    #[test]
-    fn preprocess_replaces_operators_for_zh_voice() {
-        let text = "a>=b<=c!=d==e>f<g~";
-        let processed = preprocess_for_speech(text, "zh-TW-HsiaoChenNeural");
-
-        assert!(processed.contains("大於等於"));
-        assert!(processed.contains("小於等於"));
-        assert!(processed.contains("不等於"));
-        assert!(processed.contains("等於"));
-        assert!(processed.contains("大於"));
-        assert!(processed.contains("小於"));
-        assert!(processed.contains('~'));
     }
 }

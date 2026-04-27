@@ -16,18 +16,23 @@ fn run() -> io::Result<()> {
     if args.len() != 3 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: cargo run --bin vlm_smoke -- <png_path> <zh|en>",
+            "usage: cargo run --bin vlm_smoke -- <png_path> <zh-TW|zh-CN|en-US|ja-JP|ko-KR|de-DE|fr-FR>",
         ));
     }
 
     let png_path = &args[1];
     let target_lang = match args[2].as_str() {
-        "zh" => TargetLang::Chinese,
-        "en" => TargetLang::English,
+        "zh-TW" | "zh" => TargetLang::TraditionalChinese,
+        "zh-CN" => TargetLang::SimplifiedChinese,
+        "en-US" | "en" => TargetLang::English,
+        "ja-JP" | "ja" => TargetLang::Japanese,
+        "ko-KR" | "ko" => TargetLang::Korean,
+        "de-DE" | "de" => TargetLang::German,
+        "fr-FR" | "fr" => TargetLang::French,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "language must be zh or en",
+                "language must be zh-TW / zh-CN / en-US / ja-JP / ko-KR / de-DE / fr-FR",
             ));
         }
     };

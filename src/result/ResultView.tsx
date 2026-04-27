@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
@@ -7,7 +7,6 @@ import "./ResultView.css";
 type VlmStatus = "idle" | "loading" | "success" | "error";
 type SpeakingTarget = "original" | "translated" | null;
 type TtsTarget = Exclude<SpeakingTarget, null>;
-type CacheReadyState = { original: boolean; translated: boolean };
 type PopupFont = { family: string; size_pt: number } | null;
 
 type VlmEventPayload = {
@@ -43,7 +42,7 @@ type WindowState = {
 const FONT_FAMILIES = [
   "Segoe UI",
   "Microsoft JhengHei",
-  "微軟正黑體",
+  "DFKai-SB",
   "PMingLiU",
   "Arial",
   "Consolas",
@@ -61,7 +60,6 @@ export default function ResultView() {
   const [translated, setTranslated] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
-  const [cacheReady, setCacheReady] = useState<CacheReadyState>({ original: false, translated: false });
   const [isTopmost, setIsTopmost] = useState<boolean>(true);
   const [popupFont, setPopupFont] = useState<PopupFont>(null);
   const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
@@ -76,80 +74,55 @@ export default function ResultView() {
     : undefined;
 
   function applyFinalPayload(p: VlmEventPayload) {
-    console.log("[ResultView] applyFinal", p);
     if (p.status === "success") {
       setStatus("success");
       setOriginal(p.original);
       setTranslated(p.translated);
       setErrorMsg("");
-      if (p.source === "Retrans") {
-        setCacheReady((prev) => ({ ...prev, translated: false }));
-      } else {
-        setCacheReady({ original: false, translated: false });
-      }
     } else {
       setStatus("error");
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
-      setCacheReady({ original: false, translated: false });
       setSpeakingTarget(null);
     }
   }
 
   function applyPartialPayload(p: VlmPartialEventPayload) {
-    console.log("[ResultView] applyPartial", p);
     setStatus("loading");
     setOriginal(p.original);
     setTranslated(p.translated);
     setErrorMsg("");
-    if (p.source === "Retrans") {
-      setCacheReady((prev) => ({ ...prev, translated: false }));
-    } else {
-      setCacheReady({ original: false, translated: false });
-    }
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
-    console.log("[ResultView] applySnapshot", snapshot);
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
     if (snapshot.status === "success") {
       setStatus("success");
       setErrorMsg("");
-      setCacheReady({ original: false, translated: false });
     } else if (snapshot.status === "error") {
       setStatus("error");
       setErrorMsg(snapshot.error ?? "unknown error");
-      setCacheReady({ original: false, translated: false });
       setSpeakingTarget(null);
     } else {
       setStatus("loading");
       setErrorMsg("");
-      if (snapshot.source === "Retrans") {
-        setCacheReady((prev) => ({ ...prev, translated: false }));
-      } else {
-        setCacheReady({ original: false, translated: false });
-      }
     }
   }
 
   useEffect(() => {
-    console.log("[ResultView] listener-effect mount");
     let disposed = false;
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
-    let offPrefetchDone: null | (() => void) = null;
     let offTtsDone: null | (() => void) = null;
 
     const setup = async () => {
-      console.log("[ResultView] setup start");
       offFinal = await listen<VlmEventPayload>("vlm-result", (event) => {
         hasLiveEvent = true;
         applyFinalPayload(event.payload);
       });
-      console.log("[ResultView] vlm-result listener registered, disposed=", disposed);
       if (disposed) {
         offFinal();
         offFinal = null;
@@ -158,7 +131,6 @@ export default function ResultView() {
 
       try {
         const latest = await invoke<VlmSnapshot | null>("get_latest_vlm_state");
-        console.log("[ResultView] snapshot", latest);
         if (!disposed && !hasLiveEvent && latest) {
           applySnapshot(latest);
         }
@@ -175,27 +147,8 @@ export default function ResultView() {
         hasLiveEvent = true;
         applyPartialPayload(event.payload);
       });
-      console.log("[ResultView] vlm-result-partial listener registered, disposed=", disposed);
       if (disposed) {
         offPartial();
-        offPartial = null;
-        offFinal?.();
-        offFinal = null;
-        return;
-      }
-
-      offPrefetchDone = await listen<{ target?: string }>("tts-prefetch-done", (event) => {
-        const target = event.payload?.target;
-        if (target === "original" || target === "translated") {
-          setCacheReady((prev) => ({ ...prev, [target]: true }));
-        }
-      });
-      if (disposed) {
-        offPrefetchDone();
-        offPrefetchDone = null;
-        offTtsDone?.();
-        offTtsDone = null;
-        offPartial?.();
         offPartial = null;
         offFinal?.();
         offFinal = null;
@@ -211,8 +164,6 @@ export default function ResultView() {
       if (disposed) {
         offTtsDone();
         offTtsDone = null;
-        offPrefetchDone?.();
-        offPrefetchDone = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -223,50 +174,16 @@ export default function ResultView() {
     void setup();
 
     return () => {
-      console.log("[ResultView] listener-effect cleanup");
       disposed = true;
       offFinal?.();
       offPartial?.();
-      offPrefetchDone?.();
       offTtsDone?.();
     };
   }, []);
 
   useEffect(() => {
     let disposed = false;
-
-    const refreshCacheReady = async () => {
-      if (status !== "success") return;
-
-      const originalText = original.trim();
-      const translatedText = translated.trim();
-
-      const [originalReady, translatedReady] = await Promise.all([
-        originalText
-          ? invoke<boolean>("is_tts_cached", { text: originalText, lang: detectLang(originalText) })
-              .catch(() => false)
-          : Promise.resolve(false),
-        translatedText
-          ? invoke<boolean>("is_tts_cached", { text: translatedText, lang: detectLang(translatedText) })
-              .catch(() => false)
-          : Promise.resolve(false),
-      ]);
-
-      if (!disposed) {
-        setCacheReady({ original: originalReady, translated: translatedReady });
-      }
-    };
-
-    void refreshCacheReady();
-
-    return () => {
-      disposed = true;
-    };
-  }, [status, original, translated]);
-
-  useEffect(() => {
-    console.log("[ResultView] window-state-effect mount");
-    let disposed = false;
+    let offState: null | (() => void) = null;
 
     const loadWindowState = async () => {
       try {
@@ -280,15 +197,28 @@ export default function ResultView() {
       }
     };
 
-    void loadWindowState();
+    const setup = async () => {
+      await loadWindowState();
+      if (disposed) return;
+      offState = await listen<WindowState>("window-state-changed", (event) => {
+        setIsTopmost(Boolean(event.payload.popup_topmost));
+        setPopupFont(event.payload.popup_font ?? null);
+      });
+      if (disposed) {
+        offState();
+        offState = null;
+      }
+    };
+
+    void setup();
 
     return () => {
       disposed = true;
+      offState?.();
     };
   }, []);
 
   useEffect(() => {
-    console.log("[ResultView] geometry-effect mount");
     const appWindow = getCurrentWindow();
     let disposed = false;
     let offResized: null | (() => void) = null;
@@ -447,7 +377,6 @@ export default function ResultView() {
   }
 
   async function toggleSpeak(target: TtsTarget) {
-    console.log("[toggleSpeak] enter target=", target, "current=", speakingTarget);
     const content = target === "original" ? original.trim() : translated.trim();
 
     if (speakingTarget === target) {
@@ -486,6 +415,11 @@ export default function ResultView() {
 
   async function onOk() {
     try {
+      await invoke("write_popup_clipboard");
+    } catch {
+      // ignore
+    }
+    try {
       await invoke("hide_result_window");
     } catch {
       // ignore
@@ -516,17 +450,9 @@ export default function ResultView() {
                   onClick={() => {
                     void toggleSpeak("original");
                   }}
-                  disabled={
-                    !original.trim() ||
-                    !cacheReady.original ||
-                    (speakingTarget !== null && speakingTarget !== "original")
-                  }
+                  disabled={!original.trim() || (speakingTarget !== null && speakingTarget !== "original")}
                 >
-                  {!cacheReady.original && original.trim()
-                    ? "合成中…"
-                    : speakingTarget === "original"
-                      ? "Stop"
-                      : "Speak 原文"}
+                  {speakingTarget === "original" ? "停止" : "Speak 原文"}
                 </button>
                 <button
                   className="c2t-btn"
@@ -535,7 +461,7 @@ export default function ResultView() {
                   }}
                   disabled={!original}
                 >
-                  Copy 原文
+                  Copy ??
                 </button>
               </div>
             </section>
@@ -564,17 +490,9 @@ export default function ResultView() {
                     onClick={() => {
                       void toggleSpeak("translated");
                     }}
-                    disabled={
-                      !translated.trim() ||
-                      !cacheReady.translated ||
-                      (speakingTarget !== null && speakingTarget !== "translated")
-                    }
+                    disabled={!translated.trim() || (speakingTarget !== null && speakingTarget !== "translated")}
                   >
-                    {!cacheReady.translated && translated.trim()
-                      ? "合成中…"
-                      : speakingTarget === "translated"
-                        ? "Stop"
-                        : "Speak 譯文"}
+                    {speakingTarget === "translated" ? "停止" : "Speak 譯文"}
                   </button>
                   {hasTranslatedText && (
                     <button
@@ -584,7 +502,7 @@ export default function ResultView() {
                       }}
                       disabled={!translated}
                     >
-                      Copy 譯文
+                      Copy 霅舀?
                     </button>
                   )}
                 </div>
@@ -660,7 +578,7 @@ export default function ResultView() {
               className="font-modal-preview"
               style={{ fontFamily: fontFamilyDraft, fontSize: `${fontSizeDraftPt}pt` }}
             >
-              Capture2Text 預覽 Preview 123
+              Capture2Text ?汗 Preview 123
             </div>
 
             <div className="font-modal-actions">
@@ -695,3 +613,4 @@ export default function ResultView() {
     </div>
   );
 }
+

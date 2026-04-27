@@ -1,13 +1,19 @@
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 mod capture;
+mod clipboard;
 mod commands;
 mod drag_overlay;
 mod error;
 mod hotkey;
+mod llama_runtime;
+#[allow(dead_code)]
+mod ollama_boot;
 mod overlay;
 mod output_lang;
+mod app_handle;
 mod scenarios;
+mod qwen_tts;
 mod tray;
 mod tts;
 mod window_state;
@@ -23,39 +29,46 @@ pub fn run() {
             let _ = crate::commands::result_window::show_settings_window(app.clone());
         }))
         .setup(|app| {
+            crate::app_handle::set(app.handle().clone());
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
             window_state::init_runtime();
-            tts::init_config_runtime().map_err(std::io::Error::other)?;
-            tts::cache_init();
-            let health = vlm::check_health();
-            match &health {
-                vlm::HealthStatus::Healthy => {
-                    println!("[vlm] ollama health: OK");
-                }
-                vlm::HealthStatus::OllamaDown => {
-                    eprintln!("[vlm] ollama health: daemon not reachable (is 'ollama serve' running?)");
-                }
-                vlm::HealthStatus::ModelMissing { model } => {
-                    eprintln!(
-                        "[vlm] ollama health: model '{}' not found (run: ollama pull {})",
-                        model, model
-                    );
-                }
-                vlm::HealthStatus::Unknown(msg) => {
-                    eprintln!("[vlm] ollama health: unknown status ({})", msg);
-                }
-            }
-            if let Some(warning) = health.to_warning() {
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(window) = app_handle.get_webview_window("settings") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+            let app_handle_tts = app.handle().clone();
+            std::thread::spawn(move || {
+                match crate::tts::init_runtime() {
+                    Ok(()) => {
+                        eprintln!("[tts] runtime ready");
+                        use tauri::Emitter;
+                        let _ = app_handle_tts.emit("tts-ready", ());
                     }
-                    let _ = app_handle.emit_to("settings", "health-warning", warning);
-                });
-            }
+                    Err(err) => {
+                        eprintln!("[tts] runtime init failed: {err}");
+                        use tauri::Emitter;
+                        let _ = app_handle_tts.emit("tts-init-failed", err);
+                    }
+                }
+            });
+            let app_handle_for_bootstrap = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(err) = crate::llama_runtime::bootstrap(
+                    crate::llama_runtime::manifest::ModelId::Qwen3Vl8bInstruct,
+                ) {
+                    eprintln!("[llama-runtime] bootstrap failed: {err}");
+                    use tauri::Emitter;
+                    let _ = app_handle_for_bootstrap.emit("llm-setup-failed", err.clone());
+                    let _ = app_handle_for_bootstrap.emit_to(
+                        "settings",
+                        "health-warning",
+                        crate::vlm::HealthWarning {
+                            status: "setup-failed".to_string(),
+                            message: err,
+                        },
+                    );
+                    return;
+                }
+
+                crate::vlm::warmup();
+            });
             for label in ["result", "settings"] {
                 if let Some(window) = app.get_webview_window(label) {
                     eprintln!("[window] attach_close_handler label={}", label);
@@ -84,6 +97,23 @@ pub fn run() {
             commands::result_window::set_popup_font,
             commands::result_window::clear_popup_font,
             commands::result_window::save_popup_window_geometry,
+            commands::result_window::set_save_to_clipboard,
+            commands::result_window::set_clipboard_mode,
+            commands::result_window::set_popup_show_enabled,
+            commands::result_window::set_translate_append_to_clipboard,
+            commands::result_window::set_translate_separator,
+            commands::result_window::set_log_enabled,
+            commands::result_window::set_log_file_path,
+            commands::result_window::set_speech_enabled,
+            commands::result_window::write_popup_clipboard,
+            commands::result_window::check_llm_health,
+            commands::result_window::check_ollama_health,
+            commands::result_window::open_external_url,
+            commands::result_window::export_settings,
+            commands::result_window::import_settings,
+            commands::result_window::check_for_updates,
+            commands::output_lang::get_output_language,
+            commands::output_lang::set_output_language,
             commands::scenarios::list_scenarios,
             commands::scenarios::save_scenario,
             commands::scenarios::delete_scenario,
@@ -92,9 +122,9 @@ pub fn run() {
             commands::tts::speak,
             commands::tts::is_tts_cached,
             commands::tts::stop_speaking,
-            commands::tts::list_tts_voices,
-            commands::tts::get_tts_config,
-            commands::tts::set_tts_voice,
+            commands::tts::list_voice_presets,
+            commands::tts::set_active_preset,
+            commands::tts::preview_preset,
             commands::translate::retranslate
         ])
         .build(tauri::generate_context!())
@@ -103,6 +133,8 @@ pub fn run() {
     app.run(|_app_handle, event| {
         if let tauri::RunEvent::Exit = event {
             eprintln!("[shutdown] begin");
+            eprintln!("[shutdown] llama_runtime");
+            llama_runtime::supervisor::stop();
             eprintln!("[shutdown] hotkey");
             hotkey::shutdown();
             eprintln!("[shutdown] capture");

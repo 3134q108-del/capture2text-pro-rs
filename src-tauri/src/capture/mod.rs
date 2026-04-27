@@ -1,6 +1,7 @@
 pub mod screenshot;
 #[allow(dead_code)]
 pub mod preprocess;
+pub mod log;
 pub mod params;
 pub mod pipeline;
 pub mod screen_capture;
