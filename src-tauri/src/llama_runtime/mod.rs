@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
 pub use manifest::ModelId;
 
@@ -75,6 +76,89 @@ fn ensure_binary_installed() -> Result<(), String> {
 fn ensure_all_models_installed() -> Result<(), String> {
     for model in manifest::ALL_MODELS {
         ensure_model_installed(&model)?;
+    }
+    Ok(())
+}
+
+pub fn is_pixtral_installed() -> bool {
+    let spec = match manifest::lookup(&ModelId::Pixtral12b2409) {
+        Some(spec) => spec,
+        None => return false,
+    };
+    let model_dir = app_dir().join("models");
+    let gguf = model_dir.join(spec.gguf_filename());
+    let mmproj = model_dir.join(spec.mmproj_filename());
+    if !gguf.exists() || !mmproj.exists() {
+        return false;
+    }
+    let gguf_size = fs::metadata(&gguf).map(|meta| meta.len()).unwrap_or(0);
+    let mmproj_size = fs::metadata(&mmproj).map(|meta| meta.len()).unwrap_or(0);
+    gguf_size > 5_000_000_000 && mmproj_size > 500_000_000
+}
+
+pub fn install_pixtral_with_progress(app: &AppHandle) -> Result<(), String> {
+    let spec = manifest::lookup(&ModelId::Pixtral12b2409)
+        .ok_or_else(|| "unknown model id: pixtral".to_string())?;
+    let model_dir = app_dir().join("models");
+    fs::create_dir_all(&model_dir).map_err(|err| err.to_string())?;
+    cleanup_partial_downloads(&model_dir)?;
+
+    let gguf_path = model_dir.join(spec.gguf_filename());
+    downloader::download_file_with_progress(spec.gguf_url, &gguf_path, |downloaded, total| {
+        let percent = if total > 0 {
+            (downloaded as f64 * 100.0) / total as f64
+        } else {
+            0.0
+        };
+        let _ = app.emit(
+            "pixtral-install-progress",
+            serde_json::json!({
+                "phase": "gguf",
+                "downloaded": downloaded,
+                "total": total,
+                "percent": percent,
+            }),
+        );
+    })?;
+
+    let mmproj_path = model_dir.join(spec.mmproj_filename());
+    downloader::download_file_with_progress(
+        spec.mmproj_url,
+        &mmproj_path,
+        |downloaded, total| {
+            let percent = if total > 0 {
+                (downloaded as f64 * 100.0) / total as f64
+            } else {
+                0.0
+            };
+            let _ = app.emit(
+                "pixtral-install-progress",
+                serde_json::json!({
+                    "phase": "mmproj",
+                    "downloaded": downloaded,
+                    "total": total,
+                    "percent": percent,
+                }),
+            );
+        },
+    )?;
+
+    Ok(())
+}
+
+fn cleanup_partial_downloads(model_dir: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(model_dir).map_err(|err| err.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        let is_partial = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("partial"))
+            .unwrap_or(false);
+        if is_partial && path.is_file() {
+            fs::remove_file(path).map_err(|err| err.to_string())?;
+        }
     }
     Ok(())
 }

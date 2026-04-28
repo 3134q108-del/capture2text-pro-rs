@@ -13,12 +13,15 @@ pub fn init_runtime() -> io::Result<()> {
     }
 
     let path = storage_path()?;
-    let lang = if path.exists() {
+    let mut lang = if path.exists() {
         let raw = fs::read_to_string(&path)?;
         sanitize(raw.trim())
     } else {
         DEFAULT_LANG.to_string()
     };
+    if !available_langs().iter().any(|item| item == &lang) {
+        lang = DEFAULT_LANG.to_string();
+    }
 
     persist(&lang)?;
     let _ = ACTIVE_OUTPUT_LANG.set(Mutex::new(lang));
@@ -36,8 +39,29 @@ pub fn current() -> String {
     }
 }
 
+pub fn available_langs() -> Vec<String> {
+    let mut langs = vec![
+        "zh-TW".to_string(),
+        "zh-CN".to_string(),
+        "en-US".to_string(),
+        "ja-JP".to_string(),
+        "ko-KR".to_string(),
+    ];
+    if crate::llama_runtime::is_pixtral_installed() {
+        langs.push("de-DE".to_string());
+        langs.push("fr-FR".to_string());
+    }
+    langs
+}
+
 pub fn set(lang: &str) -> io::Result<()> {
     let next = sanitize(lang);
+    if !available_langs().iter().any(|item| item == &next) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("language not available yet: {next}"),
+        ));
+    }
     persist(&next)?;
 
     if let Some(slot) = ACTIVE_OUTPUT_LANG.get() {

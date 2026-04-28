@@ -11,6 +11,9 @@ use crate::{
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let current_lang = output_lang::current();
+    let available_langs = output_lang::available_langs();
+    let has_de = available_langs.iter().any(|lang| lang == "de-DE");
+    let has_fr = available_langs.iter().any(|lang| lang == "fr-FR");
     let state = window_state::get();
     let normalized_lang = match current_lang.as_str() {
         "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" => {
@@ -113,7 +116,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         app,
         "lang_de_de",
         "Deutsch",
-        true,
+        has_de,
         normalized_lang == "de-DE",
         None::<&str>,
     )?;
@@ -121,7 +124,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         app,
         "lang_fr_fr",
         "Français",
-        true,
+        has_fr,
         normalized_lang == "fr-FR",
         None::<&str>,
     )?;
@@ -371,6 +374,13 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = item.set_checked(*code == lang);
             }
         }
+    });
+
+    let lang_de_de_enable = lang_de_de.clone();
+    let lang_fr_fr_enable = lang_fr_fr.clone();
+    app.listen("pixtral-install-done", move |_event| {
+        let _ = lang_de_de_enable.set_enabled(true);
+        let _ = lang_fr_fr_enable.set_enabled(true);
     });
 
     let scenario_items_for_listener = scenario_items.clone();

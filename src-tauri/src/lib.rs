@@ -71,6 +71,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::files::read_file,
+            commands::llama_runtime::check_pixtral_installed,
+            commands::llama_runtime::list_available_output_langs,
+            commands::llama_runtime::install_pixtral,
             commands::result_window::show_result_window,
             commands::result_window::hide_result_window,
             commands::result_window::show_settings_window,

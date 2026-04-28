@@ -1,51 +1,181 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use super::LLAMA_CPP_TAG;
 
 pub fn download_file(url: &str, target: &Path) -> Result<(), String> {
+    download_file_with_progress(url, target, |downloaded, total| {
+        report_progress(target, downloaded, total);
+    })
+}
+
+pub fn download_file_with_progress<F>(
+    url: &str,
+    target: &Path,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(u64, u64),
+{
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    let partial = partial_path(target);
+    const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(3)];
+    let max_attempts = RETRY_DELAYS.len() + 1;
+    let mut last_err = String::new();
+
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            on_progress(0, 0);
+            eprintln!(
+                "[llama-download] retry attempt {}/{} for {}",
+                attempt + 1,
+                max_attempts,
+                target.display()
+            );
+        }
+
+        let _ = fs::remove_file(&partial);
+        match download_once(url, &partial, &mut on_progress) {
+            Ok(downloaded) => {
+                fs::rename(&partial, target).map_err(|err| err.to_string())?;
+                eprintln!(
+                    "[llama-runtime] downloaded {} bytes -> {}",
+                    downloaded,
+                    target.display()
+                );
+                return Ok(());
+            }
+            Err(DownloadError::Retriable(err)) => {
+                last_err = err;
+                if let Some(delay) = RETRY_DELAYS.get(attempt) {
+                    eprintln!("[llama-download] transient failure, retrying in {:?}: {}", delay, last_err);
+                    thread::sleep(*delay);
+                    continue;
+                }
+                break;
+            }
+            Err(DownloadError::Fatal(err)) => {
+                return Err(err);
+            }
+        }
+    }
+
+    Err(last_err)
+}
+
+enum DownloadError {
+    Retriable(String),
+    Fatal(String),
+}
+
+fn partial_path(target: &Path) -> PathBuf {
+    if let Some(file_name) = target.file_name().and_then(|name| name.to_str()) {
+        return target.with_file_name(format!("{file_name}.partial"));
+    }
+    target.with_extension("partial")
+}
+
+fn download_once<F>(url: &str, partial: &Path, on_progress: &mut F) -> Result<u64, DownloadError>
+where
+    F: FnMut(u64, u64),
+{
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(3600))
         .build()
-        .map_err(|e| e.to_string())?;
-    let mut response = client.get(url).send().map_err(|e| e.to_string())?;
+        .map_err(|err| DownloadError::Fatal(err.to_string()))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(map_reqwest_error)?;
     if !response.status().is_success() {
-        return Err(format!("download {url} failed: status {}", response.status()));
+        let status = response.status();
+        if status.is_server_error() {
+            return Err(DownloadError::Retriable(format!(
+                "download {url} failed: status {status}"
+            )));
+        }
+        return Err(DownloadError::Fatal(format!(
+            "download {url} failed: status {status}"
+        )));
     }
 
     let total = response.content_length().unwrap_or(0);
-    let mut file = fs::File::create(target).map_err(|e| e.to_string())?;
+    let mut file = fs::File::create(partial).map_err(|err| DownloadError::Fatal(err.to_string()))?;
     let mut downloaded = 0u64;
     let mut last_report = Instant::now();
+    let mut last_reported_bytes = 0u64;
     let mut buf = [0u8; 64 * 1024];
+    const REPORT_EVERY: Duration = Duration::from_millis(500);
+    const REPORT_BYTES: u64 = 8 * 1024 * 1024;
 
     loop {
-        let n = response.read(&mut buf).map_err(|e| e.to_string())?;
+        let n = response
+            .read(&mut buf)
+            .map_err(map_io_error)?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        file.write_all(&buf[..n])
+            .map_err(|err| DownloadError::Fatal(err.to_string()))?;
         downloaded += n as u64;
-        if last_report.elapsed() >= Duration::from_millis(500) {
-            report_progress(target, downloaded, total);
+        if last_report.elapsed() >= REPORT_EVERY
+            || downloaded.saturating_sub(last_reported_bytes) >= REPORT_BYTES
+        {
+            on_progress(downloaded, total);
             last_report = Instant::now();
+            last_reported_bytes = downloaded;
         }
     }
 
-    report_progress(target, downloaded, total);
-    eprintln!(
-        "[llama-runtime] downloaded {} bytes -> {}",
-        downloaded,
-        target.display()
+    on_progress(downloaded, total);
+    Ok(downloaded)
+}
+
+fn map_reqwest_error(err: reqwest::Error) -> DownloadError {
+    if err.is_timeout() || err.is_connect() {
+        return DownloadError::Retriable(err.to_string());
+    }
+    if let Some(status) = err.status() {
+        if status.is_server_error() {
+            return DownloadError::Retriable(err.to_string());
+        }
+        return DownloadError::Fatal(err.to_string());
+    }
+    let message = err.to_string();
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("connection reset")
+        || lower.contains("connection aborted")
+        || lower.contains("connection closed")
+    {
+        DownloadError::Retriable(message)
+    } else {
+        DownloadError::Fatal(message)
+    }
+}
+
+fn map_io_error(err: std::io::Error) -> DownloadError {
+    use std::io::ErrorKind;
+
+    let retriable = matches!(
+        err.kind(),
+        ErrorKind::TimedOut
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::Interrupted
+            | ErrorKind::UnexpectedEof
     );
-    Ok(())
+    if retriable {
+        DownloadError::Retriable(err.to_string())
+    } else {
+        DownloadError::Fatal(err.to_string())
+    }
 }
 
 pub fn download_llama_binary(bin_dir: &Path) -> Result<(), String> {
