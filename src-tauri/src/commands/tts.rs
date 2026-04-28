@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{Emitter, State};
 
 use crate::azure_tts::runtime::TtsRuntime;
 use crate::azure_tts::{AzureProvider, TtsProvider};
@@ -13,7 +13,6 @@ pub struct VoicePresetInfo {
 
 #[tauri::command]
 pub async fn speak(
-    app: AppHandle,
     state: State<'_, TtsRuntime>,
     target: String,
     text: String,
@@ -24,7 +23,7 @@ pub async fn speak(
     }
 
     abort_current_task(state.inner());
-    stop_player(state.inner());
+    stop_player_silent(state.inner());
 
     let region = crate::window_state::azure_region().ok_or_else(not_configured_message)?;
     let key = crate::azure_tts::keyring::get_key()
@@ -41,6 +40,7 @@ pub async fn speak(
         voice_id = default_voice_for_lang(normalized_lang).to_string();
     }
     let rate = crate::window_state::azure_speech_rate();
+    let app = state.inner().app.clone();
     let playback = state.inner().playback.clone();
     let current_task = state.inner().current_task.clone();
 
@@ -51,7 +51,8 @@ pub async fn speak(
                 .synthesize(&text, &voice_id, rate)
                 .await
                 .map_err(|err| err.to_string())?;
-            playback.play(mp3)?;
+            let _ = app.emit("tts-synthesized", serde_json::json!({ "target": target }));
+            playback.play_for_target(target.clone(), mp3)?;
             Ok::<(), String>(())
         }
         .await;
@@ -62,8 +63,6 @@ pub async fn speak(
                 "tts-done",
                 serde_json::json!({ "target": target, "error": err }),
             );
-        } else {
-            let _ = app.emit("tts-done", serde_json::json!({ "target": target }));
         }
 
         if let Ok(mut guard) = current_task.lock() {
@@ -118,6 +117,10 @@ fn abort_current_task(state: &TtsRuntime) {
 
 fn stop_player(state: &TtsRuntime) {
     state.playback.stop();
+}
+
+fn stop_player_silent(state: &TtsRuntime) {
+    state.playback.stop_silent();
 }
 
 fn default_voice_for_lang(lang: &str) -> &'static str {

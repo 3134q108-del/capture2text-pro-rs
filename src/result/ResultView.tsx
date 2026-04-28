@@ -5,8 +5,9 @@ import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/
 import "./ResultView.css";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
-type SpeakingTarget = "original" | "translated" | null;
-type TtsTarget = Exclude<SpeakingTarget, null>;
+type TtsTarget = "original" | "translated";
+type SpeakingPhase = "synthesizing" | "playing";
+type SpeakingState = { target: TtsTarget; phase: SpeakingPhase } | null;
 type PopupFont = { family: string; size_pt: number } | null;
 
 type VlmEventPayload = {
@@ -59,7 +60,7 @@ export default function ResultView() {
   const [original, setOriginal] = useState<string>("");
   const [translated, setTranslated] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
-  const [speakingTarget, setSpeakingTarget] = useState<SpeakingTarget>(null);
+  const [speakingState, setSpeakingState] = useState<SpeakingState>(null);
   const [isTopmost, setIsTopmost] = useState<boolean>(true);
   const [popupFont, setPopupFont] = useState<PopupFont>(null);
   const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
@@ -84,7 +85,7 @@ export default function ResultView() {
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
-      setSpeakingTarget(null);
+      setSpeakingState(null);
     }
   }
 
@@ -104,7 +105,7 @@ export default function ResultView() {
     } else if (snapshot.status === "error") {
       setStatus("error");
       setErrorMsg(snapshot.error ?? "unknown error");
-      setSpeakingTarget(null);
+      setSpeakingState(null);
     } else {
       setStatus("loading");
       setErrorMsg("");
@@ -116,6 +117,7 @@ export default function ResultView() {
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
+    let offTtsSynthesized: null | (() => void) = null;
     let offTtsDone: null | (() => void) = null;
 
     const setup = async () => {
@@ -155,15 +157,34 @@ export default function ResultView() {
         return;
       }
 
-      offTtsDone = await listen<{ target?: string }>("tts-done", (event) => {
+      offTtsSynthesized = await listen<{ target?: string }>("tts-synthesized", (event) => {
         const target = event.payload?.target;
         if (target === "original" || target === "translated") {
-          setSpeakingTarget((prev) => (prev === target ? null : prev));
+          setSpeakingState((prev) =>
+            prev !== null && prev.target === target
+              ? { target, phase: "playing" }
+              : prev,
+          );
         }
+      });
+      if (disposed) {
+        offTtsSynthesized();
+        offTtsSynthesized = null;
+        offPartial?.();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
+        return;
+      }
+
+      offTtsDone = await listen("tts-done", () => {
+        setSpeakingState(null);
       });
       if (disposed) {
         offTtsDone();
         offTtsDone = null;
+        offTtsSynthesized?.();
+        offTtsSynthesized = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -177,6 +198,7 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+      offTtsSynthesized?.();
       offTtsDone?.();
     };
   }, []);
@@ -379,13 +401,12 @@ export default function ResultView() {
   async function toggleSpeak(target: TtsTarget) {
     const content = target === "original" ? original.trim() : translated.trim();
 
-    if (speakingTarget === target) {
+    if (speakingState?.target === target && speakingState.phase === "playing") {
       try {
         await invoke("stop_speaking");
       } catch {
         // ignore
       }
-      setSpeakingTarget(null);
       return;
     }
 
@@ -393,14 +414,14 @@ export default function ResultView() {
     const lang = detectLang(content);
 
     try {
-      if (speakingTarget !== null) {
+      if (speakingState !== null) {
         await invoke("stop_speaking");
       }
-      setSpeakingTarget(target);
+      setSpeakingState({ target, phase: "synthesizing" });
       await invoke("speak", { target, text: content, lang });
     } catch (err) {
       console.warn("[speak] failed", err);
-      setSpeakingTarget(null);
+      setSpeakingState(null);
     }
   }
 
@@ -446,13 +467,25 @@ export default function ResultView() {
               />
               <div className="result-section-toolbar">
                 <button
-                  className={`c2t-btn ${speakingTarget === "original" ? "playing" : ""}`}
+                  className={`c2t-btn ${
+                    speakingState?.target === "original" && speakingState.phase === "playing"
+                      ? "playing"
+                      : ""
+                  }`}
                   onClick={() => {
                     void toggleSpeak("original");
                   }}
-                  disabled={!original.trim() || (speakingTarget !== null && speakingTarget !== "original")}
+                  disabled={
+                    !original.trim() ||
+                    (speakingState !== null &&
+                      (speakingState.target !== "original" || speakingState.phase === "synthesizing"))
+                  }
                 >
-                  {speakingTarget === "original" ? "停止" : "Speak 原文"}
+                  {speakingState?.target === "original" && speakingState.phase === "synthesizing"
+                    ? "合成中..."
+                    : speakingState?.target === "original" && speakingState.phase === "playing"
+                    ? "停止"
+                    : "Speak 原文"}
                 </button>
                 <button
                   className="c2t-btn"
@@ -486,13 +519,26 @@ export default function ResultView() {
                     Retranslate
                   </button>
                   <button
-                    className={`c2t-btn ${speakingTarget === "translated" ? "playing" : ""}`}
+                    className={`c2t-btn ${
+                      speakingState?.target === "translated" && speakingState.phase === "playing"
+                        ? "playing"
+                        : ""
+                    }`}
                     onClick={() => {
                       void toggleSpeak("translated");
                     }}
-                    disabled={!translated.trim() || (speakingTarget !== null && speakingTarget !== "translated")}
+                    disabled={
+                      !translated.trim() ||
+                      (speakingState !== null &&
+                        (speakingState.target !== "translated" ||
+                          speakingState.phase === "synthesizing"))
+                    }
                   >
-                    {speakingTarget === "translated" ? "停止" : "Speak 譯文"}
+                    {speakingState?.target === "translated" && speakingState.phase === "synthesizing"
+                      ? "合成中..."
+                      : speakingState?.target === "translated" && speakingState.phase === "playing"
+                      ? "停止"
+                      : "Speak 譯文"}
                   </button>
                   {hasTranslatedText && (
                     <button

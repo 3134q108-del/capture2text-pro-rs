@@ -25,11 +25,11 @@ pub use crate::capture::preprocess;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .manage(crate::azure_tts::runtime::TtsRuntime::new())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = crate::commands::result_window::show_settings_window(app.clone());
         }))
         .setup(|app| {
+            app.manage(crate::azure_tts::runtime::TtsRuntime::new(&app.handle()));
             crate::app_handle::set(app.handle().clone());
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
