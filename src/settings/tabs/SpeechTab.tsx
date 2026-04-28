@@ -82,7 +82,7 @@ export default function SpeechTab() {
   async function saveAndTest() {
     const key = keyInput.trim();
     if (!key) {
-      setStatusMsg("請輸入 Azure subscription key。");
+      setStatusMsg("請輸入 Azure 訂閱金鑰。");
       return;
     }
     try {
@@ -112,7 +112,7 @@ export default function SpeechTab() {
       setRouting({});
       setTestStatus("idle");
       setTestError("");
-      setStatusMsg("Azure key 已移除。");
+      setStatusMsg("Azure 金鑰已移除。");
     } catch (err) {
       setStatusMsg(String(err));
     } finally {
@@ -166,12 +166,12 @@ export default function SpeechTab() {
         <h2>Azure TTS</h2>
         <div className="settings-editor">
           <label>
-            Subscription key
+            訂閱金鑰
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type={keyVisible ? "text" : "password"}
                 value={keyInput}
-                placeholder={credStatus.configured ? "已設定，重新輸入可覆蓋" : "輸入 Azure key"}
+                placeholder={credStatus.configured ? "已設定，重新輸入可覆蓋" : "輸入 Azure 金鑰"}
                 onChange={(event) => setKeyInput(event.target.value)}
               />
               <button className="c2t-btn" type="button" onClick={() => setKeyVisible((v) => !v)}>
@@ -181,7 +181,7 @@ export default function SpeechTab() {
           </label>
 
           <label>
-            Region
+            區域
             <select value={region} onChange={(event) => setRegion(event.target.value)}>
               {REGIONS.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -214,7 +214,7 @@ export default function SpeechTab() {
               disabled={!credStatus.configured || saving}
               onClick={() => void deleteCredentials()}
             >
-              移除 key
+              移除金鑰
             </button>
           </div>
 
@@ -238,7 +238,7 @@ export default function SpeechTab() {
             disabled={!canLoadVoices || loadingVoices}
             onClick={() => void loadVoices()}
           >
-            {loadingVoices ? "載入中" : "重新載入 voices"}
+            {loadingVoices ? "載入中" : "重新載入語音"}
           </button>
         </div>
 
