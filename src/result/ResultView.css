@@ -29,8 +29,8 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 6px;
-  padding: 0 2px;
+  gap: 8px;
+  padding: 2px;
 }
 
 .result-text {
@@ -74,16 +74,22 @@
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  padding-block: 2px;
 }
 
 .c2t-btn {
+  appearance: none;
   background: var(--c2t-btn-bg);
   color: var(--c2t-text);
   border: 1px solid var(--c2t-border);
-  padding: 4px 12px;
+  box-shadow: none;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 3px 12px;
   border-radius: var(--c2t-radius);
   cursor: pointer;
   font-size: 13px;
+  line-height: 1.1;
 }
 
 .c2t-btn:hover:not(:disabled) {
@@ -108,7 +114,7 @@
 .c2t-btn.primary {
   background: var(--c2t-btn-primary-bg);
   color: var(--c2t-btn-primary-text);
-  border-color: var(--c2t-btn-primary-bg);
+  border-color: var(--c2t-border);
 }
 
 .c2t-btn.primary:hover:not(:disabled) {
