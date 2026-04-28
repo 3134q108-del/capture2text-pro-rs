@@ -1,13 +1,33 @@
-import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
-import "./ResultView.css";
+import { useEffect, useReducer, useRef, useState } from "react";
+import {
+  Banner,
+  Button,
+  Checkbox,
+  Modal,
+  ModalContent,
+  ModalDescription,
+  ModalFooter,
+  ModalHeader,
+  ModalTitle,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  ProgressBar,
+  Section,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  StatusText,
+  UsageDonut,
+} from "@/components/ui";
 
 type VlmStatus = "idle" | "loading" | "success" | "error";
 type TtsTarget = "original" | "translated";
-type SpeakingPhase = "synthesizing" | "playing";
-type SpeakingState = { target: TtsTarget; phase: SpeakingPhase } | null;
 type PopupFont = { family: string; size_pt: number } | null;
 
 type VlmEventPayload = {
@@ -54,6 +74,17 @@ type UsageInfo = {
   hd_percent: number;
 };
 
+type SpeakingState =
+  | { kind: "idle" }
+  | { kind: "synthesizing"; target: TtsTarget }
+  | { kind: "playing"; target: TtsTarget };
+
+type SpeakAction =
+  | { type: "START"; target: TtsTarget }
+  | { type: "SYNTHESIZED"; target: TtsTarget }
+  | { type: "DONE" }
+  | { type: "FAIL" };
+
 const FONT_FAMILIES = [
   "Segoe UI",
   "Microsoft JhengHei",
@@ -69,32 +100,84 @@ const FONT_FAMILIES = [
 
 const FONT_SIZES_PT = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32];
 
+function assertNever(value: never): never {
+  throw new Error(`unhandled action: ${JSON.stringify(value)}`);
+}
+
+function speakReducer(state: SpeakingState, action: SpeakAction): SpeakingState {
+  switch (action.type) {
+    case "START":
+      return { kind: "synthesizing", target: action.target };
+    case "SYNTHESIZED":
+      if (state.kind !== "synthesizing") {
+        return state;
+      }
+      if (state.target !== action.target) {
+        return state;
+      }
+      return { kind: "playing", target: state.target };
+    case "DONE":
+    case "FAIL":
+      return { kind: "idle" };
+    default:
+      return assertNever(action);
+  }
+}
+
+function phaseForTarget(state: SpeakingState, target: TtsTarget): "idle" | "synthesizing" | "playing" {
+  if (state.kind === "idle") {
+    return "idle";
+  }
+  if (state.target !== target) {
+    return "idle";
+  }
+  return state.kind;
+}
+
+function detectLang(text: string): "zh" | "en" {
+  return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
+}
+
+function usagePercent(info: UsageInfo | null): number {
+  if (!info) {
+    return 0;
+  }
+  return info.tier === "F0" ? info.neural_percent : Math.max(info.neural_percent, info.hd_percent);
+}
+
+function usageTone(percent: number): "green" | "yellow" | "red" {
+  if (percent >= 90) {
+    return "red";
+  }
+  if (percent >= 70) {
+    return "yellow";
+  }
+  return "green";
+}
+
 export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
-  const [original, setOriginal] = useState<string>("");
-  const [translated, setTranslated] = useState<string>("");
+  const [original, setOriginal] = useState("");
+  const [translated, setTranslated] = useState("");
   const [srcLang, setSrcLang] = useState<string | null>(null);
-  const [outputLang, setOutputLang] = useState<string>("zh-TW");
-  const [errorMsg, setErrorMsg] = useState<string>("");
-  const [speakingState, setSpeakingState] = useState<SpeakingState>(null);
-  const [originalReady, setOriginalReady] = useState<boolean>(false);
-  const [translatedReady, setTranslatedReady] = useState<boolean>(false);
-  const [isTopmost, setIsTopmost] = useState<boolean>(true);
+  const [outputLang, setOutputLang] = useState("zh-TW");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [speakingState, dispatchSpeaking] = useReducer(speakReducer, { kind: "idle" } as SpeakingState);
+  const [originalReady, setOriginalReady] = useState(false);
+  const [translatedReady, setTranslatedReady] = useState(false);
+  const [isTopmost, setIsTopmost] = useState(true);
   const [popupFont, setPopupFont] = useState<PopupFont>(null);
-  const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
-  const [fontFamilyDraft, setFontFamilyDraft] = useState<string>("Segoe UI");
-  const [fontSizeDraftPt, setFontSizeDraftPt] = useState<number>(13);
+  const [fontModalOpen, setFontModalOpen] = useState(false);
+  const [fontFamilyDraft, setFontFamilyDraft] = useState("Segoe UI");
+  const [fontSizeDraftPt, setFontSizeDraftPt] = useState(13);
   const [usageInfo, setUsageInfo] = useState<UsageInfo | null>(null);
-  const [usageOpen, setUsageOpen] = useState<boolean>(false);
-  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
+
   const originalReadyTimerRef = useRef<number | null>(null);
-  const lastOriginalRef = useRef<string>("");
-  const usageAnchorRef = useRef<HTMLButtonElement | null>(null);
-  const usagePopoverRef = useRef<HTMLDivElement | null>(null);
+  const lastOriginalRef = useRef("");
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
-
   const textStyle = popupFont
     ? { fontFamily: popupFont.family, fontSize: `${popupFont.size_pt}pt` }
     : undefined;
@@ -106,48 +189,50 @@ export default function ResultView() {
     }
   }
 
-  function applyFinalPayload(p: VlmEventPayload) {
+  function applyFinalPayload(payload: VlmEventPayload) {
     clearOriginalReadyTimer();
-    if (p.status === "success") {
+
+    if (payload.status === "success") {
       setStatus("success");
-      setOriginal(p.original);
-      setTranslated(p.translated);
-      setSrcLang(p.src_lang ?? null);
+      setOriginal(payload.original);
+      setTranslated(payload.translated);
+      setSrcLang(payload.src_lang ?? null);
       setErrorMsg("");
-      setOriginalReady(p.original.trim().length > 0);
-      setTranslatedReady(p.translated.trim().length > 0);
-      lastOriginalRef.current = p.original;
-    } else {
-      setStatus("error");
-      setErrorMsg(p.error ?? "unknown error");
-      setOriginal("");
-      setTranslated("");
-      setSrcLang(null);
-      setSpeakingState(null);
-      setOriginalReady(false);
-      setTranslatedReady(false);
-      lastOriginalRef.current = "";
-    }
-  }
-
-  function applyPartialPayload(p: VlmPartialEventPayload) {
-    setStatus("loading");
-    setOriginal(p.original);
-    setTranslated(p.translated);
-    setSrcLang(p.src_lang ?? null);
-    setErrorMsg("");
-    setTranslatedReady(false);
-
-    const trimmed = p.original.trim();
-    if (trimmed.length === 0) {
-      clearOriginalReadyTimer();
-      setOriginalReady(false);
-      lastOriginalRef.current = p.original;
+      setOriginalReady(payload.original.trim().length > 0);
+      setTranslatedReady(payload.translated.trim().length > 0);
+      lastOriginalRef.current = payload.original;
       return;
     }
 
-    if (p.original !== lastOriginalRef.current) {
-      lastOriginalRef.current = p.original;
+    setStatus("error");
+    setErrorMsg(payload.error ?? "unknown error");
+    setOriginal("");
+    setTranslated("");
+    setSrcLang(null);
+    dispatchSpeaking({ type: "DONE" });
+    setOriginalReady(false);
+    setTranslatedReady(false);
+    lastOriginalRef.current = "";
+  }
+
+  function applyPartialPayload(payload: VlmPartialEventPayload) {
+    setStatus("loading");
+    setOriginal(payload.original);
+    setTranslated(payload.translated);
+    setSrcLang(payload.src_lang ?? null);
+    setErrorMsg("");
+    setTranslatedReady(false);
+
+    const trimmed = payload.original.trim();
+    if (trimmed.length === 0) {
+      clearOriginalReadyTimer();
+      setOriginalReady(false);
+      lastOriginalRef.current = payload.original;
+      return;
+    }
+
+    if (payload.original !== lastOriginalRef.current) {
+      lastOriginalRef.current = payload.original;
       setOriginalReady(false);
       clearOriginalReadyTimer();
       originalReadyTimerRef.current = window.setTimeout(() => {
@@ -162,6 +247,7 @@ export default function ResultView() {
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
     setSrcLang(snapshot.src_lang ?? null);
+
     if (snapshot.status === "success") {
       setStatus("success");
       setErrorMsg("");
@@ -170,7 +256,7 @@ export default function ResultView() {
     } else if (snapshot.status === "error") {
       setStatus("error");
       setErrorMsg(snapshot.error ?? "unknown error");
-      setSpeakingState(null);
+      dispatchSpeaking({ type: "DONE" });
       setOriginalReady(false);
       setTranslatedReady(false);
     } else {
@@ -179,6 +265,7 @@ export default function ResultView() {
       setOriginalReady(snapshot.original.trim().length > 0);
       setTranslatedReady(false);
     }
+
     lastOriginalRef.current = snapshot.original;
   }
 
@@ -230,9 +317,7 @@ export default function ResultView() {
       offTtsSynthesized = await listen<{ target?: string }>("tts-synthesized", (event) => {
         const target = event.payload?.target;
         if (target === "original" || target === "translated") {
-          setSpeakingState((prev) =>
-            prev !== null && prev.target === target ? { target, phase: "playing" } : prev,
-          );
+          dispatchSpeaking({ type: "SYNTHESIZED", target });
         }
       });
       if (disposed) {
@@ -246,7 +331,7 @@ export default function ResultView() {
       }
 
       offTtsDone = await listen("tts-done", () => {
-        setSpeakingState(null);
+        dispatchSpeaking({ type: "DONE" });
       });
       if (disposed) {
         offTtsDone();
@@ -289,6 +374,7 @@ export default function ResultView() {
       if (disposed) {
         return;
       }
+
       offLang = await listen<string>("output-language-changed", (event) => {
         setOutputLang(event.payload);
       });
@@ -299,6 +385,7 @@ export default function ResultView() {
     };
 
     void setup();
+
     return () => {
       disposed = true;
       offLang?.();
@@ -308,35 +395,6 @@ export default function ResultView() {
   useEffect(() => {
     void refreshUsageInfo();
   }, []);
-
-  useEffect(() => {
-    if (!usageOpen) return;
-    positionUsagePopover();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setUsageOpen(false);
-      }
-    };
-    const onPointerDown = (event: MouseEvent) => {
-      const anchor = usageAnchorRef.current;
-      const popover = usagePopoverRef.current;
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (anchor?.contains(target) || popover?.contains(target)) return;
-      setUsageOpen(false);
-    };
-    const onViewportChange = () => positionUsagePopover();
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("resize", onViewportChange);
-    window.addEventListener("scroll", onViewportChange, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("resize", onViewportChange);
-      window.removeEventListener("scroll", onViewportChange, true);
-    };
-  }, [usageOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -356,7 +414,10 @@ export default function ResultView() {
 
     const setup = async () => {
       await loadWindowState();
-      if (disposed) return;
+      if (disposed) {
+        return;
+      }
+
       offState = await listen<WindowState>("window-state-changed", (event) => {
         setIsTopmost(Boolean(event.payload.popup_topmost));
         setPopupFont(event.payload.popup_font ?? null);
@@ -389,11 +450,17 @@ export default function ResultView() {
     };
 
     const scheduleSave = () => {
-      if (saveTimer) clearTimeout(saveTimer);
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+      }
       saveTimer = setTimeout(async () => {
-        if (disposed) return;
+        if (disposed) {
+          return;
+        }
         const { x, y, w, h } = geometry;
-        if (x == null || y == null || w == null || h == null) return;
+        if (x == null || y == null || w == null || h == null) {
+          return;
+        }
         try {
           await invoke("save_popup_window_geometry", { x, y, w, h });
         } catch {
@@ -469,14 +536,18 @@ export default function ResultView() {
 
     return () => {
       disposed = true;
-      if (saveTimer) clearTimeout(saveTimer);
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+      }
       offResized?.();
       offMoved?.();
     };
   }, []);
 
   async function copy(text: string) {
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -486,21 +557,19 @@ export default function ResultView() {
 
   async function retranslate() {
     const text = original.trim();
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     try {
       setStatus("loading");
       setTranslated("");
       setErrorMsg("");
       setTranslatedReady(false);
       await invoke("retranslate", { text });
-    } catch (err) {
+    } catch (error) {
       setStatus("error");
-      setErrorMsg(String(err));
+      setErrorMsg(String(error));
     }
-  }
-
-  function detectLang(text: string): "zh" | "en" {
-    return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
   }
 
   function openFontModal() {
@@ -536,8 +605,9 @@ export default function ResultView() {
 
   async function toggleSpeak(target: TtsTarget) {
     const content = target === "original" ? original.trim() : translated.trim();
+    const currentPhase = phaseForTarget(speakingState, target);
 
-    if (speakingState?.target === target && speakingState.phase === "playing") {
+    if (currentPhase === "playing") {
       try {
         await invoke("stop_speaking");
       } catch {
@@ -546,18 +616,25 @@ export default function ResultView() {
       return;
     }
 
-    if (!content) return;
+    if (!content) {
+      return;
+    }
+
     const lang = target === "translated" ? outputLang : (srcLang ?? detectLang(content));
 
     try {
-      if (speakingState !== null) {
-        await invoke("stop_speaking");
+      if (speakingState.kind !== "idle") {
+        try {
+          await invoke("stop_speaking");
+        } catch {
+          // ignore
+        }
       }
-      setSpeakingState({ target, phase: "synthesizing" });
+      dispatchSpeaking({ type: "START", target });
       await invoke("speak", { target, text: content, lang });
-    } catch (err) {
-      console.warn("[speak] failed", err);
-      setSpeakingState(null);
+    } catch (error) {
+      console.warn("[speak] failed", error);
+      dispatchSpeaking({ type: "FAIL" });
     }
   }
 
@@ -592,289 +669,290 @@ export default function ResultView() {
     }
   }
 
-  function usagePercent(info: UsageInfo | null): number {
-    if (!info) return 0;
-    return info.tier === "F0" ? info.neural_percent : Math.max(info.neural_percent, info.hd_percent);
-  }
-
-  function usageTone(percent: number): "green" | "yellow" | "red" {
-    if (percent >= 90) return "red";
-    if (percent >= 70) return "yellow";
-    return "green";
-  }
-
-  function positionUsagePopover() {
-    const anchor = usageAnchorRef.current;
-    if (!anchor) return;
-    const rect = anchor.getBoundingClientRect();
-    const width = 280;
-    const left = Math.min(Math.max(12, rect.right - width), window.innerWidth - width - 12);
-    const top = Math.max(12, rect.top - 12);
-    setPopoverPos({ top, left });
-  }
-
-  async function onUsageClick() {
+  async function onUsageOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setUsageOpen(false);
+      return;
+    }
     await refreshUsageInfo();
-    setUsageOpen((prev) => !prev);
+    setUsageOpen(true);
   }
+
+  const originalPhase = phaseForTarget(speakingState, "original");
+  const translatedPhase = phaseForTarget(speakingState, "translated");
+  const originalBlockedByOther = speakingState.kind !== "idle" && speakingState.target !== "original";
+  const translatedBlockedByOther = speakingState.kind !== "idle" && speakingState.target !== "translated";
+
+  const originalSpeakDisabled =
+    !original.trim() ||
+    !originalReady ||
+    originalBlockedByOther ||
+    originalPhase === "synthesizing";
+  const translatedSpeakDisabled =
+    !translated.trim() ||
+    !translatedReady ||
+    translatedBlockedByOther ||
+    translatedPhase === "synthesizing";
+
+  const originalSpeakLabel =
+    originalPhase === "synthesizing"
+      ? "合成中..."
+      : originalPhase === "playing"
+        ? "停止"
+        : "Speak 原文";
+  const translatedSpeakLabel =
+    translatedPhase === "synthesizing"
+      ? "合成中..."
+      : translatedPhase === "playing"
+        ? "停止"
+        : "Speak 譯文";
 
   return (
-    <div className="result-root">
-      <div className="result-body">
+    <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
         {status === "error" ? (
-          <div className="result-error">
-            <strong>Error:</strong>
-            <div>{errorMsg}</div>
-          </div>
+          <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
         ) : (
           <>
-            <section className="result-section">
+            <Section className="flex min-h-0 flex-1 flex-col gap-3 p-3">
               <textarea
-                className="result-text"
+                className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={original}
                 onChange={(event) => setOriginal(event.target.value)}
                 placeholder={status === "idle" ? "Waiting for capture..." : ""}
                 style={textStyle}
               />
-              <div className="result-section-toolbar">
-                <button
-                  className={`c2t-btn ${
-                    speakingState?.target === "original" && speakingState.phase === "playing"
-                      ? "playing"
-                      : ""
-                  }`}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant={originalPhase === "playing" ? "destructive" : "secondary"}
+                  state={originalPhase === "synthesizing" ? "loading" : "content"}
+                  loadingContent="合成中..."
+                  disabled={originalPhase === "playing" ? false : originalSpeakDisabled}
                   onClick={() => {
                     void toggleSpeak("original");
                   }}
-                  disabled={
-                    !original.trim() ||
-                    !originalReady ||
-                    (speakingState !== null &&
-                      (speakingState.target !== "original" || speakingState.phase === "synthesizing"))
-                  }
                 >
-                  {speakingState?.target === "original" && speakingState.phase === "synthesizing"
-                    ? "合成中..."
-                    : speakingState?.target === "original" && speakingState.phase === "playing"
-                      ? "停止"
-                      : "Speak 原文"}
-                </button>
-                <button
-                  className="c2t-btn"
+                  {originalSpeakLabel}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!original}
                   onClick={() => {
                     void copy(original);
                   }}
-                  disabled={!original}
                 >
                   Copy 原文
-                </button>
+                </Button>
               </div>
-            </section>
+            </Section>
 
-            {showTranslated && (
-              <section className="result-section">
+            {showTranslated ? (
+              <Section className="flex min-h-0 flex-1 flex-col gap-3 p-3">
                 <textarea
-                  className="result-text"
+                  className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={translated}
                   readOnly
                   placeholder={status === "idle" ? "Waiting for capture..." : ""}
                   style={textStyle}
                 />
-                <div className="result-section-toolbar">
-                  <button
-                    className="c2t-btn"
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!original.trim() || status === "loading"}
                     onClick={() => {
                       void retranslate();
                     }}
-                    disabled={!original.trim() || status === "loading"}
                   >
                     Retranslate
-                  </button>
-                  <button
-                    className={`c2t-btn ${
-                      speakingState?.target === "translated" && speakingState.phase === "playing"
-                        ? "playing"
-                        : ""
-                    }`}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={translatedPhase === "playing" ? "destructive" : "secondary"}
+                    state={translatedPhase === "synthesizing" ? "loading" : "content"}
+                    loadingContent="合成中..."
+                    disabled={translatedPhase === "playing" ? false : translatedSpeakDisabled}
                     onClick={() => {
                       void toggleSpeak("translated");
                     }}
-                    disabled={
-                      !translated.trim() ||
-                      !translatedReady ||
-                      (speakingState !== null &&
-                        (speakingState.target !== "translated" ||
-                          speakingState.phase === "synthesizing"))
-                    }
                   >
-                    {speakingState?.target === "translated" && speakingState.phase === "synthesizing"
-                      ? "合成中..."
-                      : speakingState?.target === "translated" && speakingState.phase === "playing"
-                        ? "停止"
-                        : "Speak 譯文"}
-                  </button>
-                  {hasTranslatedText && (
-                    <button
-                      className="c2t-btn"
+                    {translatedSpeakLabel}
+                  </Button>
+                  {hasTranslatedText ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!translated}
                       onClick={() => {
                         void copy(translated);
                       }}
-                      disabled={!translated}
                     >
                       Copy 譯文
-                    </button>
-                  )}
+                    </Button>
+                  ) : null}
                 </div>
-              </section>
-            )}
+              </Section>
+            ) : null}
           </>
         )}
       </div>
 
-      <div className="result-controls">
-        <label className="result-topmost">
-          <input
-            type="checkbox"
-            checked={isTopmost}
-            onChange={(event) => {
-              void handleTopmostToggle(event.target.checked);
-            }}
-          />
-          Topmost
-        </label>
+      <footer className="flex items-center gap-3 border-t border-border bg-muted/20 px-4 py-3">
+        <Checkbox
+          checked={isTopmost}
+          onCheckedChange={(checked) => {
+            void handleTopmostToggle(checked === true);
+          }}
+          label="Topmost"
+        />
 
-        <div className="result-controls-actions">
-          <button
-            ref={usageAnchorRef}
-            className="result-usage-trigger"
-            type="button"
-            onClick={() => {
-              void onUsageClick();
-            }}
-            aria-label="Azure usage"
-            aria-expanded={usageOpen}
-          >
-            <svg className="result-usage-donut" viewBox="0 0 20 20" aria-hidden="true">
-              <circle className="usage-track" cx="10" cy="10" r="7" />
-              <circle
-                className={`usage-fill ${usageTone(usagePercent(usageInfo))}`}
-                cx="10"
-                cy="10"
-                r="7"
-                strokeDasharray={`${
-                  (Math.max(0, Math.min(100, usagePercent(usageInfo))) / 100) * 44
-                } 44`}
-              />
-            </svg>
-            <span className="result-usage-label">Azure {usageInfo?.tier ?? "F0"}</span>
-          </button>
-          <button className="c2t-btn" onClick={openFontModal}>
+        <div className="ml-auto flex items-center gap-2">
+          <Popover open={usageOpen} onOpenChange={(next) => { void onUsageOpenChange(next); }}>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="secondary" aria-label="Azure usage">
+                <UsageDonut
+                  size="md"
+                  percent={usagePercent(usageInfo)}
+                  tone={usageTone(usagePercent(usageInfo))}
+                  aria-label="Azure usage donut"
+                />
+                <span className="text-xs">Azure {usageInfo?.tier ?? "F0"}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent size="md">
+              {usageInfo ? (
+                <div className="flex flex-col gap-3">
+                  <div className="text-sm font-semibold">
+                    Azure 用量 {usageInfo.month ? `(${usageInfo.month})` : ""}
+                  </div>
+                  <UsageBar
+                    label="Neural"
+                    used={usageInfo.neural_used}
+                    limit={usageInfo.neural_limit}
+                    percent={usageInfo.neural_percent}
+                  />
+                  {usageInfo.tier === "S0" ? (
+                    <UsageBar
+                      label="HD"
+                      used={usageInfo.hd_used}
+                      limit={usageInfo.hd_limit}
+                      percent={usageInfo.hd_percent}
+                    />
+                  ) : null}
+                  <a
+                    className="text-sm text-primary hover:underline"
+                    href="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/SpeechServices"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Azure Portal
+                  </a>
+                </div>
+              ) : (
+                <StatusText tone="info" size="sm">
+                  無可用用量資料
+                </StatusText>
+              )}
+            </PopoverContent>
+          </Popover>
+
+          <Button type="button" variant="secondary" onClick={openFontModal}>
             Font...
-          </button>
-          <button
-            className="c2t-btn primary"
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
             onClick={() => {
               void onOk();
             }}
           >
             OK
-          </button>
+          </Button>
         </div>
-      </div>
+      </footer>
 
-      {usageOpen && usageInfo && popoverPos && (
-        <div
-          ref={usagePopoverRef}
-          className="result-usage-popover"
-          style={{ top: popoverPos.top, left: popoverPos.left }}
-        >
-          <div className="result-usage-popover-title">Azure 用量 ({usageInfo.month})</div>
-          <UsageBar label="Neural" used={usageInfo.neural_used} limit={usageInfo.neural_limit} percent={usageInfo.neural_percent} />
-          {usageInfo.tier === "S0" && (
-            <UsageBar label="HD" used={usageInfo.hd_used} limit={usageInfo.hd_limit} percent={usageInfo.hd_percent} />
-          )}
-          <a
-            className="result-usage-link"
-            href="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/SpeechServices"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Azure Portal
-          </a>
-        </div>
-      )}
+      <Modal open={fontModalOpen} onOpenChange={setFontModalOpen}>
+        <ModalContent size="md">
+          <ModalHeader>
+            <ModalTitle>Font</ModalTitle>
+            <ModalDescription>設定結果視窗的字型與字級。</ModalDescription>
+          </ModalHeader>
 
-      {fontModalOpen && (
-        <div className="font-modal-overlay" role="dialog" aria-modal="true" aria-label="Font Picker">
-          <div className="font-modal">
-            <h3 className="font-modal-title">Font</h3>
-            <label className="font-modal-field">
-              Family
-              <select
-                value={fontFamilyDraft}
-                onChange={(event) => {
-                  setFontFamilyDraft(event.target.value);
-                }}
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="font-family-select" className="text-sm font-medium text-foreground">
+                Family
+              </label>
+              <Select value={fontFamilyDraft} onValueChange={(value) => setFontFamilyDraft(value)}>
+                <SelectTrigger id="font-family-select">
+                  <SelectValue placeholder="Select font family" />
+                </SelectTrigger>
+                <SelectContent>
+                  {FONT_FAMILIES.map((family) => (
+                    <SelectItem key={family} value={family}>
+                      {family}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="font-size-select" className="text-sm font-medium text-foreground">
+                Size (pt)
+              </label>
+              <Select
+                value={String(fontSizeDraftPt)}
+                onValueChange={(value) => setFontSizeDraftPt(Number(value))}
               >
-                {FONT_FAMILIES.map((family) => (
-                  <option key={family} value={family}>
-                    {family}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="font-modal-field">
-              Size (pt)
-              <select
-                value={fontSizeDraftPt}
-                onChange={(event) => {
-                  setFontSizeDraftPt(Number(event.target.value));
-                }}
-              >
-                {FONT_SIZES_PT.map((size) => (
-                  <option key={size} value={size}>
-                    {size}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <SelectTrigger id="font-size-select">
+                  <SelectValue placeholder="Select size" />
+                </SelectTrigger>
+                <SelectContent>
+                  {FONT_SIZES_PT.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div
-              className="font-modal-preview"
+              className="rounded-md border border-border bg-muted/40 p-3 text-sm text-foreground"
               style={{ fontFamily: fontFamilyDraft, fontSize: `${fontSizeDraftPt}pt` }}
             >
               Capture2Text 字型 Preview 123
             </div>
-
-            <div className="font-modal-actions">
-              <button
-                className="c2t-btn primary"
-                onClick={() => {
-                  void applyFontModal();
-                }}
-              >
-                Apply
-              </button>
-              <button
-                className="c2t-btn"
-                onClick={() => {
-                  void resetFontModal();
-                }}
-              >
-                Reset to default
-              </button>
-              <button
-                className="c2t-btn"
-                onClick={() => {
-                  setFontModalOpen(false);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+
+          <ModalFooter>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => {
+                void applyFontModal();
+              }}
+            >
+              Apply
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void resetFontModal();
+              }}
+            >
+              Reset to default
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setFontModalOpen(false)}>
+              Cancel
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
@@ -890,20 +968,18 @@ function UsageBar({
   limit: number;
   percent: number;
 }) {
-  const clamped = Math.max(0, Math.min(100, percent));
-  const tone = percent >= 90 ? "red" : percent >= 70 ? "yellow" : "green";
   return (
-    <div className="result-usage-bar-wrap">
-      <div className="result-usage-bar-head">
-        <span>{label}</span>
-        <span>{clamped.toFixed(1)}%</span>
-      </div>
-      <div className="result-usage-bar-track">
-        <div className={`result-usage-bar-fill ${tone}`} style={{ width: `${clamped}%` }} />
-      </div>
-      <div className="result-usage-bar-foot">
+    <div className="flex flex-col gap-1">
+      <ProgressBar
+        tone={usageTone(percent)}
+        value={used}
+        max={limit || 1}
+        label={label}
+        subLabel={`${Math.max(0, Math.min(100, percent)).toFixed(1)}%`}
+      />
+      <StatusText tone="info" size="sm">
         {used.toLocaleString()} / {limit.toLocaleString()}
-      </div>
+      </StatusText>
     </div>
   );
 }
