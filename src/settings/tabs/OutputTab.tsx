@@ -1,8 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { appLocalDataDir, join } from "@tauri-apps/api/path";
-import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
+import {
+  Checkbox,
+  FormField,
+  PathPicker,
+  RadioGroup,
+  RadioGroupItem,
+  Section,
+  SectionBody,
+  SectionHeader,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  StatusText,
+} from "@/components/ui";
 
 type ClipboardMode = "None" | "OriginalOnly" | "TranslatedOnly" | "Both";
 type Separator = "Space" | "Tab" | "LineBreak" | "Comma" | "Semicolon" | "Pipe";
@@ -15,17 +30,26 @@ type WindowState = {
   log_file_path: string;
 };
 
-const CLIPBOARD_MODES: { code: ClipboardMode; label: string }[] = [
-  { code: "None", label: "不複製" },
+const CLIPBOARD_MODES: Array<{ code: ClipboardMode; label: string }> = [
+  { code: "None", label: "不複製到剪貼簿" },
   { code: "OriginalOnly", label: "只複製原文" },
   { code: "TranslatedOnly", label: "只複製譯文" },
-  { code: "Both", label: "複製原文+譯文" },
+  { code: "Both", label: "同時複製原文與譯文" },
+];
+
+const SEPARATORS: Array<{ code: Separator; label: string }> = [
+  { code: "Space", label: "空格" },
+  { code: "Tab", label: "Tab" },
+  { code: "LineBreak", label: "換行" },
+  { code: "Comma", label: "逗號" },
+  { code: "Semicolon", label: "分號" },
+  { code: "Pipe", label: "直線符號" },
 ];
 
 function normalizeClipboardMode(value: string | undefined): ClipboardMode {
-  return (["None", "OriginalOnly", "TranslatedOnly", "Both"] as const).includes(
-    value as ClipboardMode,
-  )
+  return (
+    ["None", "OriginalOnly", "TranslatedOnly", "Both"] as const
+  ).includes(value as ClipboardMode)
     ? (value as ClipboardMode)
     : "OriginalOnly";
 }
@@ -44,36 +68,46 @@ export default function OutputTab() {
   const [showPopup, setShowPopup] = useState<boolean>(true);
   const [logEnabled, setLogEnabled] = useState<boolean>(false);
   const [logPath, setLogPath] = useState<string>("");
+  const [defaultLogPath, setDefaultLogPath] = useState<string>("");
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   useEffect(() => {
     void refresh();
+    void loadDefaultPath();
   }, []);
 
   useEffect(() => {
-    let disposed = false;
-    let offState: null | (() => void) = null;
+    let cancelled = false;
+    let offState: undefined | (() => void);
 
-    const setup = async () => {
-      offState = await listen<WindowState>("window-state-changed", (event) => {
-        setClipMode(normalizeClipboardMode(event.payload.clipboard_mode));
-        setSeparator(normalizeSeparator(event.payload.translate_separator));
-        setShowPopup(event.payload.popup_show_enabled);
-        setLogEnabled(event.payload.log_enabled);
-        setLogPath(event.payload.log_file_path);
-      });
-      if (disposed) {
-        offState();
-        offState = null;
+    listen<WindowState>("window-state-changed", (event) => {
+      setClipMode(normalizeClipboardMode(event.payload.clipboard_mode));
+      setSeparator(normalizeSeparator(event.payload.translate_separator));
+      setShowPopup(event.payload.popup_show_enabled);
+      setLogEnabled(event.payload.log_enabled);
+      setLogPath(event.payload.log_file_path);
+    }).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+        return;
       }
-    };
+      offState = unlisten;
+    });
 
-    void setup();
     return () => {
-      disposed = true;
+      cancelled = true;
       offState?.();
     };
   }, []);
+
+  async function loadDefaultPath() {
+    try {
+      const base = await appLocalDataDir();
+      setDefaultLogPath(await join(base, "captures.log"));
+    } catch {
+      setDefaultLogPath("captures.log");
+    }
+  }
 
   async function refresh() {
     try {
@@ -84,8 +118,8 @@ export default function OutputTab() {
       setLogEnabled(ws.log_enabled);
       setLogPath(ws.log_file_path);
       setStatusMsg("");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -93,8 +127,8 @@ export default function OutputTab() {
     setClipMode(next);
     try {
       await invoke("set_clipboard_mode", { value: next });
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -102,8 +136,8 @@ export default function OutputTab() {
     setSeparator(next);
     try {
       await invoke("set_translate_separator", { value: next });
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -111,8 +145,8 @@ export default function OutputTab() {
     setShowPopup(value);
     try {
       await invoke("set_popup_show_enabled", { value });
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -120,8 +154,8 @@ export default function OutputTab() {
     setLogEnabled(value);
     try {
       await invoke("set_log_enabled", { value });
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -129,103 +163,100 @@ export default function OutputTab() {
     setLogPath(value);
     try {
       await invoke("set_log_file_path", { value });
-    } catch (err) {
-      setStatusMsg(String(err));
-    }
-  }
-
-  async function chooseLogPath() {
-    try {
-      const defaultPath =
-        logPath.trim().length > 0 ? logPath : await join(await appLocalDataDir(), "captures.log");
-      const selected = await save({
-        defaultPath,
-        filters: [
-          { name: "Log", extensions: ["log", "txt"] },
-        ],
-      });
-      if (!selected || Array.isArray(selected)) {
-        return;
-      }
-      await updateLogPath(selected);
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   return (
-    <div className="settings-translate-root">
-      <section className="settings-section">
-        <h2>儲存到剪貼簿</h2>
-        <div className="settings-radio-col">
-          {CLIPBOARD_MODES.map((opt) => (
-            <label key={opt.code}>
-              <input
-                type="radio"
-                name="clip-mode"
-                checked={clipMode === opt.code}
-                onChange={() => updateClipMode(opt.code)}
+    <div className="flex flex-col gap-4">
+      <Section>
+        <SectionHeader title="複製到剪貼簿" />
+        <SectionBody>
+          <RadioGroup
+            orientation="vertical"
+            value={clipMode}
+            onValueChange={(value) => void updateClipMode(normalizeClipboardMode(value))}
+            className="gap-2"
+          >
+            {CLIPBOARD_MODES.map((option) => (
+              <RadioGroupItem
+                key={option.code}
+                id={`clip-mode-${option.code}`}
+                value={option.code}
+                size="sm"
+                label={option.label}
               />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-        {clipMode === "Both" && (
-          <div style={{ marginTop: 10, paddingLeft: 24 }}>
-            <label>
-              分隔符號
-              <select
-                value={separator}
-                onChange={(event) =>
-                  updateSeparator(event.target.value as Separator)
-                }
-              >
-                <option value="Space">空格</option>
-                <option value="Tab">Tab</option>
-                <option value="LineBreak">換行</option>
-                <option value="Comma">逗號</option>
-                <option value="Semicolon">分號</option>
-                <option value="Pipe">豎線</option>
-              </select>
-            </label>
-          </div>
-        )}
-      </section>
+            ))}
+          </RadioGroup>
 
-      <section className="settings-section">
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
+          {clipMode === "Both" ? (
+            <FormField label="原文與譯文分隔符號" htmlFor="separator-select">
+              <Select value={separator} onValueChange={(value) => void updateSeparator(normalizeSeparator(value))}>
+                <SelectTrigger id="separator-select">
+                  <SelectValue placeholder="請選擇分隔符號" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SEPARATORS.map((option) => (
+                    <SelectItem key={option.code} value={option.code}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+          ) : null}
+        </SectionBody>
+      </Section>
+
+      <Section>
+        <SectionHeader title="視窗行為" />
+        <SectionBody>
+          <Checkbox
             checked={showPopup}
-            onChange={(event) => updateShowPopup(event.target.checked)}
+            onCheckedChange={(checked) => void updateShowPopup(checked === true)}
+            label="顯示結果彈窗"
+            description="完成 OCR 後自動顯示結果視窗。"
           />
-          顯示彈窗
-        </label>
-      </section>
+        </SectionBody>
+      </Section>
 
-      <section className="settings-section">
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
+      <Section>
+        <SectionHeader title="記錄輸出" />
+        <SectionBody>
+          <Checkbox
             checked={logEnabled}
-            onChange={(event) => updateLogEnabled(event.target.checked)}
+            onCheckedChange={(checked) => void updateLogEnabled(checked === true)}
+            label="啟用記錄檔"
+            description="將 OCR 結果寫入本機記錄檔。"
           />
-          記錄到檔案
-        </label>
-        <div className="settings-output-log">
-          <div className="settings-output-log-path">
-            {logPath ? `目前：${logPath}` : "目前：未設定"}
-          </div>
-          <button className="c2t-btn" type="button" onClick={() => void chooseLogPath()}>
-            選擇路徑
-          </button>
-          <div className="settings-output-log-hint">
-            支援樣板：{"{timestamp}"}、{"{original_text}"}、{"{translated_text}"}。
-          </div>
-        </div>
-      </section>
 
-      {statusMsg && <div className="settings-status">{statusMsg}</div>}
+          <PathPicker
+            mode="file-save"
+            label="記錄檔路徑"
+            value={logPath}
+            defaultPath={logPath.trim() ? logPath : defaultLogPath}
+            filters={[{ name: "Log", extensions: ["log", "txt"] }]}
+            buttonLabel="選擇路徑"
+            placeholder="尚未設定"
+            disabled={!logEnabled}
+            onChange={(path) => {
+              void updateLogPath(path);
+            }}
+            onPickError={(message) => setStatusMsg(message)}
+          />
+
+          <StatusText tone="info" size="sm">
+            變數格式: {"{timestamp}"} {"{original_text}"} {"{translated_text}"}
+          </StatusText>
+        </SectionBody>
+      </Section>
+
+      {statusMsg ? (
+        <StatusText tone="info" size="sm">
+          {statusMsg}
+        </StatusText>
+      ) : null}
     </div>
   );
 }

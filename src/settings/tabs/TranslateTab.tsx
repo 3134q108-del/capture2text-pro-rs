@@ -1,6 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  FormField,
+  Input,
+  RadioGroup,
+  RadioGroupItem,
+  Section,
+  SectionBody,
+  SectionHeader,
+  StatusText,
+} from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 type Scenario = {
   id: string;
@@ -28,11 +43,11 @@ const LANG_OPTIONS: { code: OutputLang; label: string }[] = [
   { code: "fr-FR", label: "Français" },
 ];
 
-function normalizeLang(s: string): OutputLang {
+function normalizeLang(value: string): OutputLang {
   return (
     ["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const
-  ).includes(s as OutputLang)
-    ? (s as OutputLang)
+  ).includes(value as OutputLang)
+    ? (value as OutputLang)
     : "zh-TW";
 }
 
@@ -54,22 +69,21 @@ export default function TranslateTab() {
   }, []);
 
   useEffect(() => {
-    let disposed = false;
-    let offLang: null | (() => void) = null;
+    let cancelled = false;
+    let offLang: undefined | (() => void);
 
-    const setup = async () => {
-      offLang = await listen<string>("output-language-changed", (event) => {
-        setOutputLang(normalizeLang(event.payload));
-      });
-      if (disposed) {
-        offLang?.();
-        offLang = null;
+    listen<string>("output-language-changed", (event) => {
+      setOutputLang(normalizeLang(event.payload));
+    }).then((unlisten) => {
+      if (cancelled) {
+        unlisten();
+        return;
       }
-    };
+      offLang = unlisten;
+    });
 
-    void setup();
     return () => {
-      disposed = true;
+      cancelled = true;
       offLang?.();
     };
   }, []);
@@ -91,13 +105,15 @@ export default function TranslateTab() {
         list.find((item) => item.id === active) ??
         list[0] ??
         null;
+
       if (fallback) {
         setSelectedId(fallback.id);
         setDraft({ ...fallback });
       }
+
       setStatusMsg("");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -106,16 +122,18 @@ export default function TranslateTab() {
       await invoke("set_output_language", { lang: next });
       setOutputLang(next);
       setStatusMsg("輸出語言已更新");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   function selectScenario(id: string) {
-    const item = scenarios.find((x) => x.id === id);
-    if (!item) return;
+    const selected = scenarios.find((item) => item.id === id);
+    if (!selected) {
+      return;
+    }
     setSelectedId(id);
-    setDraft({ ...item });
+    setDraft({ ...selected });
     setStatusMsg("");
   }
 
@@ -129,7 +147,7 @@ export default function TranslateTab() {
     };
     setSelectedId(id);
     setDraft(next);
-    setStatusMsg("已建立新情境草稿");
+    setStatusMsg("已建立新情境，請填入內容");
   }
 
   async function saveScenario() {
@@ -143,6 +161,7 @@ export default function TranslateTab() {
       setStatusMsg("情境名稱不可空白");
       return;
     }
+
     try {
       await invoke("save_scenario", {
         scenario: { ...draft, id, name, prompt: draft.prompt },
@@ -150,120 +169,152 @@ export default function TranslateTab() {
       await refresh();
       setSelectedId(id);
       setStatusMsg("情境已儲存");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   async function deleteScenario() {
-    if (!selectedScenario) return;
+    if (!selectedScenario) {
+      return;
+    }
     try {
       await invoke("delete_scenario", { id: selectedScenario.id });
       await refresh();
       setStatusMsg("情境已刪除");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   async function applyActiveScenario() {
     const id = draft.id.trim();
-    if (!id) return;
+    if (!id) {
+      return;
+    }
     try {
       await invoke("set_active_scenario", { id });
       await refresh();
-      setStatusMsg("已套用為預設情境");
-    } catch (err) {
-      setStatusMsg(String(err));
+      setStatusMsg("已設為目前使用情境");
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   return (
-    <div className="settings-translate-root">
-      <section className="settings-section">
-        <h2>輸出語言</h2>
-        <div className="settings-radio-row">
-          {LANG_OPTIONS.map((opt) => (
-            <label key={opt.code}>
-              <input
-                type="radio"
-                name="output-lang"
-                checked={outputLang === opt.code}
-                onChange={() => changeOutputLang(opt.code)}
+    <div className="flex flex-col gap-4">
+      <Section>
+        <SectionHeader title="輸出語言" />
+        <SectionBody>
+          <RadioGroup
+            orientation="vertical"
+            value={outputLang}
+            onValueChange={(value) => void changeOutputLang(normalizeLang(value))}
+            className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4"
+          >
+            {LANG_OPTIONS.map((option) => (
+              <RadioGroupItem
+                key={option.code}
+                id={`output-lang-${option.code}`}
+                value={option.code}
+                size="sm"
+                label={option.label}
               />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-      </section>
+            ))}
+          </RadioGroup>
+        </SectionBody>
+      </Section>
 
-      <section className="settings-section">
-        <h2>翻譯情境</h2>
-        <div className="settings-tab-layout">
-          <aside className="settings-sidebar">
-            <div className="settings-sidebar-actions">
-              <button className="c2t-btn" onClick={createScenario}>
-                新增情境
-              </button>
-            </div>
-            <ul className="settings-list">
-              {scenarios.map((item) => (
-                <li key={item.id}>
-                  <button
-                    className={`settings-list-item ${item.id === selectedId ? "active" : ""}`}
-                    onClick={() => selectScenario(item.id)}
+      <Section>
+        <SectionHeader
+          title="翻譯情境"
+          description="情境會影響 OCR 結果的翻譯語氣與格式。"
+        />
+        <SectionBody>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-1">
+              <CardHeader className="gap-3 p-3">
+                <Button type="button" variant="secondary" onClick={createScenario}>
+                  新增情境
+                </Button>
+              </CardHeader>
+              <CardContent className="p-3 pt-0">
+                <ul className="flex max-h-96 flex-col gap-2 overflow-y-auto">
+                  {scenarios.map((item) => {
+                    const isActive = item.id === selectedId;
+                    return (
+                      <li key={item.id}>
+                        <Button
+                          type="button"
+                          variant={isActive ? "secondary" : "ghost"}
+                          className={cn(
+                            "h-auto w-full justify-between border px-3 py-2",
+                            isActive ? "border-primary" : "border-border",
+                          )}
+                          onClick={() => selectScenario(item.id)}
+                        >
+                          <span className="truncate text-left">{item.name}</span>
+                          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                            {item.builtin ? <span>內建</span> : null}
+                            {item.id === activeId ? <span>使用中</span> : null}
+                          </span>
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </CardContent>
+            </Card>
+
+            <Card className="lg:col-span-2">
+              <CardContent className="flex flex-col gap-4 p-4">
+                <FormField label="情境名稱" htmlFor="scenario-name" required>
+                  <Input
+                    id="scenario-name"
+                    value={draft.name}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
+                  />
+                </FormField>
+
+                <FormField label="Prompt" htmlFor="scenario-prompt">
+                  <textarea
+                    id="scenario-prompt"
+                    value={draft.prompt}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, prompt: event.target.value }))}
+                    className="min-h-72 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                </FormField>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="primary" onClick={() => void saveScenario()}>
+                    儲存
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => void applyActiveScenario()}>
+                    設為使用中
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={Boolean(selectedScenario?.builtin)}
+                    onClick={() => void deleteScenario()}
                   >
-                    <span>{item.name}</span>
-                    <span className="settings-badges">
-                      {item.builtin && <small className="badge">內建</small>}
-                      {item.id === activeId && <small className="badge active">使用中</small>}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </aside>
-          <main className="settings-editor translate-scenario-editor">
-            <label>
-              情境 ID
-              <input
-                value={draft.id}
-                disabled={draft.builtin}
-                onChange={(event) => setDraft((prev) => ({ ...prev, id: event.target.value }))}
-              />
-            </label>
-            <label>
-              情境名稱
-              <input
-                value={draft.name}
-                onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
-              />
-            </label>
-            <label className="settings-prompt-label">
-              Prompt
-              <textarea
-                value={draft.prompt}
-                onChange={(event) => setDraft((prev) => ({ ...prev, prompt: event.target.value }))}
-              />
-            </label>
-            <div className="settings-editor-actions">
-              <button className="c2t-btn c2t-btn-primary" onClick={saveScenario}>
-                儲存
-              </button>
-              <button className="c2t-btn" onClick={applyActiveScenario}>
-                套用為使用中
-              </button>
-              <button className="c2t-btn" onClick={deleteScenario} disabled={Boolean(selectedScenario?.builtin)}>
-                刪除
-              </button>
-            </div>
-            <div className="settings-output-log-hint">
-              新增情境後可在 Result 視窗重翻譯時使用；內建情境不可刪除。
-            </div>
-            {statusMsg && <div className="settings-status">{statusMsg}</div>}
-          </main>
-        </div>
-      </section>
+                    刪除
+                  </Button>
+                </div>
+
+                <StatusText tone="info" size="sm">
+                  新增情境後，請在 Result 視窗重新翻譯以套用內容。
+                </StatusText>
+                {statusMsg ? (
+                  <StatusText tone="info" size="sm">
+                    {statusMsg}
+                  </StatusText>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </SectionBody>
+      </Section>
     </div>
   );
 }

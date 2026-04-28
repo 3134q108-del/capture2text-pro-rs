@@ -19,20 +19,39 @@ import {
   type BillingTier,
   type UsageInfo,
 } from "../../services/tts";
+import {
+  Button,
+  FormField,
+  Input,
+  ProgressBar,
+  RadioGroup,
+  RadioGroupItem,
+  Section,
+  SectionBody,
+  SectionHeader,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Slider,
+  StatusText,
+  UsageDonut,
+} from "@/components/ui";
 
 type LangCode = "zh-TW" | "en-US" | "de-DE" | "fr-FR" | "ja-JP" | "ko-KR";
 type TestStatus = "idle" | "testing" | "ok" | "error";
 
-const LANGUAGES: { code: LangCode; label: string; fallback: string }[] = [
-  { code: "zh-TW", label: "繁體中文", fallback: "zh-TW-HsiaoChenNeural" },
-  { code: "en-US", label: "English", fallback: "en-US-AvaMultilingualNeural" },
-  { code: "de-DE", label: "Deutsch", fallback: "de-DE-SeraphinaMultilingualNeural" },
-  { code: "fr-FR", label: "Français", fallback: "fr-FR-VivienneMultilingualNeural" },
-  { code: "ja-JP", label: "日本語", fallback: "ja-JP-NanamiNeural" },
-  { code: "ko-KR", label: "한국어", fallback: "ko-KR-SunHiNeural" },
+const LANGUAGES: Array<{ code: LangCode; label: string; fallback: string; sample: string }> = [
+  { code: "zh-TW", label: "繁體中文", fallback: "zh-TW-HsiaoChenNeural", sample: "春暖花開，歡迎試聽。" },
+  { code: "en-US", label: "English", fallback: "en-US-AvaMultilingualNeural", sample: "The quick brown fox jumps over the lazy dog." },
+  { code: "de-DE", label: "Deutsch", fallback: "de-DE-SeraphinaMultilingualNeural", sample: "Franz jagt im komplett verwahrlosten Taxi quer durch Bayern." },
+  { code: "fr-FR", label: "Français", fallback: "fr-FR-VivienneMultilingualNeural", sample: "Portez ce vieux whisky au juge blond qui fume." },
+  { code: "ja-JP", label: "日本語", fallback: "ja-JP-NanamiNeural", sample: "いろはにほへと、ちりぬるを。" },
+  { code: "ko-KR", label: "한국어", fallback: "ko-KR-SunHiNeural", sample: "빠른 갈색 여우가 게으른 개를 뛰어넘습니다." },
 ];
 
-const REGIONS = [
+const REGIONS: Array<{ id: string; label: string }> = [
   { id: "eastasia", label: "East Asia" },
   { id: "southeastasia", label: "Southeast Asia" },
   { id: "japaneast", label: "Japan East" },
@@ -89,6 +108,7 @@ export default function SpeechTab() {
     const usageTimer = window.setInterval(() => {
       void refreshUsage();
     }, 30_000);
+
     return () => {
       window.clearInterval(usageTimer);
       if (previewTimerRef.current !== null) {
@@ -104,7 +124,9 @@ export default function SpeechTab() {
     const timer = window.setTimeout(() => {
       void setSpeechRate(speechRate);
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [rateLoaded, speechRate]);
 
   useEffect(() => {
@@ -117,7 +139,9 @@ export default function SpeechTab() {
         void setNeuralLimit(limit).then(refreshUsage);
       }
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [limitsLoaded, neuralLimitDraft, tier]);
 
   useEffect(() => {
@@ -130,7 +154,9 @@ export default function SpeechTab() {
         void setHdLimit(limit).then(refreshUsage);
       }
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [limitsLoaded, hdLimitDraft, tier]);
 
   async function refreshInitial() {
@@ -146,6 +172,7 @@ export default function SpeechTab() {
       setSpeechRateState(rate);
       setRateLoaded(true);
       applyUsage(usageInfo);
+
       if (status.region) {
         setRegion(status.region);
       }
@@ -153,16 +180,16 @@ export default function SpeechTab() {
         setTestStatus("idle");
         await loadVoices();
       }
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
   async function refreshUsage() {
     try {
       applyUsage(await getAzureUsageInfo());
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -180,6 +207,7 @@ export default function SpeechTab() {
       setStatusMsg("請輸入 Azure 訂閱金鑰。");
       return;
     }
+
     try {
       setSaving(true);
       setStatusMsg("");
@@ -189,9 +217,9 @@ export default function SpeechTab() {
       const status = await getAzureCredentialsStatus();
       setCredStatus(status);
       await testAndLoadVoices();
-    } catch (err) {
+    } catch (error) {
       setTestStatus("error");
-      setTestError(String(err));
+      setTestError(String(error));
     } finally {
       setSaving(false);
     }
@@ -208,8 +236,8 @@ export default function SpeechTab() {
       setTestStatus("idle");
       setTestError("");
       setStatusMsg("Azure 金鑰已移除。");
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     } finally {
       setSaving(false);
     }
@@ -224,9 +252,9 @@ export default function SpeechTab() {
       setTestStatus("ok");
       setStatusMsg("Azure 連線正常。");
       await loadVoices();
-    } catch (err) {
+    } catch (error) {
       setTestStatus("error");
-      setTestError(String(err));
+      setTestError(String(error));
     }
   }
 
@@ -237,9 +265,9 @@ export default function SpeechTab() {
         LANGUAGES.map(async (item) => [item.code, await listAzureVoices(item.code)] as const),
       );
       setVoicesByLang(Object.fromEntries(entries));
-    } catch (err) {
+    } catch (error) {
       setTestStatus("error");
-      setTestError(String(err));
+      setTestError(String(error));
     } finally {
       setLoadingVoices(false);
     }
@@ -250,8 +278,8 @@ export default function SpeechTab() {
       setTier(nextTier);
       await setBillingTier(nextTier);
       await refreshUsage();
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -260,8 +288,8 @@ export default function SpeechTab() {
       await setVoiceRouting(lang, voiceId);
       setRouting((prev) => ({ ...prev, [lang]: voiceId }));
       setStatusMsg(`${lang} voice 已更新。`);
-    } catch (err) {
-      setStatusMsg(String(err));
+    } catch (error) {
+      setStatusMsg(String(error));
     }
   }
 
@@ -271,17 +299,19 @@ export default function SpeechTab() {
     if (!voiceId) {
       return;
     }
+
     if (previewTimerRef.current !== null) {
       window.clearTimeout(previewTimerRef.current);
       previewTimerRef.current = null;
     }
+
     setPreviewingLang(lang);
     setStatusMsg("");
     try {
       await previewVoice(lang, voiceId);
       await refreshUsage();
-    } catch (err) {
-      setStatusMsg(`試聽失敗：${String(err)}`);
+    } catch (error) {
+      setStatusMsg(`試聽失敗: ${String(error)}`);
     } finally {
       previewTimerRef.current = window.setTimeout(() => {
         setPreviewingLang(null);
@@ -301,227 +331,251 @@ export default function SpeechTab() {
     return usableVoice?.id ?? item.fallback;
   }
 
+  const usagePercent = tier === "S0"
+    ? Math.max(usage.neural_percent, usage.hd_percent)
+    : usage.neural_percent;
+
   return (
-    <div className="settings-translate-root">
-      <section className="settings-section">
-        <h2>Azure TTS</h2>
-        <div className="settings-editor">
-          <label>
-            訂閱金鑰
-            <div className="settings-key-row">
-              <input
+    <div className="flex flex-col gap-4">
+      <Section>
+        <SectionHeader title="Azure TTS" />
+        <SectionBody>
+          <FormField label="訂閱金鑰" htmlFor="azure-subscription-key">
+            <div className="flex flex-col gap-2 md:flex-row">
+              <Input
+                id="azure-subscription-key"
                 type={keyVisible ? "text" : "password"}
                 value={keyInput}
-                placeholder={credStatus.configured ? "已設定，重新輸入可更新金鑰" : "輸入 Azure 金鑰"}
+                placeholder={credStatus.configured ? "已設定金鑰，輸入新金鑰可覆寫" : "輸入 Azure 訂閱金鑰"}
                 onChange={(event) => setKeyInput(event.target.value)}
               />
-              <button className="c2t-btn" type="button" onClick={() => setKeyVisible((v) => !v)}>
+              <Button type="button" variant="secondary" onClick={() => setKeyVisible((value) => !value)}>
                 {keyVisible ? "隱藏" : "顯示"}
-              </button>
-              <button
-                className="c2t-btn"
+              </Button>
+              <Button
                 type="button"
+                variant="destructive"
                 disabled={!credStatus.configured || saving}
                 onClick={() => void deleteCredentials()}
               >
                 移除金鑰
-              </button>
+              </Button>
             </div>
-          </label>
+          </FormField>
 
-          <label>
-            區域
-            <select value={region} onChange={(event) => setRegion(event.target.value)}>
-              {REGIONS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label} ({item.id})
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormField label="區域" htmlFor="azure-region-select">
+            <Select value={region} onValueChange={(value) => setRegion(value)}>
+              <SelectTrigger id="azure-region-select">
+                <SelectValue placeholder="選擇區域" />
+              </SelectTrigger>
+              <SelectContent>
+                {REGIONS.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label} ({item.id})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
 
-          <div className="billing-tier-row">
-            <span>方案</span>
-            <label>
-              <input
-                type="radio"
-                checked={tier === "F0"}
-                onChange={() => void switchTier("F0")}
-              />
-              F0 (Free)
-            </label>
-            <label>
-              <input
-                type="radio"
-                checked={tier === "S0"}
-                onChange={() => void switchTier("S0")}
-              />
-              S0 (付費)
-            </label>
-          </div>
+          <FormField label="方案">
+            <RadioGroup
+              orientation="horizontal"
+              value={tier}
+              onValueChange={(value) => void switchTier(value === "S0" ? "S0" : "F0")}
+              className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+            >
+              <RadioGroupItem id="billing-f0" value="F0" size="sm" label="F0 (免費)" />
+              <RadioGroupItem id="billing-s0" value="S0" size="sm" label="S0 (付費)" />
+            </RadioGroup>
+          </FormField>
 
-          <div className="settings-editor-actions">
-            <button
-              className="c2t-btn c2t-btn-primary"
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
               type="button"
+              variant="primary"
               disabled={saving}
               onClick={() => void saveAndTest()}
             >
               儲存並測試
-            </button>
-            <button
-              className="c2t-btn"
+            </Button>
+            <Button
               type="button"
+              variant="secondary"
               disabled={!credStatus.configured || testStatus === "testing"}
               onClick={() => void testAndLoadVoices()}
             >
               測試連線
-            </button>
+            </Button>
           </div>
 
-          <div className="settings-output-log-hint">
-            狀態：
-            {credStatus.configured ? `已設定 (${credStatus.region ?? region})` : "尚未設定"}
-            {testStatus === "testing" && "，測試中..."}
-            {testStatus === "ok" && "，連線正常"}
-            {testStatus === "error" && "，連線失敗"}
-          </div>
-          {testError && <div className="settings-status">{testError}</div>}
-        </div>
-      </section>
+          <StatusText tone="info" size="sm">
+            {credStatus.configured ? `已設定金鑰（${credStatus.region ?? region}）` : "尚未設定金鑰"}
+          </StatusText>
+          <StatusText tone={testStatus === "error" ? "error" : "info"} size="sm">
+            {testStatus === "testing"
+              ? "連線測試中..."
+              : testStatus === "ok"
+                ? "連線成功"
+                : testStatus === "error"
+                  ? "連線失敗"
+                  : "尚未測試連線"}
+          </StatusText>
+          {testError ? <StatusText tone="error" size="sm">{testError}</StatusText> : null}
+        </SectionBody>
+      </Section>
 
-      <section className="settings-section">
-        <h2>Azure 用量</h2>
-        <div className="usage-card">
+      <Section>
+        <SectionHeader title="Azure 用量" description={usage.month || "當月統計"} />
+        <SectionBody>
           <UsageMeter
-            label="Neural 語音"
+            label="Neural 用量"
             used={usage.neural_used}
             limit={usage.neural_limit}
             percent={usage.neural_percent}
-            month={usage.month}
-            limitInput={
-              tier === "S0" ? (
-                <input
-                  className="usage-limit-input"
-                  type="number"
-                  min={1}
-                  step={10000}
-                  value={neuralLimitDraft}
-                  onChange={(event) => setNeuralLimitDraft(event.target.value)}
-                  onBlur={() => setNeuralLimitDraft(String(parseLimit(neuralLimitDraft) ?? 1))}
-                />
-              ) : null
-            }
+            limitInput={tier === "S0" ? (
+              <Input
+                type="number"
+                value={neuralLimitDraft}
+                min={1}
+                onChange={(event) => setNeuralLimitDraft(event.target.value)}
+                onBlur={() => setNeuralLimitDraft(String(parseLimit(neuralLimitDraft) ?? 1))}
+              />
+            ) : null}
           />
-          {tier === "S0" && (
+
+          {tier === "S0" ? (
             <UsageMeter
-              label="HD 語音"
+              label="HD 用量"
               used={usage.hd_used}
               limit={usage.hd_limit}
               percent={usage.hd_percent}
-              month={usage.month}
-              limitInput={
-                <input
-                  className="usage-limit-input"
+              limitInput={(
+                <Input
                   type="number"
-                  min={1}
-                  step={10000}
                   value={hdLimitDraft}
+                  min={1}
                   onChange={(event) => setHdLimitDraft(event.target.value)}
                   onBlur={() => setHdLimitDraft(String(parseLimit(hdLimitDraft) ?? 1))}
                 />
-              }
+              )}
             />
-          )}
+          ) : null}
+
           <a
-            className="usage-portal-link"
+            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
             href="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/SpeechServices"
             target="_blank"
             rel="noreferrer"
           >
-            <svg className="result-usage-donut" viewBox="0 0 20 20" aria-hidden="true">
-              <circle className="usage-track" cx="10" cy="10" r="7" />
-              <circle
-                className="usage-fill green"
-                cx="10"
-                cy="10"
-                r="7"
-                strokeDasharray="28 44"
-              />
-            </svg>
+            <UsageDonut
+              size="md"
+              percent={usagePercent}
+              tone={usageTone(usagePercent)}
+              aria-label="Azure usage donut"
+            />
             Azure Portal
           </a>
-        </div>
-      </section>
+        </SectionBody>
+      </Section>
 
-      <section className="settings-section">
-        <div className="settings-voice-header">
-          <h2>朗讀 voice</h2>
-          <button
-            className="c2t-btn"
-            type="button"
-            disabled={!canLoadVoices || loadingVoices}
-            onClick={() => void loadVoices()}
-          >
-            {loadingVoices ? "載入中" : "重新載入語音"}
-          </button>
-        </div>
+      <Section>
+        <SectionHeader
+          title="語音路由"
+          description="朗讀速度只影響 OCR 朗讀，語音試聽固定使用 1.0x。"
+        />
+        <SectionBody>
+          <FormField label="朗讀速度">
+            <div className="flex items-center gap-3">
+              <Slider
+                min={0.5}
+                max={2.0}
+                step={0.05}
+                value={[speechRate]}
+                onValueChange={(values) => {
+                  const next = values[0];
+                  if (typeof next === "number") {
+                    setSpeechRateState(next);
+                  }
+                }}
+              />
+              <span className="w-12 text-right text-sm text-muted-foreground">
+                {speechRate.toFixed(2)}x
+              </span>
+            </div>
+          </FormField>
 
-        <div className="settings-editor">
-          <div className="speech-rate-row">
-            <label htmlFor="speech-rate-slider">朗讀速度</label>
-            <input
-              id="speech-rate-slider"
-              type="range"
-              min={0.5}
-              max={2.0}
-              step={0.05}
-              value={speechRate}
-              onChange={(event) => setSpeechRateState(Number(event.target.value))}
-            />
-            <span>{speechRate.toFixed(2)}x</span>
+          <div className="flex items-center justify-between gap-2">
+            <StatusText tone="info" size="sm">
+              目前方案：{tier}
+            </StatusText>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!canLoadVoices || loadingVoices}
+              onClick={() => void loadVoices()}
+            >
+              {loadingVoices ? "載入中..." : "重新載入語音"}
+            </Button>
           </div>
 
-          {LANGUAGES.map((item) => {
-            const voices = voicesByLang[item.code] ?? [];
-            const usableVoices = voices.filter((voice) => isVoiceUsable(voice.id, tier));
-            const selected = selectedVoiceFor(item);
-            return (
-              <label key={item.code}>
-                <div className="voice-row-header">
-                  <span>
-                    {item.label} ({item.code})
-                  </span>
-                  <button
-                    className="c2t-btn"
-                    type="button"
-                    disabled={
-                      !credStatus.configured || previewingLang === item.code || loadingVoices
-                    }
-                    onClick={() => void handlePreview(item.code)}
-                  >
-                    {previewingLang === item.code ? "試聽中" : "試聽"}
-                  </button>
-                </div>
-                <select
-                  value={selected}
-                  disabled={!credStatus.configured || usableVoices.length === 0}
-                  onChange={(event) => void changeVoice(item.code, event.target.value)}
-                >
-                  {usableVoices.length === 0 && <option value={item.fallback}>{item.fallback}</option>}
-                  {usableVoices.map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voiceLabel(voice)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            );
-          })}
-        </div>
-      </section>
+          <div className="grid gap-3">
+            {LANGUAGES.map((item) => {
+              const voices = voicesByLang[item.code] ?? [];
+              const usableVoices = voices.filter((voice) => isVoiceUsable(voice.id, tier));
+              const selected = selectedVoiceFor(item);
+              const previewing = previewingLang === item.code;
 
-      {statusMsg && <div className="settings-status">{statusMsg}</div>}
+              return (
+                <div key={item.code} className="rounded-md border border-border p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-foreground">
+                      {item.label} ({item.code})
+                    </span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!credStatus.configured || previewing || loadingVoices}
+                      onClick={() => void handlePreview(item.code)}
+                    >
+                      {previewing ? "試聽中..." : "試聽"}
+                    </Button>
+                  </div>
+
+                  <FormField label="語音選擇" htmlFor={`voice-select-${item.code}`}>
+                    <Select
+                      value={selected}
+                      onValueChange={(value) => void changeVoice(item.code, value)}
+                      disabled={!credStatus.configured || usableVoices.length === 0}
+                    >
+                      <SelectTrigger id={`voice-select-${item.code}`}>
+                        <SelectValue placeholder="請選擇語音" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {usableVoices.length === 0 ? (
+                          <SelectItem value={item.fallback}>{item.fallback}</SelectItem>
+                        ) : (
+                          usableVoices.map((voice) => (
+                            <SelectItem key={voice.id} value={voice.id}>
+                              {voiceLabel(voice)}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </FormField>
+                  <StatusText tone="info" size="sm">
+                    試聽文字：{item.sample}
+                  </StatusText>
+                </div>
+              );
+            })}
+          </div>
+        </SectionBody>
+      </Section>
+
+      {statusMsg ? <StatusText tone="info" size="sm">{statusMsg}</StatusText> : null}
     </div>
   );
 }
@@ -531,33 +585,29 @@ function UsageMeter({
   used,
   limit,
   percent,
-  month,
   limitInput,
 }: {
   label: string;
   used: number;
   limit: number;
   percent: number;
-  month: string;
   limitInput: ReactNode;
 }) {
-  const clampedPercent = Math.min(100, Math.max(0, percent));
-  const tone = percent >= 90 ? "red" : percent >= 70 ? "yellow" : "green";
   return (
-    <div className="usage-meter">
-      <div className="usage-meter-header">
-        <span>{label}</span>
-        <span>{month}</span>
-      </div>
-      <div className="usage-bar-container" aria-hidden="true">
-        <div className={`usage-bar ${tone}`} style={{ width: `${clampedPercent}%` }} />
-      </div>
-      <div className="usage-meter-footer">
-        <span>
-          {formatNumber(used)} / {limitInput ?? formatNumber(limit)}
-        </span>
-        <span>{percent.toFixed(1)}%</span>
-      </div>
+    <div className="rounded-md border border-border p-3">
+      <ProgressBar
+        tone={usageTone(percent)}
+        value={used}
+        max={limit || 1}
+        label={label}
+        subLabel={`${formatNumber(used)} / ${formatNumber(limit)} (${percent.toFixed(1)}%)`}
+      />
+      {limitInput ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 sm:items-center">
+          <span className="text-sm text-muted-foreground">上限</span>
+          {limitInput}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -576,6 +626,13 @@ function parseLimit(value: string): number | null {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function usageTone(percent: number): "green" | "yellow" | "red" | "neutral" {
+  if (percent >= 90) return "red";
+  if (percent >= 70) return "yellow";
+  if (percent >= 0) return "green";
+  return "neutral";
 }
 
 function voiceLabel(voice: AzureVoice): string {
