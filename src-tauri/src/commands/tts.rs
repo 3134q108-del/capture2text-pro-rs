@@ -29,7 +29,12 @@ pub async fn speak(
     let key = crate::azure_tts::keyring::get_key()
         .map_err(|err| err.to_string())?
         .ok_or_else(not_configured_message)?;
-    let normalized_lang = normalize_lang(&lang);
+    let actual_lang = match target.as_str() {
+        "original" => crate::vlm::active_src_lang().unwrap_or_else(|| lang.clone()),
+        "translated" => crate::output_lang::current(),
+        _ => lang.clone(),
+    };
+    let normalized_lang = normalize_lang(&actual_lang);
     let mut voice_id = crate::window_state::azure_voice_map()
         .get(normalized_lang)
         .cloned()
@@ -39,6 +44,9 @@ pub async fn speak(
     {
         voice_id = default_voice_for_lang(normalized_lang).to_string();
     }
+    eprintln!(
+        "[tts] speak target={target} lang={actual_lang} normalized={normalized_lang} voice_id={voice_id}"
+    );
     let rate = crate::window_state::azure_speech_rate();
     let app = state.inner().app.clone();
     let playback = state.inner().playback.clone();

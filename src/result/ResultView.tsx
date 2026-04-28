@@ -15,6 +15,7 @@ type VlmEventPayload = {
   status: "success" | "error";
   original: string;
   translated: string;
+  src_lang?: string | null;
   duration_ms: number;
   error: string | null;
 };
@@ -23,6 +24,7 @@ type VlmPartialEventPayload = {
   source: string;
   original: string;
   translated: string;
+  src_lang?: string | null;
 };
 
 type VlmSnapshot = {
@@ -30,6 +32,7 @@ type VlmSnapshot = {
   status: "loading" | "success" | "error";
   original: string;
   translated: string;
+  src_lang?: string | null;
   duration_ms: number;
   error: string | null;
   updated_at: number;
@@ -70,6 +73,8 @@ export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
   const [original, setOriginal] = useState<string>("");
   const [translated, setTranslated] = useState<string>("");
+  const [srcLang, setSrcLang] = useState<string | null>(null);
+  const [outputLang, setOutputLang] = useState<string>("zh-TW");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingState, setSpeakingState] = useState<SpeakingState>(null);
   const [originalReady, setOriginalReady] = useState<boolean>(false);
@@ -107,6 +112,7 @@ export default function ResultView() {
       setStatus("success");
       setOriginal(p.original);
       setTranslated(p.translated);
+      setSrcLang(p.src_lang ?? null);
       setErrorMsg("");
       setOriginalReady(p.original.trim().length > 0);
       setTranslatedReady(p.translated.trim().length > 0);
@@ -116,6 +122,7 @@ export default function ResultView() {
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
+      setSrcLang(null);
       setSpeakingState(null);
       setOriginalReady(false);
       setTranslatedReady(false);
@@ -127,6 +134,7 @@ export default function ResultView() {
     setStatus("loading");
     setOriginal(p.original);
     setTranslated(p.translated);
+    setSrcLang(p.src_lang ?? null);
     setErrorMsg("");
     setTranslatedReady(false);
 
@@ -153,6 +161,7 @@ export default function ResultView() {
     clearOriginalReadyTimer();
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
+    setSrcLang(snapshot.src_lang ?? null);
     if (snapshot.status === "success") {
       setStatus("success");
       setErrorMsg("");
@@ -263,6 +272,38 @@ export default function ResultView() {
   }, []);
 
   useEffect(() => () => clearOriginalReadyTimer(), []);
+
+  useEffect(() => {
+    let disposed = false;
+    let offLang: null | (() => void) = null;
+
+    const setup = async () => {
+      try {
+        const current = await invoke<string>("get_output_language");
+        if (!disposed) {
+          setOutputLang(current);
+        }
+      } catch {
+        // ignore
+      }
+      if (disposed) {
+        return;
+      }
+      offLang = await listen<string>("output-language-changed", (event) => {
+        setOutputLang(event.payload);
+      });
+      if (disposed) {
+        offLang();
+        offLang = null;
+      }
+    };
+
+    void setup();
+    return () => {
+      disposed = true;
+      offLang?.();
+    };
+  }, []);
 
   useEffect(() => {
     void refreshUsageInfo();
@@ -506,7 +547,7 @@ export default function ResultView() {
     }
 
     if (!content) return;
-    const lang = detectLang(content);
+    const lang = target === "translated" ? outputLang : (srcLang ?? detectLang(content));
 
     try {
       if (speakingState !== null) {

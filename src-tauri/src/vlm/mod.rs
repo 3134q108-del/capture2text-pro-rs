@@ -136,6 +136,7 @@ pub struct VlmEventPayload {
     pub status: String,
     pub original: String,
     pub translated: String,
+    pub src_lang: Option<String>,
     pub duration_ms: u64,
     pub error: Option<String>,
 }
@@ -145,6 +146,7 @@ pub struct VlmPartialEventPayload {
     pub source: String,
     pub original: String,
     pub translated: String,
+    pub src_lang: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,16 +154,19 @@ pub struct PartialOutput {
     pub raw_accumulated: String,
     pub original: Option<String>,
     pub translated: Option<String>,
+    pub src_lang: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct VlmOutput {
     pub original: String,
     pub translated: String,
+    pub src_lang: Option<String>,
     pub duration_ms: u64,
 }
 
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
+static ACTIVE_VLM_SRC_LANG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 struct VlmRuntime {
     tx: SyncSender<VlmJob>,
@@ -187,6 +192,7 @@ pub fn init_worker(app_handle: AppHandle) {
                         "switch model for lang {lang_code} failed: {err}"
                     );
                     eprintln!("[vlm] source={} failed: {}", source_label, message);
+                    set_active_src_lang(None);
                     emit_vlm_event(
                         &app_handle,
                         VlmEventPayload {
@@ -194,6 +200,7 @@ pub fn init_worker(app_handle: AppHandle) {
                             status: "error".to_string(),
                             original: String::new(),
                             translated: String::new(),
+                            src_lang: None,
                             duration_ms: 0,
                             error: Some(message),
                         },
@@ -216,6 +223,7 @@ pub fn init_worker(app_handle: AppHandle) {
                                     source: source_for_partial.clone(),
                                     original: partial.original.clone().unwrap_or_default(),
                                     translated: partial.translated.clone().unwrap_or_default(),
+                                    src_lang: partial.src_lang.clone(),
                                 },
                             );
                         });
@@ -235,6 +243,7 @@ pub fn init_worker(app_handle: AppHandle) {
                                     source: source_for_partial.clone(),
                                     original: partial.original.clone().unwrap_or_default(),
                                     translated: partial.translated.clone().unwrap_or_default(),
+                                    src_lang: partial.src_lang.clone(),
                                 },
                             );
                         });
@@ -247,6 +256,8 @@ pub fn init_worker(app_handle: AppHandle) {
                         println!("[vlm] source={} original: {}", source, out.original);
                         println!("[vlm] source={} translated: {}", source, out.translated);
                         println!("[vlm] source={} duration_ms: {}", source, out.duration_ms);
+                        eprintln!("[vlm] source={} src_lang: {:?}", source, &out.src_lang);
+                        set_active_src_lang(out.src_lang.clone());
                         emit_vlm_event(
                             &app_handle,
                             VlmEventPayload {
@@ -254,6 +265,7 @@ pub fn init_worker(app_handle: AppHandle) {
                                 status: "success".to_string(),
                                 original: out.original,
                                 translated: out.translated,
+                                src_lang: out.src_lang,
                                 duration_ms: out.duration_ms,
                                 error: None,
                             },
@@ -261,6 +273,7 @@ pub fn init_worker(app_handle: AppHandle) {
                     }
                     Err(err) => {
                         eprintln!("[vlm] source={} failed: {err}", source);
+                        set_active_src_lang(None);
                         emit_vlm_event(
                             &app_handle,
                             VlmEventPayload {
@@ -268,6 +281,7 @@ pub fn init_worker(app_handle: AppHandle) {
                                 status: "error".to_string(),
                                 original: String::new(),
                                 translated: String::new(),
+                                src_lang: None,
                                 duration_ms: 0,
                                 error: Some(err.to_string()),
                             },
@@ -287,6 +301,18 @@ pub fn init_worker(app_handle: AppHandle) {
         tx,
         _join: Mutex::new(Some(join)),
     });
+}
+
+pub fn active_src_lang() -> Option<String> {
+    let slot = ACTIVE_VLM_SRC_LANG.get_or_init(|| Mutex::new(None));
+    slot.lock().ok().and_then(|guard| guard.clone())
+}
+
+fn set_active_src_lang(lang: Option<String>) {
+    let slot = ACTIVE_VLM_SRC_LANG.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = lang;
+    }
 }
 
 pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: TargetLang, source: &'static str) {
@@ -489,6 +515,7 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
             raw_accumulated: raw.to_string(),
             original: extract_partial_json_string(raw, "original"),
             translated: extract_partial_json_string(raw, "translated"),
+            src_lang: extract_partial_json_string(raw, "src_lang"),
         });
     })?;
 
@@ -499,6 +526,7 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
+        src_lang: parsed.src_lang,
         duration_ms,
     })
 }
@@ -521,6 +549,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
             raw_accumulated: raw.to_string(),
             original: Some(text.to_string()),
             translated: extract_partial_json_string(raw, "translated"),
+            src_lang: extract_partial_json_string(raw, "src_lang"),
         });
     })?;
 
@@ -531,6 +560,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
     Ok(VlmOutput {
         original: text.to_string(),
         translated: parsed.translated,
+        src_lang: parsed.src_lang,
         duration_ms,
     })
 }
@@ -588,6 +618,7 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
+        src_lang: parsed.src_lang,
         duration_ms,
     })
 }
@@ -656,7 +687,7 @@ fn run_streaming_request<F: FnMut(&str)>(
 fn build_system_prompt(target_lang: TargetLang) -> String {
     let scenario = scenarios::current_scenario();
     format!(
-        "{}\n\n輸出嚴格 JSON：{{\"original\":\"<圖片或文字中的完整原文，保留原語言>\",\"translated\":\"<翻譯成{}的結果>\"}}。禁止 thinking、禁止解釋、禁止 markdown。",
+        "{}\n\n輸出嚴格 JSON：{{\"original\":\"<圖片或文字中的完整原文，保留原語言>\",\"translated\":\"<翻譯成{}的結果>\",\"src_lang\":\"<BCP-47 code: zh-TW | zh-CN | en-US | ja-JP | ko-KR | de-DE | fr-FR | other>\"}}。src_lang 只能輸出上述 8 個值其中之一。禁止 thinking、禁止解釋、禁止 markdown。",
         scenario.prompt,
         target_lang.display_name()
     )
@@ -855,4 +886,6 @@ struct ChatStreamDelta {
 struct ModelOutput {
     original: String,
     translated: String,
+    #[serde(default)]
+    src_lang: Option<String>,
 }
