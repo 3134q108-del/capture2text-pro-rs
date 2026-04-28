@@ -44,7 +44,7 @@ impl ModelSpec {
     pub fn mmproj_filename(&self) -> &'static str {
         match self.id {
             ModelId::Qwen3Vl4bInstruct => "qwen3-vl-4b-instruct.mmproj.gguf",
-            ModelId::Pixtral12b2409 => "pixtral-12b-2409.mmproj.gguf",
+            ModelId::Pixtral12b2409 => "mmproj-pixtral-12b-f16.gguf",
         }
     }
 }
@@ -60,7 +60,7 @@ const QWEN3_VL_4B: ModelSpec = ModelSpec {
 const PIXTRAL_12B: ModelSpec = ModelSpec {
     id: ModelId::Pixtral12b2409,
     gguf_url: "https://huggingface.co/ggml-org/pixtral-12b-GGUF/resolve/main/pixtral-12b-Q4_K_M.gguf",
-    mmproj_url: "https://huggingface.co/ggml-org/pixtral-12b-GGUF/resolve/main/pixtral-12b-2409.mmproj.gguf",
+    mmproj_url: "https://huggingface.co/ggml-org/pixtral-12b-GGUF/resolve/main/mmproj-pixtral-12b-f16.gguf",
     chat_template: "pixtral",
     ctx_size: 4096,
 };
