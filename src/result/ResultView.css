@@ -57,7 +57,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 6px;
+  padding: 8px 16px 12px;
   border-top: 1px solid var(--c2t-border);
   background: var(--c2t-panel-bg);
 }
