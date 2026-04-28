@@ -7,8 +7,6 @@ mod drag_overlay;
 mod error;
 mod hotkey;
 mod llama_runtime;
-#[allow(dead_code)]
-mod ollama_boot;
 mod overlay;
 mod output_lang;
 mod app_handle;
@@ -37,7 +35,7 @@ pub fn run() {
             let app_handle_for_bootstrap = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(err) = crate::llama_runtime::bootstrap(
-                    crate::llama_runtime::manifest::ModelId::Qwen3Vl8bInstruct,
+                    crate::llama_runtime::manifest::ModelId::Qwen3Vl4bInstruct,
                 ) {
                     eprintln!("[llama-runtime] bootstrap failed: {err}");
                     use tauri::Emitter;
@@ -93,7 +91,7 @@ pub fn run() {
             commands::result_window::set_speech_enabled,
             commands::result_window::write_popup_clipboard,
             commands::result_window::check_llm_health,
-            commands::result_window::check_ollama_health,
+            commands::result_window::check_vlm_health,
             commands::result_window::open_external_url,
             commands::result_window::export_settings,
             commands::result_window::import_settings,

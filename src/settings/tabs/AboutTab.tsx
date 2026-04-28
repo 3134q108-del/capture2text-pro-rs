@@ -2,26 +2,26 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
 
-const OLLAMA_ENDPOINT = "http://localhost:11434";
-const MODEL_NAME = "qwen3-vl:8b-instruct";
+const VLM_ENDPOINT = "http://localhost:11434";
+const MODEL_NAME = "qwen3-vl:4b-instruct";
 const UPSTREAM_URL = "https://capture2text.sourceforge.net/";
 const FORK_URL = "https://github.com/3134q108-del/capture2text-pro-rs";
 
-function formatOllama(code: string): string {
-  if (code === "healthy") return "✓ Ollama 正常";
-  if (code === "daemon_down") return "✗ Ollama daemon 未啟動";
+function formatVlm(code: string): string {
+  if (code === "healthy") return "✓ VLM 正常";
+  if (code === "vlm_runtime_down") return "✗ VLM 服務未就緒";
   if (code.startsWith("model_missing:")) {
-    return `✗ 模型未安裝：${code.slice("model_missing:".length)}`;
+    return `✗ 模型缺失：${code.slice("model_missing:".length)}`;
   }
   if (code.startsWith("unknown:")) {
-    return `⚠ 狀態不明：${code.slice("unknown:".length)}`;
+    return `✗ 未知錯誤：${code.slice("unknown:".length)}`;
   }
   return code;
 }
 
 export default function AboutTab() {
-  const [version, setVersion] = useState<string>("…");
-  const [ollamaStatus, setOllamaStatus] = useState<string>("");
+  const [version, setVersion] = useState<string>("...");
+  const [vlmStatus, setVlmStatus] = useState<string>("");
   const [updateStatus, setUpdateStatus] = useState<string>("");
   const [exportDir, setExportDir] = useState<string>("");
   const [importDir, setImportDir] = useState<string>("");
@@ -33,27 +33,27 @@ export default function AboutTab() {
       .catch(() => setVersion("unknown"));
   }, []);
 
-  async function checkOllama() {
-    setOllamaStatus("檢查中…");
+  async function checkVlm() {
+    setVlmStatus("檢查中…");
     try {
-      const result = await invoke<string>("check_llm_health");
-      setOllamaStatus(formatOllama(result));
+      const result = await invoke<string>("check_vlm_health");
+      setVlmStatus(formatVlm(result));
     } catch (err) {
-      setOllamaStatus(`錯誤：${err}`);
+      setVlmStatus(`錯誤：${err}`);
     }
   }
 
   async function checkUpdate() {
-    setUpdateStatus("查詢中…");
+    setUpdateStatus("檢查中…");
     try {
       const tag = await invoke<string>("check_for_updates");
       if (tag === "no_release") {
-        setUpdateStatus("尚未發佈正式版");
+        setUpdateStatus("尚未發佈正式 release");
         return;
       }
-      setUpdateStatus(`最新版本：${tag}（當前：v${version}）`);
+      setUpdateStatus(`最新版本：${tag}（目前 v${version}）`);
     } catch (err) {
-      setUpdateStatus(`查詢失敗：${err}`);
+      setUpdateStatus(`檢查失敗：${err}`);
     }
   }
 
@@ -67,7 +67,7 @@ export default function AboutTab() {
 
   async function doExport() {
     if (!exportDir.trim()) {
-      setStatusMsg("請先輸入匯出目錄");
+      setStatusMsg("請輸入匯出路徑");
       return;
     }
     try {
@@ -82,7 +82,7 @@ export default function AboutTab() {
 
   async function doImport() {
     if (!importDir.trim()) {
-      setStatusMsg("請先輸入來源目錄");
+      setStatusMsg("請輸入匯入路徑");
       return;
     }
     try {
@@ -100,7 +100,7 @@ export default function AboutTab() {
       <section className="settings-section">
         <h2>Capture2Text Pro v{version}</h2>
         <p style={{ margin: 0, color: "var(--c2t-text-muted)" }}>
-          Windows OCR + 翻譯 + 朗讀工具（Tauri + Rust 重寫版）
+          Windows OCR + 翻譯 + 朗讀（Tauri + Rust 桌面版）
         </p>
       </section>
 
@@ -110,13 +110,13 @@ export default function AboutTab() {
           模型：<code>{MODEL_NAME}</code>
         </div>
         <div>
-          後端：<code>{OLLAMA_ENDPOINT}</code>
+          服務：<code>{VLM_ENDPOINT}</code>（llama.cpp 服務）
         </div>
         <div style={{ marginTop: 6 }}>
-          <button className="c2t-btn" onClick={checkOllama}>
-            檢查 Ollama 連線
+          <button className="c2t-btn" onClick={checkVlm}>
+            檢查 VLM 服務連線
           </button>
-          {ollamaStatus && <span style={{ marginLeft: 10 }}>{ollamaStatus}</span>}
+          {vlmStatus && <span style={{ marginLeft: 10 }}>{vlmStatus}</span>}
         </div>
       </section>
 
@@ -124,41 +124,41 @@ export default function AboutTab() {
         <h2>快捷鍵</h2>
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           <li>
-            <kbd>Win</kbd>+<kbd>Q</kbd>：框選區域擷取
+            <kbd>Win</kbd>+<kbd>Q</kbd>：截圖辨識 + 翻譯
           </li>
           <li>
-            <kbd>Win</kbd>+<kbd>W</kbd>：目前視窗擷取
+            <kbd>Win</kbd>+<kbd>W</kbd>：只擷取原文
           </li>
           <li>
-            <kbd>Win</kbd>+<kbd>E</kbd>：全螢幕擷取
+            <kbd>Win</kbd>+<kbd>E</kbd>：重翻譯目前內容
           </li>
         </ul>
       </section>
 
       <section className="settings-section">
-        <h2>語音引擎</h2>
-        <div>Microsoft Edge TTS（雲端，免費，需網路）</div>
+        <h2>語音合成引擎</h2>
+        <div>Microsoft Azure TTS：支援多語系 voice 與試聽</div>
       </section>
 
       <section className="settings-section">
-        <h2>原版與授權</h2>
-        <div>原作者：Christopher Brochtrup</div>
+        <h2>授權與來源</h2>
+        <div>原始專案：Christopher Brochtrup</div>
         <div>授權：GPL-3.0</div>
         <div style={{ marginTop: 6, display: "flex", gap: 8 }}>
           <button className="c2t-btn" onClick={() => openUrl(UPSTREAM_URL)}>
-            原版官網
+            原專案網站
           </button>
           <button className="c2t-btn" onClick={() => openUrl(FORK_URL)}>
-            本專案 GitHub
+            Fork GitHub
           </button>
         </div>
       </section>
 
       <section className="settings-section">
-        <h2>檢查更新</h2>
+        <h2>更新檢查</h2>
         <div>
           <button className="c2t-btn" onClick={checkUpdate}>
-            立即查詢最新版
+            檢查最新版本
           </button>
           {updateStatus && <span style={{ marginLeft: 10 }}>{updateStatus}</span>}
         </div>
@@ -169,12 +169,12 @@ export default function AboutTab() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
             <label>
-              匯出目錄（系統會在此建立 Capture2TextPro-backup/ 子目錄）
+              匯出路徑（會建立 Capture2TextPro-backup/）
               <input
                 type="text"
                 value={exportDir}
                 onChange={(event) => setExportDir(event.target.value)}
-                placeholder="例：D:\\backup"
+                placeholder="例如 D:\\backup"
               />
             </label>
             <button className="c2t-btn" style={{ marginTop: 6 }} onClick={doExport}>
@@ -183,12 +183,12 @@ export default function AboutTab() {
           </div>
           <div>
             <label>
-              匯入來源目錄
+              匯入來源路徑
               <input
                 type="text"
                 value={importDir}
                 onChange={(event) => setImportDir(event.target.value)}
-                placeholder="例：D:\\backup\\Capture2TextPro-backup"
+                placeholder="例如 D:\\backup\\Capture2TextPro-backup"
               />
             </label>
             <button className="c2t-btn" style={{ marginTop: 6 }} onClick={doImport}>

@@ -20,7 +20,7 @@ pub fn active_model() -> Option<ModelId> {
 }
 
 pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
-    cleanup_legacy_qwen8b_files();
+    cleanup_legacy_model_files();
     ensure_binary_installed()?;
     ensure_all_models_installed()?;
     supervisor::spawn_for(&default_model)?;
@@ -79,12 +79,9 @@ fn ensure_all_models_installed() -> Result<(), String> {
     Ok(())
 }
 
-fn cleanup_legacy_qwen8b_files() {
+fn cleanup_legacy_model_files() {
     let model_dir = app_dir().join("models");
-    let legacy_files = [
-        "qwen3-vl-8b-instruct.Q4_K_M.gguf",
-        "qwen3-vl-8b-instruct.mmproj.gguf",
-    ];
+    let legacy_files: [&str; 0] = [];
 
     for name in legacy_files {
         let path = model_dir.join(name);

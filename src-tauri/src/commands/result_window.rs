@@ -222,14 +222,14 @@ pub fn write_popup_clipboard() -> Result<(), String> {
 pub fn check_llm_health() -> String {
     match crate::vlm::check_health() {
         crate::vlm::HealthStatus::Healthy => "healthy".to_string(),
-        crate::vlm::HealthStatus::OllamaDown => "daemon_down".to_string(),
+        crate::vlm::HealthStatus::VlmRuntimeDown => "vlm_runtime_down".to_string(),
         crate::vlm::HealthStatus::ModelMissing { model } => format!("model_missing:{model}"),
         crate::vlm::HealthStatus::Unknown(msg) => format!("unknown:{msg}"),
     }
 }
 
 #[tauri::command]
-pub fn check_ollama_health() -> String {
+pub fn check_vlm_health() -> String {
     check_llm_health()
 }
 

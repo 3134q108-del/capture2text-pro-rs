@@ -67,14 +67,12 @@ fn poll_ready() -> Result<(), String> {
 
     while started.elapsed() < timeout {
         std::thread::sleep(Duration::from_millis(500));
-        if let Ok(response) = client.get("http://127.0.0.1:11434/health").send() {
-            if response.status().is_success() {
-                eprintln!(
-                    "[llama-runtime] ready in {}ms",
-                    started.elapsed().as_millis()
-                );
-                return Ok(());
-            }
+        if check_runtime_ready(&client) {
+            eprintln!(
+                "[llama-runtime] ready in {}ms",
+                started.elapsed().as_millis()
+            );
+            return Ok(());
         }
     }
 
@@ -94,10 +92,24 @@ pub fn stop() {
 }
 
 pub fn is_healthy() -> bool {
-    reqwest::blocking::Client::builder()
+    let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
-        .and_then(|client| client.get("http://127.0.0.1:11434/health").send())
-        .map(|response| response.status().is_success())
-        .unwrap_or(false)
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    check_runtime_ready(&client)
+}
+
+fn check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
+    if let Ok(response) = client.get("http://127.0.0.1:11434/v1/models").send() {
+        if response.status().is_success() {
+            return true;
+        }
+    }
+    if let Ok(response) = client.get("http://127.0.0.1:11434/health").send() {
+        return response.status().is_success();
+    }
+    false
 }

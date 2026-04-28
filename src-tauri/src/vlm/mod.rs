@@ -25,9 +25,9 @@ pub type VlmResult<T> = std::result::Result<T, VlmError>;
 #[derive(Debug, Error)]
 pub enum VlmError {
     #[error("llama-server connection refused (is runtime running?)")]
-    OllamaDown,
+    VlmRuntimeDown,
     #[error("llama-server returned HTTP {status}: {body}")]
-    OllamaHttpError { status: u16, body: String },
+    VlmRuntimeHttpError { status: u16, body: String },
     #[error("vlm request timed out after {}ms", .0)]
     Timeout(u64),
     #[error("image preprocessing failed: {0}")]
@@ -50,7 +50,7 @@ impl From<io::Error> for VlmError {
 #[derive(Debug)]
 pub enum HealthStatus {
     Healthy,
-    OllamaDown,
+    VlmRuntimeDown,
     ModelMissing { model: String },
     Unknown(String),
 }
@@ -65,7 +65,7 @@ impl HealthStatus {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Healthy => "healthy",
-            Self::OllamaDown => "ollama-down",
+            Self::VlmRuntimeDown => "vlm-runtime-down",
             Self::ModelMissing { .. } => "model-missing",
             Self::Unknown(_) => "unknown",
         }
@@ -74,7 +74,7 @@ impl HealthStatus {
     pub fn message(&self) -> String {
         match self {
             Self::Healthy => "OK".to_string(),
-            Self::OllamaDown => "llama.cpp runtime is not ready".to_string(),
+            Self::VlmRuntimeDown => "llama.cpp runtime is not ready".to_string(),
             Self::ModelMissing { model } => format!("model missing: {model}"),
             Self::Unknown(msg) => msg.clone(),
         }
@@ -427,7 +427,7 @@ pub fn check_health() -> HealthStatus {
     if llama_runtime::supervisor::is_healthy() {
         HealthStatus::Healthy
     } else {
-        HealthStatus::OllamaDown
+        HealthStatus::VlmRuntimeDown
     }
 }
 
@@ -560,7 +560,7 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
     let status = response.status();
     let raw = response.text().map_err(map_reqwest_send_error)?;
     if !status.is_success() {
-        return Err(VlmError::OllamaHttpError {
+        return Err(VlmError::VlmRuntimeHttpError {
             status: status.as_u16(),
             body: raw,
         });
@@ -610,7 +610,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     let status = response.status();
     if !status.is_success() {
         let raw = response.text().map_err(map_reqwest_send_error)?;
-        return Err(VlmError::OllamaHttpError {
+        return Err(VlmError::VlmRuntimeHttpError {
             status: status.as_u16(),
             body: raw,
         });
@@ -739,7 +739,7 @@ fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
     if err.is_timeout() {
         VlmError::Timeout(REQUEST_TIMEOUT_MS)
     } else if err.is_connect() {
-        VlmError::OllamaDown
+        VlmError::VlmRuntimeDown
     } else {
         VlmError::Internal(format!("llama-server request failed: {err}"))
     }
