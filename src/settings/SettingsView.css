@@ -218,6 +218,19 @@
   gap: 8px;
 }
 
+.settings-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.settings-inline-status {
+  font-size: 12px;
+  color: var(--c2t-text-muted);
+}
+
 .settings-tts {
   border-top: 1px solid var(--c2t-border);
   padding-top: 10px;
@@ -449,6 +462,9 @@
 }
 
 .usage-portal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--c2t-border-focus);
   font-size: 12px;
   text-decoration: none;
@@ -456,6 +472,29 @@
 
 .usage-portal-link:hover {
   text-decoration: underline;
+}
+
+.usage-portal-link .result-usage-donut {
+  width: 18px;
+  height: 18px;
+}
+
+.usage-track {
+  fill: none;
+  stroke: var(--c2t-border);
+  stroke-width: 3;
+}
+
+.usage-fill {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+
+.usage-fill.green {
+  stroke: #2f9e44;
 }
 
 .preset-list {
@@ -498,7 +537,20 @@
   margin-top: 6px;
 }
 
+.settings-output-log-path {
+  border: 1px solid var(--c2t-border);
+  border-radius: var(--c2t-radius);
+  background: var(--c2t-panel-bg);
+  color: var(--c2t-text-muted);
+  padding: 6px 8px;
+  overflow-wrap: anywhere;
+}
+
 .settings-output-log-hint {
   font-size: 12px;
   color: var(--c2t-text-muted);
+}
+
+.translate-scenario-editor > label:first-child {
+  display: none;
 }

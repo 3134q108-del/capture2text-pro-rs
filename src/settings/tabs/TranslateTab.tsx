@@ -223,7 +223,7 @@ export default function TranslateTab() {
               ))}
             </ul>
           </aside>
-          <main className="settings-editor">
+          <main className="settings-editor translate-scenario-editor">
             <label>
               情境 ID
               <input

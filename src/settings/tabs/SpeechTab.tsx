@@ -439,7 +439,17 @@ export default function SpeechTab() {
             target="_blank"
             rel="noreferrer"
           >
-            📊 Azure Portal
+            <svg className="result-usage-donut" viewBox="0 0 20 20" aria-hidden="true">
+              <circle className="usage-track" cx="10" cy="10" r="7" />
+              <circle
+                className="usage-fill green"
+                cx="10"
+                cy="10"
+                r="7"
+                strokeDasharray="28 44"
+              />
+            </svg>
+            Azure Portal
           </a>
         </div>
       </section>

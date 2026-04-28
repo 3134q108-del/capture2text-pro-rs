@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { appLocalDataDir, join } from "@tauri-apps/api/path";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 type ClipboardMode = "None" | "OriginalOnly" | "TranslatedOnly" | "Both";
@@ -132,6 +134,25 @@ export default function OutputTab() {
     }
   }
 
+  async function chooseLogPath() {
+    try {
+      const defaultPath =
+        logPath.trim().length > 0 ? logPath : await join(await appLocalDataDir(), "captures.log");
+      const selected = await save({
+        defaultPath,
+        filters: [
+          { name: "Log", extensions: ["log", "txt"] },
+        ],
+      });
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+      await updateLogPath(selected);
+    } catch (err) {
+      setStatusMsg(String(err));
+    }
+  }
+
   return (
     <div className="settings-translate-root">
       <section className="settings-section">
@@ -192,14 +213,12 @@ export default function OutputTab() {
           記錄到檔案
         </label>
         <div className="settings-output-log">
-          <label>
-            記錄檔路徑
-            <input
-              type="text"
-              value={logPath}
-              onChange={(event) => updateLogPath(event.target.value)}
-            />
-          </label>
+          <div className="settings-output-log-path">
+            {logPath ? `目前：${logPath}` : "目前：未設定"}
+          </div>
+          <button className="c2t-btn" type="button" onClick={() => void chooseLogPath()}>
+            選擇路徑
+          </button>
           <div className="settings-output-log-hint">
             支援樣板：{"{timestamp}"}、{"{original_text}"}、{"{translated_text}"}。
           </div>
