@@ -3,25 +3,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelId {
     Qwen3Vl4bInstruct,
-    Pixtral12b2409,
 }
 
 impl ModelId {
-    pub fn supports_lang(&self, lang: &str) -> bool {
-        match self {
-            ModelId::Qwen3Vl4bInstruct => {
-                matches!(lang, "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR")
-            }
-            ModelId::Pixtral12b2409 => matches!(lang, "de-DE" | "fr-FR"),
-        }
-    }
-
     pub fn for_lang(lang: &str) -> ModelId {
-        if ModelId::Pixtral12b2409.supports_lang(lang) {
-            ModelId::Pixtral12b2409
-        } else {
-            ModelId::Qwen3Vl4bInstruct
-        }
+        let _ = lang;
+        ModelId::Qwen3Vl4bInstruct
     }
 }
 
@@ -37,14 +24,12 @@ impl ModelSpec {
     pub fn gguf_filename(&self) -> &'static str {
         match self.id {
             ModelId::Qwen3Vl4bInstruct => "qwen3-vl-4b-instruct.Q4_K_M.gguf",
-            ModelId::Pixtral12b2409 => "pixtral-12b-2409.Q4_K_M.gguf",
         }
     }
 
     pub fn mmproj_filename(&self) -> &'static str {
         match self.id {
             ModelId::Qwen3Vl4bInstruct => "qwen3-vl-4b-instruct.mmproj.gguf",
-            ModelId::Pixtral12b2409 => "mmproj-pixtral-12b-f16.gguf",
         }
     }
 }
@@ -57,19 +42,10 @@ const QWEN3_VL_4B: ModelSpec = ModelSpec {
     ctx_size: 4096,
 };
 
-const PIXTRAL_12B: ModelSpec = ModelSpec {
-    id: ModelId::Pixtral12b2409,
-    gguf_url: "https://huggingface.co/ggml-org/pixtral-12b-GGUF/resolve/main/pixtral-12b-Q4_K_M.gguf",
-    mmproj_url: "https://huggingface.co/ggml-org/pixtral-12b-GGUF/resolve/main/mmproj-pixtral-12b-f16.gguf",
-    chat_template: "pixtral",
-    ctx_size: 4096,
-};
-
-pub const ALL_MODELS: [ModelId; 2] = [ModelId::Qwen3Vl4bInstruct, ModelId::Pixtral12b2409];
+pub const ALL_MODELS: [ModelId; 1] = [ModelId::Qwen3Vl4bInstruct];
 
 pub fn lookup(id: &ModelId) -> Option<&'static ModelSpec> {
     match id {
         ModelId::Qwen3Vl4bInstruct => Some(&QWEN3_VL_4B),
-        ModelId::Pixtral12b2409 => Some(&PIXTRAL_12B),
     }
 }

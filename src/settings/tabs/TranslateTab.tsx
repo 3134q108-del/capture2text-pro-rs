@@ -1,11 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
-import {
-  listAvailableOutputLangs,
-  subscribePixtralInstall,
-  type PixtralInstallSnapshot,
-} from "../../services/llama";
 
 type Scenario = {
   id: string;
@@ -14,14 +9,7 @@ type Scenario = {
   builtin: boolean;
 };
 
-type OutputLang =
-  | "zh-TW"
-  | "zh-CN"
-  | "en-US"
-  | "ja-JP"
-  | "ko-KR"
-  | "de-DE"
-  | "fr-FR";
+type OutputLang = "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
 
 const EMPTY_SCENARIO: Scenario = {
   id: "",
@@ -36,14 +24,10 @@ const LANG_OPTIONS: { code: OutputLang; label: string }[] = [
   { code: "en-US", label: "English" },
   { code: "ja-JP", label: "日本語" },
   { code: "ko-KR", label: "한국어" },
-  { code: "de-DE", label: "Deutsch" },
-  { code: "fr-FR", label: "Français" },
 ];
 
 function normalizeLang(s: string): OutputLang {
-  return (
-    ["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const
-  ).includes(s as OutputLang)
+  return (["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR"] as const).includes(s as OutputLang)
     ? (s as OutputLang)
     : "zh-TW";
 }
@@ -55,8 +39,6 @@ export default function TranslateTab() {
   const [draft, setDraft] = useState<Scenario>(EMPTY_SCENARIO);
   const [outputLang, setOutputLang] = useState<OutputLang>("zh-TW");
   const [statusMsg, setStatusMsg] = useState<string>("");
-  const [availableLangSet, setAvailableLangSet] = useState<Set<string>>(new Set(["zh-TW"]));
-  const [pixtralState, setPixtralState] = useState<PixtralInstallSnapshot | null>(null);
 
   const selectedScenario = useMemo(
     () => scenarios.find((item) => item.id === selectedId) ?? null,
@@ -65,29 +47,19 @@ export default function TranslateTab() {
 
   useEffect(() => {
     void refresh();
-    void refreshAvailableLangs();
   }, []);
 
   useEffect(() => {
     let disposed = false;
     let offLang: null | (() => void) = null;
-    let offPixtral: null | (() => void) = null;
 
     const setup = async () => {
       offLang = await listen<string>("output-language-changed", (event) => {
         setOutputLang(normalizeLang(event.payload));
       });
-      offPixtral = await subscribePixtralInstall((value) => {
-        setPixtralState(value);
-        if (!value.installing) {
-          void refreshAvailableLangs();
-        }
-      });
       if (disposed) {
         offLang?.();
-        offPixtral?.();
         offLang = null;
-        offPixtral = null;
       }
     };
 
@@ -95,18 +67,8 @@ export default function TranslateTab() {
     return () => {
       disposed = true;
       offLang?.();
-      offPixtral?.();
     };
   }, []);
-
-  async function refreshAvailableLangs() {
-    try {
-      const langs = await listAvailableOutputLangs();
-      setAvailableLangSet(new Set(langs));
-    } catch {
-      // keep previous set
-    }
-  }
 
   async function refresh() {
     try {
@@ -212,33 +174,23 @@ export default function TranslateTab() {
     }
   }
 
-  const pixtralInstalling = Boolean(pixtralState?.installing);
-
   return (
     <div className="settings-translate-root">
       <section className="settings-section">
         <h2>輸出語言</h2>
         <div className="settings-radio-row">
-          {LANG_OPTIONS.map((opt) => {
-            const unavailable = !availableLangSet.has(opt.code);
-            const disabled = unavailable || (pixtralInstalling && (opt.code === "de-DE" || opt.code === "fr-FR"));
-            return (
-              <label key={opt.code}>
-                <input
-                  type="radio"
-                  name="output-lang"
-                  checked={outputLang === opt.code}
-                  onChange={() => changeOutputLang(opt.code)}
-                  disabled={disabled}
-                />
-                {opt.label}
-              </label>
-            );
-          })}
+          {LANG_OPTIONS.map((opt) => (
+            <label key={opt.code}>
+              <input
+                type="radio"
+                name="output-lang"
+                checked={outputLang === opt.code}
+                onChange={() => changeOutputLang(opt.code)}
+              />
+              {opt.label}
+            </label>
+          ))}
         </div>
-        {pixtralInstalling && (
-          <div className="settings-output-log-hint">擴充語言模組安裝中（de-DE / fr-FR 暫時停用）</div>
-        )}
       </section>
 
       <section className="settings-section">

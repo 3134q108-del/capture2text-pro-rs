@@ -11,14 +11,9 @@ use crate::{
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let current_lang = output_lang::current();
-    let available_langs = output_lang::available_langs();
-    let has_de = available_langs.iter().any(|lang| lang == "de-DE");
-    let has_fr = available_langs.iter().any(|lang| lang == "fr-FR");
     let state = window_state::get();
     let normalized_lang = match current_lang.as_str() {
-        "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" => {
-            current_lang.as_str()
-        }
+        "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" => current_lang.as_str(),
         _ => "zh-TW",
     };
 
@@ -112,35 +107,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         normalized_lang == "ko-KR",
         None::<&str>,
     )?;
-    let lang_de_de = CheckMenuItem::with_id(
-        app,
-        "lang_de_de",
-        "Deutsch",
-        has_de,
-        normalized_lang == "de-DE",
-        None::<&str>,
-    )?;
-    let lang_fr_fr = CheckMenuItem::with_id(
-        app,
-        "lang_fr_fr",
-        "Français",
-        has_fr,
-        normalized_lang == "fr-FR",
-        None::<&str>,
-    )?;
     let lang_submenu = Submenu::with_items(
         app,
         "輸出語言",
         true,
-        &[
-            &lang_zh_tw,
-            &lang_zh_cn,
-            &lang_en_us,
-            &lang_ja_jp,
-            &lang_ko_kr,
-            &lang_de_de,
-            &lang_fr_fr,
-        ],
+        &[&lang_zh_tw, &lang_zh_cn, &lang_en_us, &lang_ja_jp, &lang_ko_kr],
     )?;
 
     let sep_between_submenus = PredefinedMenuItem::separator(app)?;
@@ -195,8 +166,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let lang_en_us_item = lang_en_us.clone();
     let lang_ja_jp_item = lang_ja_jp.clone();
     let lang_ko_kr_item = lang_ko_kr.clone();
-    let lang_de_de_item = lang_de_de.clone();
-    let lang_fr_fr_item = lang_fr_fr.clone();
 
     let show_popup_for_menu = show_popup_item.clone();
     let clip_none_for_menu = clip_none_item.clone();
@@ -208,8 +177,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let lang_en_us_for_menu = lang_en_us_item.clone();
     let lang_ja_jp_for_menu = lang_ja_jp_item.clone();
     let lang_ko_kr_for_menu = lang_ko_kr_item.clone();
-    let lang_de_de_for_menu = lang_de_de_item.clone();
-    let lang_fr_fr_for_menu = lang_fr_fr_item.clone();
     let scenario_items_for_menu = scenario_items.clone();
 
     let icon = app.default_window_icon().cloned();
@@ -261,8 +228,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = lang_en_us_for_menu.set_checked(false);
                 let _ = lang_ja_jp_for_menu.set_checked(false);
                 let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
             }
             "lang_zh_cn" => {
                 let _ = output_lang::set("zh-CN");
@@ -271,8 +236,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = lang_en_us_for_menu.set_checked(false);
                 let _ = lang_ja_jp_for_menu.set_checked(false);
                 let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
             }
             "lang_en_us" => {
                 let _ = output_lang::set("en-US");
@@ -281,8 +244,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = lang_en_us_for_menu.set_checked(true);
                 let _ = lang_ja_jp_for_menu.set_checked(false);
                 let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
             }
             "lang_ja_jp" => {
                 let _ = output_lang::set("ja-JP");
@@ -291,8 +252,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = lang_en_us_for_menu.set_checked(false);
                 let _ = lang_ja_jp_for_menu.set_checked(true);
                 let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
             }
             "lang_ko_kr" => {
                 let _ = output_lang::set("ko-KR");
@@ -301,28 +260,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = lang_en_us_for_menu.set_checked(false);
                 let _ = lang_ja_jp_for_menu.set_checked(false);
                 let _ = lang_ko_kr_for_menu.set_checked(true);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
-            }
-            "lang_de_de" => {
-                let _ = output_lang::set("de-DE");
-                let _ = lang_zh_tw_for_menu.set_checked(false);
-                let _ = lang_zh_cn_for_menu.set_checked(false);
-                let _ = lang_en_us_for_menu.set_checked(false);
-                let _ = lang_ja_jp_for_menu.set_checked(false);
-                let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(true);
-                let _ = lang_fr_fr_for_menu.set_checked(false);
-            }
-            "lang_fr_fr" => {
-                let _ = output_lang::set("fr-FR");
-                let _ = lang_zh_tw_for_menu.set_checked(false);
-                let _ = lang_zh_cn_for_menu.set_checked(false);
-                let _ = lang_en_us_for_menu.set_checked(false);
-                let _ = lang_ja_jp_for_menu.set_checked(false);
-                let _ = lang_ko_kr_for_menu.set_checked(false);
-                let _ = lang_de_de_for_menu.set_checked(false);
-                let _ = lang_fr_fr_for_menu.set_checked(true);
             }
             id if id.starts_with("scenario_") => {
                 let sid = id.trim_start_matches("scenario_").to_string();
@@ -365,8 +302,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         ("en-US", lang_en_us_item),
         ("ja-JP", lang_ja_jp_item),
         ("ko-KR", lang_ko_kr_item),
-        ("de-DE", lang_de_de_item),
-        ("fr-FR", lang_fr_fr_item),
     ];
     app.listen("output-language-changed", move |event| {
         if let Ok(lang) = serde_json::from_str::<String>(event.payload()) {
@@ -374,13 +309,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = item.set_checked(*code == lang);
             }
         }
-    });
-
-    let lang_de_de_enable = lang_de_de.clone();
-    let lang_fr_fr_enable = lang_fr_fr.clone();
-    app.listen("pixtral-install-done", move |_event| {
-        let _ = lang_de_de_enable.set_enabled(true);
-        let _ = lang_fr_fr_enable.set_enabled(true);
     });
 
     let scenario_items_for_listener = scenario_items.clone();

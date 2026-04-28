@@ -40,18 +40,13 @@ pub fn current() -> String {
 }
 
 pub fn available_langs() -> Vec<String> {
-    let mut langs = vec![
+    vec![
         "zh-TW".to_string(),
         "zh-CN".to_string(),
         "en-US".to_string(),
         "ja-JP".to_string(),
         "ko-KR".to_string(),
-    ];
-    if crate::llama_runtime::is_pixtral_installed() {
-        langs.push("de-DE".to_string());
-        langs.push("fr-FR".to_string());
-    }
-    langs
+    ]
 }
 
 pub fn set(lang: &str) -> io::Result<()> {
@@ -84,8 +79,6 @@ fn sanitize(lang: &str) -> String {
         "en-us" | "en" => "en-US".to_string(),
         "ja-jp" | "ja" => "ja-JP".to_string(),
         "ko-kr" | "ko" => "ko-KR".to_string(),
-        "de-de" | "de" => "de-DE".to_string(),
-        "fr-fr" | "fr" => "fr-FR".to_string(),
         _ => DEFAULT_LANG.to_string(),
     }
 }

@@ -1,13 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { useEffect, useMemo, useState } from "react";
-import {
-  checkPixtralInstalled,
-  getPixtralInstallSnapshot,
-  installPixtral,
-  subscribePixtralInstall,
-  type PixtralInstallSnapshot,
-} from "../../services/llama";
+import { useEffect, useState } from "react";
 
 const VLM_ENDPOINT = "http://localhost:11434";
 const MODEL_NAME = "qwen3-vl:4b-instruct";
@@ -26,18 +19,6 @@ function formatVlm(code: string): string {
   return code;
 }
 
-function formatBytes(n: number): string {
-  if (n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = n;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index += 1;
-  }
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
 export default function AboutTab() {
   const [version, setVersion] = useState("...");
   const [vlmStatus, setVlmStatus] = useState("");
@@ -45,40 +26,12 @@ export default function AboutTab() {
   const [exportDir, setExportDir] = useState("");
   const [importDir, setImportDir] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
-  const [pixtral, setPixtral] = useState<PixtralInstallSnapshot>(getPixtralInstallSnapshot());
 
   useEffect(() => {
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion("unknown"));
   }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let off: null | (() => void) = null;
-
-    const setup = async () => {
-      off = await subscribePixtralInstall((next) => {
-        setPixtral(next);
-      });
-      if (disposed) {
-        off();
-        off = null;
-      }
-    };
-
-    void setup();
-    void checkPixtralInstalled().catch(() => {});
-    return () => {
-      disposed = true;
-      off?.();
-    };
-  }, []);
-
-  const progressPercent = useMemo(() => {
-    if (!pixtral.progress) return 0;
-    return Math.max(0, Math.min(100, pixtral.progress.percent));
-  }, [pixtral.progress]);
 
   async function checkVlm() {
     setVlmStatus("檢查中...");
@@ -142,14 +95,6 @@ export default function AboutTab() {
     }
   }
 
-  async function handleInstallPixtral() {
-    try {
-      await installPixtral();
-    } catch (err) {
-      setStatusMsg(String(err));
-    }
-  }
-
   return (
     <div className="settings-translate-root">
       <section className="settings-section">
@@ -165,65 +110,6 @@ export default function AboutTab() {
             檢查 VLM 服務連線
           </button>
           {vlmStatus && <span style={{ marginLeft: 10 }}>{vlmStatus}</span>}
-        </div>
-      </section>
-
-      <section className="settings-section">
-        <h2>擴充語言模組（Pixtral）</h2>
-        <div className="pixtral-card">
-          <div className="pixtral-card-row">
-            <span>狀態</span>
-            <span>{pixtral.installed ? "已安裝" : "未安裝"}</span>
-          </div>
-          <div className="pixtral-card-row">
-            <span>對應語言</span>
-            <span>de-DE / fr-FR</span>
-          </div>
-          <div className="pixtral-card-row">
-            <span>下載內容</span>
-            <span>GGUF + mmproj（約 7.5GB）</span>
-          </div>
-          <div className="pixtral-actions">
-            <button
-              className="c2t-btn c2t-btn-primary"
-              onClick={handleInstallPixtral}
-              disabled={pixtral.installing || pixtral.installed}
-            >
-              {pixtral.installing ? "安裝中..." : pixtral.installed ? "已安裝" : "安裝 Pixtral 模組"}
-            </button>
-          </div>
-
-          {pixtral.progress && (
-            <div className="pixtral-progress">
-              <div className="pixtral-progress-header">
-                <span>階段：{pixtral.progress.phase === "gguf" ? "GGUF" : "mmproj"}</span>
-                {pixtral.progress.total > 0 ? (
-                  <span>{progressPercent.toFixed(1)}%</span>
-                ) : (
-                  <span>下載中...</span>
-                )}
-              </div>
-              {pixtral.progress.total > 0 ? (
-                <>
-                  <div className="pixtral-progress-bar">
-                    <div
-                      className="pixtral-progress-fill"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                  <div className="pixtral-progress-meta">
-                    {formatBytes(pixtral.progress.downloaded)} / {formatBytes(pixtral.progress.total)}
-                  </div>
-                </>
-              ) : (
-                <div className="pixtral-progress-meta">
-                  下載中，已下載 {formatBytes(pixtral.progress.downloaded)}
-                </div>
-              )}
-            </div>
-          )}
-
-          {pixtral.error && <div className="pixtral-error">安裝失敗：{pixtral.error}</div>}
         </div>
       </section>
 
