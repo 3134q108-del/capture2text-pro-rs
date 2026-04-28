@@ -1,17 +1,175 @@
-:root {
-  --c2t-bg: #ffffff;
-  --c2t-text: #000000;
-  --c2t-text-muted: #606060;
-  --c2t-border: #bfbfbf;
-  --c2t-border-focus: #0078d4;
-  --c2t-panel-bg: #f5f5f5;
-  --c2t-btn-bg: #f0f0f0;
-  --c2t-btn-hover: #e5e5e5;
-  --c2t-btn-active: #d0d0d0;
-  --c2t-btn-primary-bg: #0078d4;
-  --c2t-btn-primary-hover: #106ebe;
-  --c2t-btn-primary-text: #ffffff;
-  --c2t-font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
-  --c2t-font-size: 13px;
-  --c2t-radius: 3px;
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /* Gray 50-950 */
+    --gray-50: oklch(0.985 0 0);
+    --gray-100: oklch(0.965 0 0);
+    --gray-200: oklch(0.92 0 0);
+    --gray-300: oklch(0.85 0 0);
+    --gray-400: oklch(0.65 0 0);
+    --gray-500: oklch(0.5 0 0);
+    --gray-600: oklch(0.4 0 0);
+    --gray-700: oklch(0.3 0 0);
+    --gray-800: oklch(0.22 0 0);
+    --gray-900: oklch(0.14 0 0);
+    --gray-950: oklch(0.08 0 0);
+
+    /* Blue 50-950 */
+    --blue-50: oklch(0.97 0.02 252);
+    --blue-100: oklch(0.93 0.04 252);
+    --blue-200: oklch(0.85 0.08 252);
+    --blue-300: oklch(0.75 0.13 252);
+    --blue-400: oklch(0.66 0.18 252);
+    --blue-500: oklch(0.62 0.2 252);
+    --blue-600: oklch(0.58 0.2 252);
+    --blue-700: oklch(0.5 0.18 252);
+    --blue-800: oklch(0.42 0.15 252);
+    --blue-900: oklch(0.34 0.12 252);
+    --blue-950: oklch(0.24 0.08 252);
+
+    /* Red 50-950 (selected shades in use) */
+    --red-50: oklch(0.97 0.02 25);
+    --red-100: oklch(0.93 0.05 25);
+    --red-500: oklch(0.62 0.22 25);
+    --red-600: oklch(0.55 0.22 25);
+    --red-700: oklch(0.46 0.2 25);
+
+    /* Usage tones */
+    --green-500: oklch(0.65 0.18 145);
+    --yellow-500: oklch(0.75 0.16 85);
+  }
+}
+
+@layer base {
+  :root {
+    --background: var(--gray-50);
+    --foreground: var(--gray-900);
+    --card: oklch(1 0 0);
+    --card-foreground: var(--gray-900);
+    --popover: oklch(1 0 0);
+    --popover-foreground: var(--gray-900);
+    --primary: var(--blue-600);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: var(--gray-100);
+    --secondary-foreground: var(--gray-900);
+    --muted: var(--gray-100);
+    --muted-foreground: var(--gray-500);
+    --accent: var(--gray-100);
+    --accent-foreground: var(--gray-900);
+    --destructive: var(--red-600);
+    --destructive-foreground: oklch(1 0 0);
+    --border: var(--gray-200);
+    --input: var(--gray-200);
+    --ring: var(--blue-500);
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+
+    --radius: 0.5rem;
+
+    /* Legacy bridge for existing vanilla CSS (12a keeps component CSS unchanged) */
+    --c2t-bg: var(--color-background);
+    --c2t-text: var(--color-foreground);
+    --c2t-text-muted: var(--color-muted-foreground);
+    --c2t-border: var(--color-border);
+    --c2t-border-focus: var(--color-ring);
+    --c2t-panel-bg: var(--color-card);
+    --c2t-btn-bg: var(--color-secondary);
+    --c2t-btn-hover: var(--color-accent);
+    --c2t-btn-active: var(--gray-200);
+    --c2t-btn-primary-bg: var(--color-primary);
+    --c2t-btn-primary-hover: var(--blue-700);
+    --c2t-btn-primary-text: var(--color-primary-foreground);
+    --c2t-font-family: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --c2t-font-size: 13px;
+    --c2t-radius: 8px;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --spacing-0: 0;
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+  --spacing-12: 3rem;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+
+  --font-sans: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.75rem;
+  --text-sm--line-height: 1rem;
+  --text-base: 0.8125rem;
+  --text-base--line-height: 1.125rem;
+  --text-lg: 0.875rem;
+  --text-lg--line-height: 1.25rem;
+  --text-xl: 1rem;
+  --text-xl--line-height: 1.5rem;
+  --text-2xl: 1.25rem;
+  --text-2xl--line-height: 1.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
 }

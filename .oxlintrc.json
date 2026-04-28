@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "jsPlugins": ["oxlint-tailwindcss"],
+  "settings": {
+    "tailwindcss": {
+      "entryPoint": "src/styles/tokens.css"
+    }
+  },
+  "rules": {
+    "tailwindcss/no-arbitrary-value": "error",
+    "tailwindcss/no-hardcoded-colors": "error"
+  }
+}
