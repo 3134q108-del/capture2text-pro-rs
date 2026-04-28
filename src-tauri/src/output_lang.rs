@@ -46,6 +46,8 @@ pub fn available_langs() -> Vec<String> {
         "en-US".to_string(),
         "ja-JP".to_string(),
         "ko-KR".to_string(),
+        "de-DE".to_string(),
+        "fr-FR".to_string(),
     ]
 }
 
@@ -79,6 +81,8 @@ fn sanitize(lang: &str) -> String {
         "en-us" | "en" => "en-US".to_string(),
         "ja-jp" | "ja" => "ja-JP".to_string(),
         "ko-kr" | "ko" => "ko-KR".to_string(),
+        "de-de" | "de" => "de-DE".to_string(),
+        "fr-fr" | "fr" => "fr-FR".to_string(),
         _ => DEFAULT_LANG.to_string(),
     }
 }

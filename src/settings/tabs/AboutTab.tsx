@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
 
 const VLM_ENDPOINT = "http://localhost:11434";
-const MODEL_NAME = "qwen3-vl:4b-instruct";
+const MODEL_NAME = "qwen3-vl:8b-instruct";
 const UPSTREAM_URL = "https://capture2text.sourceforge.net/";
 const FORK_URL = "https://github.com/3134q108-del/capture2text-pro-rs";
 

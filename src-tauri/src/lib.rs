@@ -35,7 +35,7 @@ pub fn run() {
             let app_handle_for_bootstrap = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(err) = crate::llama_runtime::bootstrap(
-                    crate::llama_runtime::manifest::ModelId::Qwen3Vl4bInstruct,
+                    crate::llama_runtime::manifest::ModelId::Qwen3Vl8bInstruct,
                 ) {
                     eprintln!("[llama-runtime] bootstrap failed: {err}");
                     use tauri::Emitter;

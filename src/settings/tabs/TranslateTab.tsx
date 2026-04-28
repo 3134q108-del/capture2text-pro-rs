@@ -9,7 +9,7 @@ type Scenario = {
   builtin: boolean;
 };
 
-type OutputLang = "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
+type OutputLang = "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR";
 
 const EMPTY_SCENARIO: Scenario = {
   id: "",
@@ -24,10 +24,14 @@ const LANG_OPTIONS: { code: OutputLang; label: string }[] = [
   { code: "en-US", label: "English" },
   { code: "ja-JP", label: "日本語" },
   { code: "ko-KR", label: "한국어" },
+  { code: "de-DE", label: "Deutsch" },
+  { code: "fr-FR", label: "Français" },
 ];
 
 function normalizeLang(s: string): OutputLang {
-  return (["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR"] as const).includes(s as OutputLang)
+  return (
+    ["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR", "de-DE", "fr-FR"] as const
+  ).includes(s as OutputLang)
     ? (s as OutputLang)
     : "zh-TW";
 }
