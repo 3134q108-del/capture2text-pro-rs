@@ -22,7 +22,7 @@ pub fn active_model() -> Option<ModelId> {
 pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
     cleanup_legacy_model_files();
     ensure_binary_installed()?;
-    ensure_all_models_installed()?;
+    ensure_model_installed(&default_model)?;
     supervisor::spawn_for(&default_model)?;
     set_active_model(Some(default_model));
     Ok(())
