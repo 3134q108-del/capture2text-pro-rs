@@ -123,7 +123,7 @@ impl TtsProvider for AzureProvider {
                 "audio-24khz-48kbitrate-mono-mp3",
             )
             .header("User-Agent", "capture2text-pro")
-            .body(ssml)
+            .body(ssml.body.clone())
             .send()
             .await
             .map_err(|err| TtsError::Network(err.to_string()))?;
@@ -141,6 +141,12 @@ impl TtsProvider for AzureProvider {
             .bytes()
             .await
             .map_err(|err| TtsError::Network(err.to_string()))?;
+        let billable = super::usage::count_billable_chars(
+            &ssml.prosody_open,
+            &ssml.escaped_text,
+            ssml.prosody_close,
+        );
+        record_synthesis_usage(voice_id, billable);
         Ok(bytes.to_vec())
     }
 }
@@ -159,6 +165,14 @@ fn map_status(status: StatusCode, region: &str, message: String) -> TtsError {
         },
     }
 }
+
+#[cfg(not(test))]
+fn record_synthesis_usage(voice_id: &str, chars: u64) {
+    crate::window_state::record_usage(voice_id, chars);
+}
+
+#[cfg(test)]
+fn record_synthesis_usage(_voice_id: &str, _chars: u64) {}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -203,13 +217,28 @@ fn voice_level(short_name: &str) -> VoiceLevel {
     }
 }
 
-fn build_ssml(text: &str, voice_id: &str, rate: f32) -> String {
+struct SsmlBody {
+    body: String,
+    prosody_open: String,
+    escaped_text: String,
+    prosody_close: &'static str,
+}
+
+fn build_ssml(text: &str, voice_id: &str, rate: f32) -> SsmlBody {
     let lang = lang_from_voice_id(voice_id);
     let escaped_text = escape_xml(text);
     let rate_pct = rate_percent(rate);
-    format!(
-        r#"<speak version="1.0" xml:lang="{lang}"><voice name="{voice_id}"><prosody rate="{rate_pct}">{escaped_text}</prosody></voice></speak>"#
-    )
+    let prosody_open = format!(r#"<prosody rate="{rate_pct}">"#);
+    let prosody_close = "</prosody>";
+    let body = format!(
+        r#"<speak version="1.0" xml:lang="{lang}"><voice name="{voice_id}">{prosody_open}{escaped_text}{prosody_close}</voice></speak>"#
+    );
+    SsmlBody {
+        body,
+        prosody_open,
+        escaped_text,
+        prosody_close,
+    }
 }
 
 fn lang_from_voice_id(voice_id: &str) -> String {

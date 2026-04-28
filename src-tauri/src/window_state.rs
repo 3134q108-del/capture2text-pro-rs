@@ -41,6 +41,18 @@ impl ClipboardMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BillingTier {
+    F0,
+    S0,
+}
+
+impl Default for BillingTier {
+    fn default() -> Self {
+        Self::F0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     pub popup_width: u32,
@@ -71,6 +83,18 @@ pub struct WindowState {
     pub azure_voice_map: HashMap<String, String>,
     #[serde(default = "default_speech_rate")]
     pub azure_speech_rate: f32,
+    #[serde(default)]
+    pub azure_billing_tier: BillingTier,
+    #[serde(default)]
+    pub azure_usage_neural_chars: u64,
+    #[serde(default)]
+    pub azure_usage_hd_chars: u64,
+    #[serde(default)]
+    pub azure_usage_month: String,
+    #[serde(default = "default_neural_limit")]
+    pub azure_neural_limit: u64,
+    #[serde(default = "default_hd_limit")]
+    pub azure_hd_limit: u64,
 }
 
 impl Default for WindowState {
@@ -96,6 +120,12 @@ impl Default for WindowState {
             azure_region: None,
             azure_voice_map: HashMap::new(),
             azure_speech_rate: default_speech_rate(),
+            azure_billing_tier: BillingTier::default(),
+            azure_usage_neural_chars: 0,
+            azure_usage_hd_chars: 0,
+            azure_usage_month: String::new(),
+            azure_neural_limit: default_neural_limit(),
+            azure_hd_limit: default_hd_limit(),
         }
     }
 }
@@ -110,6 +140,14 @@ fn default_active_preset() -> String {
 
 fn default_speech_rate() -> f32 {
     1.0
+}
+
+fn default_neural_limit() -> u64 {
+    1_000_000
+}
+
+fn default_hd_limit() -> u64 {
+    100_000
 }
 
 fn default_log_enabled() -> bool {
@@ -256,6 +294,74 @@ pub fn set_azure_speech_rate(rate: f32) {
     });
 }
 
+pub fn record_usage(voice_id: &str, chars: u64) {
+    update(|state| {
+        record_usage_inner(
+            state,
+            voice_id,
+            chars,
+            crate::azure_tts::usage::current_month(),
+        );
+    });
+}
+
+fn record_usage_inner(state: &mut WindowState, voice_id: &str, chars: u64, now_month: String) {
+    if state.azure_usage_month != now_month {
+        state.azure_usage_neural_chars = 0;
+        state.azure_usage_hd_chars = 0;
+        state.azure_usage_month = now_month;
+    }
+    if crate::azure_tts::usage::is_hd_voice(voice_id) {
+        state.azure_usage_hd_chars = state.azure_usage_hd_chars.saturating_add(chars);
+    } else {
+        state.azure_usage_neural_chars = state.azure_usage_neural_chars.saturating_add(chars);
+    }
+}
+
+pub fn azure_billing_tier() -> BillingTier {
+    get().azure_billing_tier
+}
+
+pub fn set_azure_billing_tier(tier: BillingTier) {
+    update(|state| {
+        state.azure_billing_tier = tier;
+    });
+}
+
+pub fn azure_usage_snapshot() -> (u64, u64, String) {
+    let state = get();
+    let now_month = crate::azure_tts::usage::current_month();
+    if state.azure_usage_month != now_month {
+        (0, 0, now_month)
+    } else {
+        (
+            state.azure_usage_neural_chars,
+            state.azure_usage_hd_chars,
+            state.azure_usage_month,
+        )
+    }
+}
+
+pub fn azure_neural_limit() -> u64 {
+    get().azure_neural_limit.max(1)
+}
+
+pub fn set_azure_neural_limit(limit: u64) {
+    update(|state| {
+        state.azure_neural_limit = limit.max(1);
+    });
+}
+
+pub fn azure_hd_limit() -> u64 {
+    get().azure_hd_limit.max(1)
+}
+
+pub fn set_azure_hd_limit(limit: u64) {
+    update(|state| {
+        state.azure_hd_limit = limit.max(1);
+    });
+}
+
 pub fn set_clipboard_mode(v: ClipboardMode) {
     update(|state| {
         state.clipboard_mode = v;
@@ -388,4 +494,39 @@ fn sanitize_clipboard_mode(state: &mut WindowState) {
             clipboard_mode_from_legacy(state.save_to_clipboard, state.translate_append_to_clipboard);
     }
     sync_legacy_clipboard_fields(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_usage_inner_resets_month_and_splits_hd_counter() {
+        let mut state = WindowState {
+            azure_usage_month: "2026-03".to_string(),
+            azure_usage_neural_chars: 100,
+            azure_usage_hd_chars: 200,
+            ..WindowState::default()
+        };
+
+        record_usage_inner(
+            &mut state,
+            "en-US-Ava:DragonHDLatestNeural",
+            42,
+            "2026-04".to_string(),
+        );
+
+        assert_eq!(state.azure_usage_month, "2026-04");
+        assert_eq!(state.azure_usage_neural_chars, 0);
+        assert_eq!(state.azure_usage_hd_chars, 42);
+
+        record_usage_inner(
+            &mut state,
+            "en-US-AvaMultilingualNeural",
+            7,
+            "2026-04".to_string(),
+        );
+        assert_eq!(state.azure_usage_neural_chars, 7);
+        assert_eq!(state.azure_usage_hd_chars, 42);
+    }
 }

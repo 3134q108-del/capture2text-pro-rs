@@ -1,17 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   deleteAzureCredentials,
   getAzureCredentialsStatus,
+  getAzureUsageInfo,
   getSpeechRate,
   getVoiceRouting,
   listAzureVoices,
   previewVoice,
   saveAzureCredentials,
+  setBillingTier,
+  setHdLimit,
+  setNeuralLimit,
   setSpeechRate,
   setVoiceRouting,
   testAzureConnection,
   type AzureCredentialsStatus,
   type AzureVoice,
+  type BillingTier,
+  type UsageInfo,
 } from "../../services/tts";
 
 type LangCode = "zh-TW" | "en-US" | "de-DE" | "fr-FR" | "ja-JP" | "ko-KR";
@@ -40,6 +46,17 @@ const EMPTY_STATUS: AzureCredentialsStatus = {
   region: null,
 };
 
+const DEFAULT_USAGE: UsageInfo = {
+  tier: "F0",
+  neural_used: 0,
+  hd_used: 0,
+  neural_limit: 500_000,
+  hd_limit: 0,
+  month: "",
+  neural_percent: 0,
+  hd_percent: 0,
+};
+
 export default function SpeechTab() {
   const [keyInput, setKeyInput] = useState("");
   const [keyVisible, setKeyVisible] = useState(false);
@@ -55,6 +72,11 @@ export default function SpeechTab() {
   const [speechRate, setSpeechRateState] = useState(1.0);
   const [rateLoaded, setRateLoaded] = useState(false);
   const [previewingLang, setPreviewingLang] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageInfo>(DEFAULT_USAGE);
+  const [tier, setTier] = useState<BillingTier>("F0");
+  const [neuralLimitDraft, setNeuralLimitDraft] = useState("1000000");
+  const [hdLimitDraft, setHdLimitDraft] = useState("100000");
+  const [limitsLoaded, setLimitsLoaded] = useState(false);
   const previewTimerRef = useRef<number | null>(null);
 
   const canLoadVoices = useMemo(
@@ -64,7 +86,11 @@ export default function SpeechTab() {
 
   useEffect(() => {
     void refreshInitial();
+    const usageTimer = window.setInterval(() => {
+      void refreshUsage();
+    }, 30_000);
     return () => {
+      window.clearInterval(usageTimer);
       if (previewTimerRef.current !== null) {
         window.clearTimeout(previewTimerRef.current);
       }
@@ -81,17 +107,45 @@ export default function SpeechTab() {
     return () => window.clearTimeout(timer);
   }, [rateLoaded, speechRate]);
 
+  useEffect(() => {
+    if (!limitsLoaded || tier !== "S0") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const limit = parseLimit(neuralLimitDraft);
+      if (limit !== null) {
+        void setNeuralLimit(limit).then(refreshUsage);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [limitsLoaded, neuralLimitDraft, tier]);
+
+  useEffect(() => {
+    if (!limitsLoaded || tier !== "S0") {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const limit = parseLimit(hdLimitDraft);
+      if (limit !== null) {
+        void setHdLimit(limit).then(refreshUsage);
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [limitsLoaded, hdLimitDraft, tier]);
+
   async function refreshInitial() {
     try {
-      const [status, route, rate] = await Promise.all([
+      const [status, route, rate, usageInfo] = await Promise.all([
         getAzureCredentialsStatus(),
         getVoiceRouting(),
         getSpeechRate(),
+        getAzureUsageInfo(),
       ]);
       setCredStatus(status);
       setRouting(route);
       setSpeechRateState(rate);
       setRateLoaded(true);
+      applyUsage(usageInfo);
       if (status.region) {
         setRegion(status.region);
       }
@@ -102,6 +156,22 @@ export default function SpeechTab() {
     } catch (err) {
       setStatusMsg(String(err));
     }
+  }
+
+  async function refreshUsage() {
+    try {
+      applyUsage(await getAzureUsageInfo());
+    } catch (err) {
+      setStatusMsg(String(err));
+    }
+  }
+
+  function applyUsage(info: UsageInfo) {
+    setUsage(info);
+    setTier(info.tier);
+    setNeuralLimitDraft(String(info.neural_limit || 1));
+    setHdLimitDraft(String(info.hd_limit || 1));
+    setLimitsLoaded(true);
   }
 
   async function saveAndTest() {
@@ -152,7 +222,7 @@ export default function SpeechTab() {
       setStatusMsg("");
       await testAzureConnection();
       setTestStatus("ok");
-      setStatusMsg("Azure 連線成功。");
+      setStatusMsg("Azure 連線正常。");
       await loadVoices();
     } catch (err) {
       setTestStatus("error");
@@ -175,6 +245,16 @@ export default function SpeechTab() {
     }
   }
 
+  async function switchTier(nextTier: BillingTier) {
+    try {
+      setTier(nextTier);
+      await setBillingTier(nextTier);
+      await refreshUsage();
+    } catch (err) {
+      setStatusMsg(String(err));
+    }
+  }
+
   async function changeVoice(lang: LangCode, voiceId: string) {
     try {
       await setVoiceRouting(lang, voiceId);
@@ -186,7 +266,8 @@ export default function SpeechTab() {
   }
 
   async function handlePreview(lang: LangCode) {
-    const voiceId = routing[lang] || LANGUAGES.find((item) => item.code === lang)?.fallback;
+    const item = LANGUAGES.find((entry) => entry.code === lang);
+    const voiceId = item ? selectedVoiceFor(item) : undefined;
     if (!voiceId) {
       return;
     }
@@ -198,6 +279,7 @@ export default function SpeechTab() {
     setStatusMsg("");
     try {
       await previewVoice(lang, voiceId);
+      await refreshUsage();
     } catch (err) {
       setStatusMsg(`試聽失敗：${String(err)}`);
     } finally {
@@ -208,6 +290,17 @@ export default function SpeechTab() {
     }
   }
 
+  function selectedVoiceFor(item: { code: LangCode; fallback: string }): string {
+    const routed = routing[item.code] || item.fallback;
+    if (isVoiceUsable(routed, tier)) {
+      return routed;
+    }
+    const usableVoice = (voicesByLang[item.code] ?? []).find((voice) =>
+      isVoiceUsable(voice.id, tier),
+    );
+    return usableVoice?.id ?? item.fallback;
+  }
+
   return (
     <div className="settings-translate-root">
       <section className="settings-section">
@@ -215,15 +308,23 @@ export default function SpeechTab() {
         <div className="settings-editor">
           <label>
             訂閱金鑰
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="settings-key-row">
               <input
                 type={keyVisible ? "text" : "password"}
                 value={keyInput}
-                placeholder={credStatus.configured ? "已設定，重新輸入可覆蓋" : "輸入 Azure 金鑰"}
+                placeholder={credStatus.configured ? "已設定，重新輸入可更新金鑰" : "輸入 Azure 金鑰"}
                 onChange={(event) => setKeyInput(event.target.value)}
               />
               <button className="c2t-btn" type="button" onClick={() => setKeyVisible((v) => !v)}>
                 {keyVisible ? "隱藏" : "顯示"}
+              </button>
+              <button
+                className="c2t-btn"
+                type="button"
+                disabled={!credStatus.configured || saving}
+                onClick={() => void deleteCredentials()}
+              >
+                移除金鑰
               </button>
             </div>
           </label>
@@ -238,6 +339,26 @@ export default function SpeechTab() {
               ))}
             </select>
           </label>
+
+          <div className="billing-tier-row">
+            <span>方案</span>
+            <label>
+              <input
+                type="radio"
+                checked={tier === "F0"}
+                onChange={() => void switchTier("F0")}
+              />
+              F0 (Free)
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={tier === "S0"}
+                onChange={() => void switchTier("S0")}
+              />
+              S0 (付費)
+            </label>
+          </div>
 
           <div className="settings-editor-actions">
             <button
@@ -256,21 +377,13 @@ export default function SpeechTab() {
             >
               測試連線
             </button>
-            <button
-              className="c2t-btn"
-              type="button"
-              disabled={!credStatus.configured || saving}
-              onClick={() => void deleteCredentials()}
-            >
-              移除金鑰
-            </button>
           </div>
 
           <div className="settings-output-log-hint">
             狀態：
             {credStatus.configured ? `已設定 (${credStatus.region ?? region})` : "尚未設定"}
             {testStatus === "testing" && "，測試中..."}
-            {testStatus === "ok" && "，連線成功"}
+            {testStatus === "ok" && "，連線正常"}
             {testStatus === "error" && "，連線失敗"}
           </div>
           {testError && <div className="settings-status">{testError}</div>}
@@ -278,8 +391,62 @@ export default function SpeechTab() {
       </section>
 
       <section className="settings-section">
+        <h2>Azure 用量</h2>
+        <div className="usage-card">
+          <UsageMeter
+            label="Neural 語音"
+            used={usage.neural_used}
+            limit={usage.neural_limit}
+            percent={usage.neural_percent}
+            month={usage.month}
+            limitInput={
+              tier === "S0" ? (
+                <input
+                  className="usage-limit-input"
+                  type="number"
+                  min={1}
+                  step={10000}
+                  value={neuralLimitDraft}
+                  onChange={(event) => setNeuralLimitDraft(event.target.value)}
+                  onBlur={() => setNeuralLimitDraft(String(parseLimit(neuralLimitDraft) ?? 1))}
+                />
+              ) : null
+            }
+          />
+          {tier === "S0" && (
+            <UsageMeter
+              label="HD 語音"
+              used={usage.hd_used}
+              limit={usage.hd_limit}
+              percent={usage.hd_percent}
+              month={usage.month}
+              limitInput={
+                <input
+                  className="usage-limit-input"
+                  type="number"
+                  min={1}
+                  step={10000}
+                  value={hdLimitDraft}
+                  onChange={(event) => setHdLimitDraft(event.target.value)}
+                  onBlur={() => setHdLimitDraft(String(parseLimit(hdLimitDraft) ?? 1))}
+                />
+              }
+            />
+          )}
+          <a
+            className="usage-portal-link"
+            href="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/SpeechServices"
+            target="_blank"
+            rel="noreferrer"
+          >
+            📊 Azure Portal
+          </a>
+        </div>
+      </section>
+
+      <section className="settings-section">
         <div className="settings-voice-header">
-          <h2>各語言 voice</h2>
+          <h2>朗讀 voice</h2>
           <button
             className="c2t-btn"
             type="button"
@@ -307,7 +474,8 @@ export default function SpeechTab() {
 
           {LANGUAGES.map((item) => {
             const voices = voicesByLang[item.code] ?? [];
-            const selected = routing[item.code] || item.fallback;
+            const usableVoices = voices.filter((voice) => isVoiceUsable(voice.id, tier));
+            const selected = selectedVoiceFor(item);
             return (
               <label key={item.code}>
                 <div className="voice-row-header">
@@ -327,11 +495,11 @@ export default function SpeechTab() {
                 </div>
                 <select
                   value={selected}
-                  disabled={!credStatus.configured || voices.length === 0}
+                  disabled={!credStatus.configured || usableVoices.length === 0}
                   onChange={(event) => void changeVoice(item.code, event.target.value)}
                 >
-                  {voices.length === 0 && <option value={item.fallback}>{item.fallback}</option>}
-                  {voices.map((voice) => (
+                  {usableVoices.length === 0 && <option value={item.fallback}>{item.fallback}</option>}
+                  {usableVoices.map((voice) => (
                     <option key={voice.id} value={voice.id}>
                       {voiceLabel(voice)}
                     </option>
@@ -346,6 +514,58 @@ export default function SpeechTab() {
       {statusMsg && <div className="settings-status">{statusMsg}</div>}
     </div>
   );
+}
+
+function UsageMeter({
+  label,
+  used,
+  limit,
+  percent,
+  month,
+  limitInput,
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  percent: number;
+  month: string;
+  limitInput: ReactNode;
+}) {
+  const clampedPercent = Math.min(100, Math.max(0, percent));
+  const tone = percent >= 90 ? "red" : percent >= 70 ? "yellow" : "green";
+  return (
+    <div className="usage-meter">
+      <div className="usage-meter-header">
+        <span>{label}</span>
+        <span>{month}</span>
+      </div>
+      <div className="usage-bar-container" aria-hidden="true">
+        <div className={`usage-bar ${tone}`} style={{ width: `${clampedPercent}%` }} />
+      </div>
+      <div className="usage-meter-footer">
+        <span>
+          {formatNumber(used)} / {limitInput ?? formatNumber(limit)}
+        </span>
+        <span>{percent.toFixed(1)}%</span>
+      </div>
+    </div>
+  );
+}
+
+function isVoiceUsable(voiceId: string, tier: BillingTier): boolean {
+  return tier === "S0" || !/HD|DragonHD/i.test(voiceId);
+}
+
+function parseLimit(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(1, parsed);
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 function voiceLabel(voice: AzureVoice): string {

@@ -4,11 +4,24 @@ use tauri::{AppHandle, State};
 
 use crate::azure_tts::runtime::TtsRuntime;
 use crate::azure_tts::{AzureProvider, TtsProvider, Voice};
+use crate::window_state::BillingTier;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AzureCredentialsStatus {
     pub configured: bool,
     pub region: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageInfo {
+    pub tier: String,
+    pub neural_used: u64,
+    pub hd_used: u64,
+    pub neural_limit: u64,
+    pub hd_limit: u64,
+    pub month: String,
+    pub neural_percent: f32,
+    pub hd_percent: f32,
 }
 
 #[tauri::command]
@@ -149,6 +162,60 @@ pub fn get_speech_rate() -> f32 {
 pub fn set_speech_rate(rate: f32) -> Result<(), String> {
     crate::window_state::set_azure_speech_rate(rate);
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_azure_usage_info() -> UsageInfo {
+    let tier = crate::window_state::azure_billing_tier();
+    let (neural_used, hd_used, month) = crate::window_state::azure_usage_snapshot();
+    let (neural_limit, hd_limit) = match tier {
+        BillingTier::F0 => (500_000, 0),
+        BillingTier::S0 => (
+            crate::window_state::azure_neural_limit(),
+            crate::window_state::azure_hd_limit(),
+        ),
+    };
+    UsageInfo {
+        tier: format!("{tier:?}"),
+        neural_used,
+        hd_used,
+        neural_limit,
+        hd_limit,
+        month,
+        neural_percent: pct(neural_used, neural_limit),
+        hd_percent: pct(hd_used, hd_limit),
+    }
+}
+
+#[tauri::command]
+pub fn set_billing_tier(tier: String) -> Result<(), String> {
+    let tier = match tier.trim() {
+        "F0" => BillingTier::F0,
+        "S0" => BillingTier::S0,
+        other => return Err(format!("Unsupported Azure billing tier: {other}")),
+    };
+    crate::window_state::set_azure_billing_tier(tier);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_neural_limit(limit: u64) -> Result<(), String> {
+    crate::window_state::set_azure_neural_limit(limit);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_hd_limit(limit: u64) -> Result<(), String> {
+    crate::window_state::set_azure_hd_limit(limit);
+    Ok(())
+}
+
+fn pct(used: u64, limit: u64) -> f32 {
+    if limit == 0 {
+        0.0
+    } else {
+        (used as f32 / limit as f32) * 100.0
+    }
 }
 
 fn provider_from_config() -> Result<AzureProvider, String> {

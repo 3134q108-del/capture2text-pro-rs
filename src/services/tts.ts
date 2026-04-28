@@ -16,6 +16,19 @@ export type AzureCredentialsStatus = {
   region: string | null;
 };
 
+export type BillingTier = "F0" | "S0";
+
+export type UsageInfo = {
+  tier: BillingTier;
+  neural_used: number;
+  hd_used: number;
+  neural_limit: number;
+  hd_limit: number;
+  month: string;
+  neural_percent: number;
+  hd_percent: number;
+};
+
 export function saveAzureCredentials(key: string, region: string): Promise<void> {
   return invoke("save_azure_credentials", { key, region });
 }
@@ -54,4 +67,20 @@ export function getSpeechRate(): Promise<number> {
 
 export function setSpeechRate(rate: number): Promise<void> {
   return invoke("set_speech_rate", { rate });
+}
+
+export function getAzureUsageInfo(): Promise<UsageInfo> {
+  return invoke("get_azure_usage_info");
+}
+
+export function setBillingTier(tier: BillingTier): Promise<void> {
+  return invoke("set_billing_tier", { tier });
+}
+
+export function setNeuralLimit(limit: number): Promise<void> {
+  return invoke("set_neural_limit", { limit });
+}
+
+export function setHdLimit(limit: number): Promise<void> {
+  return invoke("set_hd_limit", { limit });
 }

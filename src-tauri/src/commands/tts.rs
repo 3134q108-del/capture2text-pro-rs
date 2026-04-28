@@ -31,10 +31,15 @@ pub async fn speak(
         .map_err(|err| err.to_string())?
         .ok_or_else(not_configured_message)?;
     let normalized_lang = normalize_lang(&lang);
-    let voice_id = crate::window_state::azure_voice_map()
+    let mut voice_id = crate::window_state::azure_voice_map()
         .get(normalized_lang)
         .cloned()
         .unwrap_or_else(|| default_voice_for_lang(normalized_lang).to_string());
+    if crate::window_state::azure_billing_tier() == crate::window_state::BillingTier::F0
+        && crate::azure_tts::usage::is_hd_voice(&voice_id)
+    {
+        voice_id = default_voice_for_lang(normalized_lang).to_string();
+    }
     let rate = crate::window_state::azure_speech_rate();
     let playback = state.inner().playback.clone();
     let current_task = state.inner().current_task.clone();
