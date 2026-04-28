@@ -59,7 +59,8 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
 
 fn poll_ready() -> Result<(), String> {
     let started = Instant::now();
-    let timeout = Duration::from_secs(120);
+    let timeout = Duration::from_secs(300);
+    let timeout_secs = timeout.as_secs();
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -76,7 +77,9 @@ fn poll_ready() -> Result<(), String> {
         }
     }
 
-    Err("llama-server did not become ready within 120s".to_string())
+    Err(format!(
+        "llama-server did not become ready within {timeout_secs}s"
+    ))
 }
 
 pub fn stop() {
