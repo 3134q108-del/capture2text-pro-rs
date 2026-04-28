@@ -45,12 +45,24 @@ pub async fn speak(
     let current_task = state.inner().current_task.clone();
 
     let handle = tokio::spawn(async move {
-        let provider = AzureProvider::new(region, key);
         let result = async {
-            let mp3 = provider
-                .synthesize(&text, &voice_id, rate)
-                .await
-                .map_err(|err| err.to_string())?;
+            let mp3 = if let Some(bytes) = crate::azure_tts::speak_cache::read_cached(
+                &voice_id, &text, rate,
+            ) {
+                bytes
+            } else {
+                let provider = AzureProvider::new(region, key);
+                let bytes = provider
+                    .synthesize(&text, &voice_id, rate)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                if let Err(err) =
+                    crate::azure_tts::speak_cache::write_cache(&voice_id, &text, rate, &bytes)
+                {
+                    eprintln!("[azure-tts] speak cache write failed voice={voice_id}: {err}");
+                }
+                bytes
+            };
             let _ = app.emit("tts-synthesized", serde_json::json!({ "target": target }));
             playback.play_for_target(target.clone(), mp3)?;
             Ok::<(), String>(())

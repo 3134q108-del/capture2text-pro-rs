@@ -3,6 +3,7 @@ pub mod keyring;
 pub mod playback;
 pub mod preview_cache;
 pub mod runtime;
+pub mod speak_cache;
 pub mod usage;
 
 use async_trait::async_trait;

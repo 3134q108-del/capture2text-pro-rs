@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
@@ -61,11 +61,15 @@ export default function ResultView() {
   const [translated, setTranslated] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [speakingState, setSpeakingState] = useState<SpeakingState>(null);
+  const [originalReady, setOriginalReady] = useState<boolean>(false);
+  const [translatedReady, setTranslatedReady] = useState<boolean>(false);
   const [isTopmost, setIsTopmost] = useState<boolean>(true);
   const [popupFont, setPopupFont] = useState<PopupFont>(null);
   const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
   const [fontFamilyDraft, setFontFamilyDraft] = useState<string>("Segoe UI");
   const [fontSizeDraftPt, setFontSizeDraftPt] = useState<number>(13);
+  const originalReadyTimerRef = useRef<number | null>(null);
+  const lastOriginalRef = useRef<string>("");
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
@@ -74,18 +78,32 @@ export default function ResultView() {
     ? { fontFamily: popupFont.family, fontSize: `${popupFont.size_pt}pt` }
     : undefined;
 
+  function clearOriginalReadyTimer() {
+    if (originalReadyTimerRef.current !== null) {
+      window.clearTimeout(originalReadyTimerRef.current);
+      originalReadyTimerRef.current = null;
+    }
+  }
+
   function applyFinalPayload(p: VlmEventPayload) {
+    clearOriginalReadyTimer();
     if (p.status === "success") {
       setStatus("success");
       setOriginal(p.original);
       setTranslated(p.translated);
       setErrorMsg("");
+      setOriginalReady(p.original.trim().length > 0);
+      setTranslatedReady(p.translated.trim().length > 0);
+      lastOriginalRef.current = p.original;
     } else {
       setStatus("error");
       setErrorMsg(p.error ?? "unknown error");
       setOriginal("");
       setTranslated("");
       setSpeakingState(null);
+      setOriginalReady(false);
+      setTranslatedReady(false);
+      lastOriginalRef.current = "";
     }
   }
 
@@ -94,22 +112,49 @@ export default function ResultView() {
     setOriginal(p.original);
     setTranslated(p.translated);
     setErrorMsg("");
+    setTranslatedReady(false);
+
+    const trimmed = p.original.trim();
+    if (trimmed.length === 0) {
+      clearOriginalReadyTimer();
+      setOriginalReady(false);
+      lastOriginalRef.current = p.original;
+      return;
+    }
+
+    if (p.original !== lastOriginalRef.current) {
+      lastOriginalRef.current = p.original;
+      setOriginalReady(false);
+      clearOriginalReadyTimer();
+      originalReadyTimerRef.current = window.setTimeout(() => {
+        setOriginalReady(true);
+        originalReadyTimerRef.current = null;
+      }, 450);
+    }
   }
 
   function applySnapshot(snapshot: VlmSnapshot) {
+    clearOriginalReadyTimer();
     setOriginal(snapshot.original);
     setTranslated(snapshot.translated);
     if (snapshot.status === "success") {
       setStatus("success");
       setErrorMsg("");
+      setOriginalReady(snapshot.original.trim().length > 0);
+      setTranslatedReady(snapshot.translated.trim().length > 0);
     } else if (snapshot.status === "error") {
       setStatus("error");
       setErrorMsg(snapshot.error ?? "unknown error");
       setSpeakingState(null);
+      setOriginalReady(false);
+      setTranslatedReady(false);
     } else {
       setStatus("loading");
       setErrorMsg("");
+      setOriginalReady(snapshot.original.trim().length > 0);
+      setTranslatedReady(false);
     }
+    lastOriginalRef.current = snapshot.original;
   }
 
   useEffect(() => {
@@ -161,9 +206,7 @@ export default function ResultView() {
         const target = event.payload?.target;
         if (target === "original" || target === "translated") {
           setSpeakingState((prev) =>
-            prev !== null && prev.target === target
-              ? { target, phase: "playing" }
-              : prev,
+            prev !== null && prev.target === target ? { target, phase: "playing" } : prev,
           );
         }
       });
@@ -202,6 +245,8 @@ export default function ResultView() {
       offTtsDone?.();
     };
   }, []);
+
+  useEffect(() => () => clearOriginalReadyTimer(), []);
 
   useEffect(() => {
     let disposed = false;
@@ -356,6 +401,7 @@ export default function ResultView() {
       setStatus("loading");
       setTranslated("");
       setErrorMsg("");
+      setTranslatedReady(false);
       await invoke("retranslate", { text });
     } catch (err) {
       setStatus("error");
@@ -477,6 +523,7 @@ export default function ResultView() {
                   }}
                   disabled={
                     !original.trim() ||
+                    !originalReady ||
                     (speakingState !== null &&
                       (speakingState.target !== "original" || speakingState.phase === "synthesizing"))
                   }
@@ -484,8 +531,8 @@ export default function ResultView() {
                   {speakingState?.target === "original" && speakingState.phase === "synthesizing"
                     ? "合成中..."
                     : speakingState?.target === "original" && speakingState.phase === "playing"
-                    ? "停止"
-                    : "Speak 原文"}
+                      ? "停止"
+                      : "Speak 原文"}
                 </button>
                 <button
                   className="c2t-btn"
@@ -529,6 +576,7 @@ export default function ResultView() {
                     }}
                     disabled={
                       !translated.trim() ||
+                      !translatedReady ||
                       (speakingState !== null &&
                         (speakingState.target !== "translated" ||
                           speakingState.phase === "synthesizing"))
@@ -537,8 +585,8 @@ export default function ResultView() {
                     {speakingState?.target === "translated" && speakingState.phase === "synthesizing"
                       ? "合成中..."
                       : speakingState?.target === "translated" && speakingState.phase === "playing"
-                      ? "停止"
-                      : "Speak 譯文"}
+                        ? "停止"
+                        : "Speak 譯文"}
                   </button>
                   {hasTranslatedText && (
                     <button
@@ -659,4 +707,3 @@ export default function ResultView() {
     </div>
   );
 }
-
