@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteAzureCredentials,
   getAzureCredentialsStatus,
+  getSpeechRate,
   getVoiceRouting,
   listAzureVoices,
+  previewVoice,
   saveAzureCredentials,
+  setSpeechRate,
   setVoiceRouting,
   testAzureConnection,
   type AzureCredentialsStatus,
@@ -49,6 +52,10 @@ export default function SpeechTab() {
   const [routing, setRouting] = useState<Record<string, string>>({});
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [speechRate, setSpeechRateState] = useState(1.0);
+  const [rateLoaded, setRateLoaded] = useState(false);
+  const [previewingLang, setPreviewingLang] = useState<string | null>(null);
+  const previewTimerRef = useRef<number | null>(null);
 
   const canLoadVoices = useMemo(
     () => credStatus.configured && testStatus !== "testing",
@@ -57,16 +64,34 @@ export default function SpeechTab() {
 
   useEffect(() => {
     void refreshInitial();
+    return () => {
+      if (previewTimerRef.current !== null) {
+        window.clearTimeout(previewTimerRef.current);
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    if (!rateLoaded) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void setSpeechRate(speechRate);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [rateLoaded, speechRate]);
 
   async function refreshInitial() {
     try {
-      const [status, route] = await Promise.all([
+      const [status, route, rate] = await Promise.all([
         getAzureCredentialsStatus(),
         getVoiceRouting(),
+        getSpeechRate(),
       ]);
       setCredStatus(status);
       setRouting(route);
+      setSpeechRateState(rate);
+      setRateLoaded(true);
       if (status.region) {
         setRegion(status.region);
       }
@@ -160,6 +185,29 @@ export default function SpeechTab() {
     }
   }
 
+  async function handlePreview(lang: LangCode) {
+    const voiceId = routing[lang] || LANGUAGES.find((item) => item.code === lang)?.fallback;
+    if (!voiceId) {
+      return;
+    }
+    if (previewTimerRef.current !== null) {
+      window.clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
+    setPreviewingLang(lang);
+    setStatusMsg("");
+    try {
+      await previewVoice(lang, voiceId);
+    } catch (err) {
+      setStatusMsg(`試聽失敗：${String(err)}`);
+    } finally {
+      previewTimerRef.current = window.setTimeout(() => {
+        setPreviewingLang(null);
+        previewTimerRef.current = null;
+      }, 8000);
+    }
+  }
+
   return (
     <div className="settings-translate-root">
       <section className="settings-section">
@@ -243,12 +291,40 @@ export default function SpeechTab() {
         </div>
 
         <div className="settings-editor">
+          <div className="speech-rate-row">
+            <label htmlFor="speech-rate-slider">朗讀速度</label>
+            <input
+              id="speech-rate-slider"
+              type="range"
+              min={0.5}
+              max={2.0}
+              step={0.05}
+              value={speechRate}
+              onChange={(event) => setSpeechRateState(Number(event.target.value))}
+            />
+            <span>{speechRate.toFixed(2)}x</span>
+          </div>
+
           {LANGUAGES.map((item) => {
             const voices = voicesByLang[item.code] ?? [];
             const selected = routing[item.code] || item.fallback;
             return (
               <label key={item.code}>
-                {item.label} ({item.code})
+                <div className="voice-row-header">
+                  <span>
+                    {item.label} ({item.code})
+                  </span>
+                  <button
+                    className="c2t-btn"
+                    type="button"
+                    disabled={
+                      !credStatus.configured || previewingLang === item.code || loadingVoices
+                    }
+                    onClick={() => void handlePreview(item.code)}
+                  >
+                    {previewingLang === item.code ? "試聽中" : "試聽"}
+                  </button>
+                </div>
                 <select
                   value={selected}
                   disabled={!credStatus.configured || voices.length === 0}

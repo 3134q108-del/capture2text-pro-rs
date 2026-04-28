@@ -43,3 +43,15 @@ export function getVoiceRouting(): Promise<Record<string, string>> {
 export function setVoiceRouting(lang: string, voiceId: string): Promise<void> {
   return invoke("set_voice_routing", { lang, voiceId });
 }
+
+export function previewVoice(lang: string, voiceId: string): Promise<void> {
+  return invoke("preview_voice", { lang, voiceId });
+}
+
+export function getSpeechRate(): Promise<number> {
+  return invoke("get_speech_rate");
+}
+
+export function setSpeechRate(rate: number): Promise<void> {
+  return invoke("set_speech_rate", { rate });
+}

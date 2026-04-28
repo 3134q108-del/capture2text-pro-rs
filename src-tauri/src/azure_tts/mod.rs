@@ -1,6 +1,7 @@
 pub mod client;
 pub mod keyring;
 pub mod playback;
+pub mod preview_cache;
 pub mod runtime;
 
 use async_trait::async_trait;

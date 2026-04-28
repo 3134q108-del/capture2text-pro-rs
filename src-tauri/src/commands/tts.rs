@@ -35,6 +35,7 @@ pub async fn speak(
         .get(normalized_lang)
         .cloned()
         .unwrap_or_else(|| default_voice_for_lang(normalized_lang).to_string());
+    let rate = crate::window_state::azure_speech_rate();
     let playback = state.inner().playback.clone();
     let current_task = state.inner().current_task.clone();
 
@@ -42,7 +43,7 @@ pub async fn speak(
         let provider = AzureProvider::new(region, key);
         let result = async {
             let mp3 = provider
-                .synthesize(&text, &voice_id, 1.0)
+                .synthesize(&text, &voice_id, rate)
                 .await
                 .map_err(|err| err.to_string())?;
             playback.play(mp3)?;

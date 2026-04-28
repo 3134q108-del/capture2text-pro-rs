@@ -69,6 +69,8 @@ pub struct WindowState {
     pub azure_region: Option<String>,
     #[serde(default)]
     pub azure_voice_map: HashMap<String, String>,
+    #[serde(default = "default_speech_rate")]
+    pub azure_speech_rate: f32,
 }
 
 impl Default for WindowState {
@@ -93,6 +95,7 @@ impl Default for WindowState {
             speech_active_preset: default_active_preset(),
             azure_region: None,
             azure_voice_map: HashMap::new(),
+            azure_speech_rate: default_speech_rate(),
         }
     }
 }
@@ -103,6 +106,10 @@ fn default_speech_enabled() -> bool {
 
 fn default_active_preset() -> String {
     "Ryan".to_string()
+}
+
+fn default_speech_rate() -> f32 {
+    1.0
 }
 
 fn default_log_enabled() -> bool {
@@ -236,6 +243,16 @@ pub fn set_azure_voice_for_lang(lang: String, voice_id: String) {
 pub fn clear_azure_voice_for_lang(lang: &str) {
     update(|state| {
         state.azure_voice_map.remove(lang);
+    });
+}
+
+pub fn azure_speech_rate() -> f32 {
+    get().azure_speech_rate.clamp(0.5, 2.0)
+}
+
+pub fn set_azure_speech_rate(rate: f32) {
+    update(|state| {
+        state.azure_speech_rate = rate.clamp(0.5, 2.0);
     });
 }
 

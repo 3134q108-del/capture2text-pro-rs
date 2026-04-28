@@ -327,6 +327,18 @@
   min-width: 0;
 }
 
+.speech-rate-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 56px;
+  gap: 8px;
+  align-items: center;
+}
+
+.speech-rate-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .settings-voice-header {
   display: flex;
   justify-content: space-between;
@@ -340,6 +352,13 @@
   gap: 8px;
   align-items: center;
   margin-top: 6px;
+}
+
+.voice-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
 .preset-list {
