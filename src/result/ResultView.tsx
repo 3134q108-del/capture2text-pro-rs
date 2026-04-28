@@ -40,6 +40,17 @@ type WindowState = {
   popup_font: PopupFont;
 };
 
+type UsageInfo = {
+  tier: "F0" | "S0";
+  neural_used: number;
+  hd_used: number;
+  neural_limit: number;
+  hd_limit: number;
+  month: string;
+  neural_percent: number;
+  hd_percent: number;
+};
+
 const FONT_FAMILIES = [
   "Segoe UI",
   "Microsoft JhengHei",
@@ -68,8 +79,13 @@ export default function ResultView() {
   const [fontModalOpen, setFontModalOpen] = useState<boolean>(false);
   const [fontFamilyDraft, setFontFamilyDraft] = useState<string>("Segoe UI");
   const [fontSizeDraftPt, setFontSizeDraftPt] = useState<number>(13);
+  const [usageInfo, setUsageInfo] = useState<UsageInfo | null>(null);
+  const [usageOpen, setUsageOpen] = useState<boolean>(false);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const originalReadyTimerRef = useRef<number | null>(null);
   const lastOriginalRef = useRef<string>("");
+  const usageAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const usagePopoverRef = useRef<HTMLDivElement | null>(null);
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
@@ -247,6 +263,39 @@ export default function ResultView() {
   }, []);
 
   useEffect(() => () => clearOriginalReadyTimer(), []);
+
+  useEffect(() => {
+    void refreshUsageInfo();
+  }, []);
+
+  useEffect(() => {
+    if (!usageOpen) return;
+    positionUsagePopover();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setUsageOpen(false);
+      }
+    };
+    const onPointerDown = (event: MouseEvent) => {
+      const anchor = usageAnchorRef.current;
+      const popover = usagePopoverRef.current;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (anchor?.contains(target) || popover?.contains(target)) return;
+      setUsageOpen(false);
+    };
+    const onViewportChange = () => positionUsagePopover();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("scroll", onViewportChange, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("scroll", onViewportChange, true);
+    };
+  }, [usageOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -493,6 +542,41 @@ export default function ResultView() {
     }
   }
 
+  async function refreshUsageInfo() {
+    try {
+      const usage = await invoke<UsageInfo>("get_azure_usage_info");
+      setUsageInfo(usage);
+    } catch {
+      // ignore
+    }
+  }
+
+  function usagePercent(info: UsageInfo | null): number {
+    if (!info) return 0;
+    return info.tier === "F0" ? info.neural_percent : Math.max(info.neural_percent, info.hd_percent);
+  }
+
+  function usageTone(percent: number): "green" | "yellow" | "red" {
+    if (percent >= 90) return "red";
+    if (percent >= 70) return "yellow";
+    return "green";
+  }
+
+  function positionUsagePopover() {
+    const anchor = usageAnchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = 280;
+    const left = Math.min(Math.max(12, rect.right - width), window.innerWidth - width - 12);
+    const top = Math.max(12, rect.top - 12);
+    setPopoverPos({ top, left });
+  }
+
+  async function onUsageClick() {
+    await refreshUsageInfo();
+    setUsageOpen((prev) => !prev);
+  }
+
   return (
     <div className="result-root">
       <div className="result-body">
@@ -619,6 +703,30 @@ export default function ResultView() {
         </label>
 
         <div className="result-controls-actions">
+          <button
+            ref={usageAnchorRef}
+            className="result-usage-trigger"
+            type="button"
+            onClick={() => {
+              void onUsageClick();
+            }}
+            aria-label="Azure usage"
+            aria-expanded={usageOpen}
+          >
+            <svg className="result-usage-donut" viewBox="0 0 20 20" aria-hidden="true">
+              <circle className="usage-track" cx="10" cy="10" r="7" />
+              <circle
+                className={`usage-fill ${usageTone(usagePercent(usageInfo))}`}
+                cx="10"
+                cy="10"
+                r="7"
+                strokeDasharray={`${
+                  (Math.max(0, Math.min(100, usagePercent(usageInfo))) / 100) * 44
+                } 44`}
+              />
+            </svg>
+            <span className="result-usage-label">Azure {usageInfo?.tier ?? "F0"}</span>
+          </button>
           <button className="c2t-btn" onClick={openFontModal}>
             Font...
           </button>
@@ -632,6 +740,28 @@ export default function ResultView() {
           </button>
         </div>
       </div>
+
+      {usageOpen && usageInfo && popoverPos && (
+        <div
+          ref={usagePopoverRef}
+          className="result-usage-popover"
+          style={{ top: popoverPos.top, left: popoverPos.left }}
+        >
+          <div className="result-usage-popover-title">Azure 用量 ({usageInfo.month})</div>
+          <UsageBar label="Neural" used={usageInfo.neural_used} limit={usageInfo.neural_limit} percent={usageInfo.neural_percent} />
+          {usageInfo.tier === "S0" && (
+            <UsageBar label="HD" used={usageInfo.hd_used} limit={usageInfo.hd_limit} percent={usageInfo.hd_percent} />
+          )}
+          <a
+            className="result-usage-link"
+            href="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/SpeechServices"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Azure Portal
+          </a>
+        </div>
+      )}
 
       {fontModalOpen && (
         <div className="font-modal-overlay" role="dialog" aria-modal="true" aria-label="Font Picker">
@@ -672,7 +802,7 @@ export default function ResultView() {
               className="font-modal-preview"
               style={{ fontFamily: fontFamilyDraft, fontSize: `${fontSizeDraftPt}pt` }}
             >
-              Capture2Text ?汗 Preview 123
+              Capture2Text 字型 Preview 123
             </div>
 
             <div className="font-modal-actions">
@@ -704,6 +834,35 @@ export default function ResultView() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function UsageBar({
+  label,
+  used,
+  limit,
+  percent,
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  percent: number;
+}) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const tone = percent >= 90 ? "red" : percent >= 70 ? "yellow" : "green";
+  return (
+    <div className="result-usage-bar-wrap">
+      <div className="result-usage-bar-head">
+        <span>{label}</span>
+        <span>{clamped.toFixed(1)}%</span>
+      </div>
+      <div className="result-usage-bar-track">
+        <div className={`result-usage-bar-fill ${tone}`} style={{ width: `${clamped}%` }} />
+      </div>
+      <div className="result-usage-bar-foot">
+        {used.toLocaleString()} / {limit.toLocaleString()}
+      </div>
     </div>
   );
 }
