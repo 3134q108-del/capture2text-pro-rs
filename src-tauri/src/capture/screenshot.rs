@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 
 use crate::capture::pipeline;
@@ -15,11 +15,24 @@ pub(crate) fn worker_loop(rx: Receiver<CaptureRequest>) {
     loop {
         drain_mouse_events();
 
-        let request = match rx.recv_timeout(WORKER_POLL_INTERVAL) {
+        let mut request = match rx.recv_timeout(WORKER_POLL_INTERVAL) {
             Ok(request) => request,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => break,
         };
+
+        loop {
+            match rx.try_recv() {
+                Ok(newer) => {
+                    request = newer;
+                    if matches!(request, CaptureRequest::Exit) {
+                        break;
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
 
         if matches!(request, CaptureRequest::Exit) {
             break;
