@@ -119,7 +119,7 @@ export default function SettingsView() {
         }}
         className="min-h-0 flex-1 gap-0"
       >
-        <aside className="w-44 shrink-0 border-r border-border bg-muted/30 p-3">
+        <aside className="w-32 shrink-0 border-r border-border bg-muted/30 p-3">
           <TabNavList orientation="vertical" className="h-auto w-full bg-transparent p-0">
             {TAB_ITEMS.map((item) => (
               <TabNavTrigger
