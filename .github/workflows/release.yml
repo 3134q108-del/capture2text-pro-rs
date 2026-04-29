@@ -1,0 +1,51 @@
+name: Release
+
+# Trigger:push semver tag (例 v0.1.0) → 跑 Windows release build → 上傳 NSIS + MSI 到 GitHub Release
+# 用法:本機改 src-tauri/tauri.conf.json + Cargo.toml 的 version → commit → git tag v0.1.1 && git push origin v0.1.1
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write  # 必須:tauri-action 上傳 release asset
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build & Release (NSIS + MSI)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Capture2Text Pro ${{ github.ref_name }}'
+          releaseBody: |
+            Windows desktop OCR + 翻譯 + Azure TTS。詳細功能與系統需求見 [README](https://github.com/3134q108-del/capture2text-pro-rs#readme)。
+
+            **下載:** 下面 Assets 的 `*.exe`(NSIS,推薦)或 `*.msi`(企業 / MDM)。
+
+            **首次啟動:** 程式會自動下載 Qwen3-VL-8B 模型(~6 GB)到 `%LOCALAPPDATA%\Capture2TextPro\`,看網速 5–30 分鐘。
+          releaseDraft: true
+          prerelease: false
