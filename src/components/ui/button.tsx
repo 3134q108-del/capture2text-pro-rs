@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -44,7 +45,7 @@ export interface ButtonProps
 }
 
 function Spinner() {
-  return <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />;
+  return <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
