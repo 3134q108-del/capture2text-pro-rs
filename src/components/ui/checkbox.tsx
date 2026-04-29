@@ -26,6 +26,18 @@ const checkboxVariants = cva(
   },
 );
 
+const indicatorIconVariants = cva("text-current", {
+  variants: {
+    size: {
+      sm: "h-3 w-3",
+      md: "h-3.5 w-3.5",
+    },
+  },
+  defaultVariants: {
+    size: "md",
+  },
+});
+
 export interface CheckboxProps
   extends Omit<React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>, "size">,
     VariantProps<typeof checkboxVariants> {
@@ -36,16 +48,19 @@ export interface CheckboxProps
 export const Checkbox = React.forwardRef<
   React.ElementRef<typeof CheckboxPrimitive.Root>,
   CheckboxProps
->(({ className, size, state = "content", disabled, label, description, id, ...props }, ref) => {
+>(({ className, size = "md", state = "content", disabled, label, description, id, checked, ...props }, ref) => {
   const isLoading = state === "loading";
   const isEmpty = state === "empty";
   const resolvedDisabled = disabled || isLoading || isEmpty;
+  const isIndeterminate = checked === "indeterminate";
+  const hasDescription = Boolean(description);
 
   return (
-    <label className={cn("inline-flex min-h-11 items-start gap-3", className)}>
+    <label className={cn("inline-flex min-h-11 gap-3", hasDescription ? "items-start" : "items-center", className)}>
       <CheckboxPrimitive.Root
         ref={ref}
         id={id}
+        checked={checked}
         disabled={resolvedDisabled}
         aria-busy={isLoading || undefined}
         aria-invalid={state === "error" || undefined}
@@ -53,12 +68,20 @@ export const Checkbox = React.forwardRef<
         {...props}
       >
         <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
-          <span aria-hidden="true">{props.checked === "indeterminate" ? "—" : "✓"}</span>
+          {isIndeterminate ? (
+            <svg viewBox="0 0 16 16" className={cn(indicatorIconVariants({ size }))} aria-hidden="true">
+              <path d="M3.5 8h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 16 16" className={cn(indicatorIconVariants({ size }))} aria-hidden="true">
+              <path d="M3.5 8.5 6.5 11.5 12.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
         </CheckboxPrimitive.Indicator>
       </CheckboxPrimitive.Root>
       {(label || description) ? (
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          {label ? <span className="text-sm font-medium leading-tight">{label}</span> : null}
+        <span className={cn("flex min-w-0 flex-1", hasDescription ? "flex-col gap-1" : "items-center")}>
+          {label ? <span className={cn("text-sm font-medium", hasDescription ? "leading-tight" : "leading-none")}>{label}</span> : null}
           {description ? (
             <StatusText tone={state === "error" ? "error" : "info"} size="sm" state={state === "error" ? "error" : "content"}>
               {description}

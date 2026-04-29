@@ -714,7 +714,7 @@ export default function ResultView() {
           <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
         ) : (
           <Section className="flex min-h-0 flex-1 flex-col gap-0 p-2">
-            <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+            <div className="flex min-h-0 flex-1 flex-col gap-2 px-2 py-2">
               <textarea
                 className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={original}
@@ -751,7 +751,7 @@ export default function ResultView() {
             {showTranslated ? (
               <>
                 <div className="border-t border-border" />
-                <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+                <div className="flex min-h-0 flex-1 flex-col gap-2 px-2 py-2">
                 <textarea
                   className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={translated}

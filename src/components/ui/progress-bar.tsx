@@ -5,7 +5,7 @@ import { StatusText } from "./status-text";
 
 type ProgressState = "content" | "loading" | "empty" | "error";
 
-const progressTrackVariants = cva("w-full overflow-hidden rounded-full border border-border bg-muted", {
+const progressTrackVariants = cva("relative w-full overflow-hidden rounded-full border border-border bg-muted", {
   variants: {
     size: {
       sm: "h-2",
@@ -17,17 +17,13 @@ const progressTrackVariants = cva("w-full overflow-hidden rounded-full border bo
   },
 });
 
-const progressBarVariants = cva("w-full rounded-full", {
+const progressFillVariants = cva("h-full rounded-full transition-all", {
   variants: {
     tone: {
-      green: "accent-green-500",
-      yellow: "accent-yellow-500",
-      red: "accent-destructive",
-      neutral: "accent-muted-foreground",
-    },
-    size: {
-      sm: "h-2",
-      md: "h-3",
+      green: "bg-green-500",
+      yellow: "bg-yellow-500",
+      red: "bg-destructive",
+      neutral: "bg-muted-foreground",
     },
     state: {
       content: "",
@@ -42,7 +38,6 @@ const progressBarVariants = cva("w-full rounded-full", {
   },
   defaultVariants: {
     tone: "neutral",
-    size: "md",
     state: "content",
     disabled: false,
   },
@@ -50,7 +45,8 @@ const progressBarVariants = cva("w-full rounded-full", {
 
 export interface ProgressBarProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "children">,
-    Omit<VariantProps<typeof progressBarVariants>, "disabled"> {
+    Omit<VariantProps<typeof progressFillVariants>, "disabled">,
+    VariantProps<typeof progressTrackVariants> {
   value: number;
   max?: number;
   label?: React.ReactNode;
@@ -65,7 +61,18 @@ function clampPercent(value: number): number {
 
 export const ProgressBar = React.forwardRef<HTMLDivElement, ProgressBarProps>(
   (
-    { className, tone = "neutral", size = "md", state = "content", value, max = 100, label, subLabel, disabled = false, ...props },
+    {
+      className,
+      tone = "neutral",
+      size = "md",
+      state = "content",
+      value,
+      max = 100,
+      label,
+      subLabel,
+      disabled = false,
+      ...props
+    },
     ref,
   ) => {
     const safeMax = Number.isFinite(max) && max > 0 ? max : 100;
@@ -90,18 +97,19 @@ export const ProgressBar = React.forwardRef<HTMLDivElement, ProgressBarProps>(
           </div>
         ) : null}
 
-        <div className={cn(progressTrackVariants({ size }))}>
-          <progress
-            className={cn(progressBarVariants({ tone: resolvedTone, size, state: resolvedState, disabled }))}
-            value={displayValue}
-            max={100}
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(displayValue)}
-            aria-busy={resolvedState === "loading" || undefined}
-            aria-invalid={resolvedState === "error" || undefined}
-            aria-disabled={disabled || undefined}
+        <div
+          className={cn(progressTrackVariants({ size }))}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(displayValue)}
+          aria-busy={resolvedState === "loading" || undefined}
+          aria-invalid={resolvedState === "error" || undefined}
+          aria-disabled={disabled || undefined}
+        >
+          <div
+            className={cn(progressFillVariants({ tone: resolvedTone, state: resolvedState, disabled }))}
+            style={{ width: `${displayValue}%` }}
           />
         </div>
 

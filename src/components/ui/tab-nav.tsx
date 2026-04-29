@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 type TabNavVisualState = "content" | "loading" | "empty" | "error";
 
 const tabsListVariants = cva(
-  "inline-flex items-center justify-center rounded-md bg-muted p-1 text-muted-foreground",
+  "inline-flex items-center justify-center overflow-hidden rounded-md bg-muted p-1 text-muted-foreground",
   {
     variants: {
       orientation: {
@@ -21,7 +21,7 @@ const tabsListVariants = cva(
 );
 
 const tabsTriggerVariants = cva(
-  "inline-flex min-h-10 items-center justify-center rounded-sm px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm",
+  "inline-flex min-h-10 items-center justify-center rounded-sm px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground",
   {
     variants: {
       orientation: {

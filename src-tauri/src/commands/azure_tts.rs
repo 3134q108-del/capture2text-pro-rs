@@ -124,8 +124,9 @@ pub async fn preview_voice(
 
             let provider = provider_from_config()?;
             let phrase = preview_text_for_lang(&lang);
+            let rate = crate::window_state::azure_speech_rate();
             let bytes = provider
-                .synthesize(phrase, &voice_id, 1.0)
+                .synthesize(phrase, &voice_id, rate)
                 .await
                 .map_err(|err| err.to_string())?;
             if let Err(err) = crate::azure_tts::preview_cache::write_cache(&voice_id, &bytes) {
