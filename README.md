@@ -26,6 +26,19 @@ Windows 桌面 OCR + 翻譯。按 Win+Q 框選螢幕,本地 VLM 辨識,可選 Az
 - 約 6 GB 硬碟(模型)
 - GPU 加速隨意:NVIDIA / AMD / Intel 或純 CPU 都行,llama.cpp 自動選
 
+## 耗能
+
+為了單一模型涵蓋 7 語 + 翻譯品質夠用,用了 8B 級 VLM(Qwen3-VL-8B-Instruct Q4_K_M)而不是更輕的專用 OCR 模型。代價是常駐記憶體比較大、推論時 GPU/CPU 會吃滿。如果在意省電省記憶體,這個程式可能不適合你。
+
+| 狀態 | 記憶體佔用 | GPU / CPU |
+|---|---|---|
+| 待機(model 已載入,閒置) | GPU 模式 ~5–6 GB VRAM;CPU 模式 ~5 GB RAM | idle,接近 0 W |
+| OCR + 翻譯(每次按 Win+Q,1–3 秒) | 同上 | 滿載 100%(GPU 約 1–3 秒,CPU 約 5–10 秒) |
+
+GPU 滿載功耗看卡:RTX 3060 約 170 W、RTX 4070 約 200 W、RTX 4090 約 450 W。純 CPU 推論期間 CPU 滿載大約 45–80 W。
+
+llama-server 在程式啟動時就把 model 載進來常駐,所以熱鍵響應快(只要等推論);代價是 5–6 GB 記憶體一直佔住。為了 OCR 即時性犧牲了記憶體使用,是設計取捨。
+
 ## 安裝
 
 從 [Releases](../../releases) 抓 `Capture2Text Pro_*_x64-setup.exe` 雙擊裝。
