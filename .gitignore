@@ -17,11 +17,21 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.tmp
+*.bak
 
 # T51 Qwen3-TTS isolated test outputs (experiment abandoned)
 src-tauri/isolated_test_*.wav
+
+# Local working notes (not for repo)
+*.local.md
+HANDOFF*.md
+T[0-9]*_SPEC.md
+T[0-9]*_BRIEFING.md
+*_PLAN.md
