@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Check, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusText } from "./status-text";
 
@@ -29,8 +30,8 @@ const checkboxVariants = cva(
 const indicatorIconVariants = cva("text-current", {
   variants: {
     size: {
-      sm: "h-3 w-3",
-      md: "h-3.5 w-3.5",
+      sm: "h-3.5 w-3.5",
+      md: "h-4 w-4",
     },
   },
   defaultVariants: {
@@ -69,13 +70,9 @@ export const Checkbox = React.forwardRef<
       >
         <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
           {isIndeterminate ? (
-            <svg viewBox="0 0 16 16" className={cn(indicatorIconVariants({ size }))} aria-hidden="true">
-              <path d="M3.5 8h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <Minus className={cn(indicatorIconVariants({ size }))} aria-hidden="true" />
           ) : (
-            <svg viewBox="0 0 16 16" className={cn(indicatorIconVariants({ size }))} aria-hidden="true">
-              <path d="M3.5 8.5 6.5 11.5 12.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <Check className={cn(indicatorIconVariants({ size }))} aria-hidden="true" />
           )}
         </CheckboxPrimitive.Indicator>
       </CheckboxPrimitive.Root>

@@ -266,7 +266,7 @@ export default function TranslateTab() {
               </CardContent>
             </Card>
 
-            <Card className="lg:col-span-3">
+            <Card className="lg:col-span-3 lg:max-w-3xl">
               <CardContent className="flex flex-col gap-4 p-4">
                 <FormField label="情境名稱" htmlFor="scenario-name" required>
                   <Input

@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusText } from "./status-text";
 
@@ -26,7 +27,7 @@ const radioGroupVariants = cva("grid gap-2", {
 });
 
 const radioItemVariants = cva(
-  "aspect-square shrink-0 rounded-full border border-input text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary",
+  "inline-flex aspect-square shrink-0 items-center justify-center rounded-full border border-input text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary",
   {
     variants: {
       size: {
@@ -46,6 +47,18 @@ const radioItemVariants = cva(
     },
   },
 );
+
+const radioIndicatorVariants = cva("fill-current stroke-0 text-primary", {
+  variants: {
+    size: {
+      sm: "h-1.5 w-1.5",
+      md: "h-2 w-2",
+    },
+  },
+  defaultVariants: {
+    size: "md",
+  },
+});
 
 interface RadioGroupProps extends React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> {
   orientation?: "horizontal" | "vertical";
@@ -84,13 +97,11 @@ interface RadioGroupItemProps
 const RadioGroupItem = React.forwardRef<
   React.ElementRef<typeof RadioGroupPrimitive.Item>,
   RadioGroupItemProps
->(({ className, size, state = "content", label, description, id, ...props }, ref) => (
+>(({ className, size = "md", state = "content", label, description, id, ...props }, ref) => (
   <label className={cn("inline-flex min-h-11 items-start gap-3", className)}>
     <RadioGroupPrimitive.Item ref={ref} id={id} className={cn(radioItemVariants({ size, state }))} {...props}>
       <RadioGroupPrimitive.Indicator className="flex items-center justify-center">
-        <span className="rounded-full bg-primary" aria-hidden="true">
-          <span className={cn(size === "sm" ? "block h-2 w-2" : "block h-2.5 w-2.5")} />
-        </span>
+        <Circle className={cn(radioIndicatorVariants({ size }))} aria-hidden="true" />
       </RadioGroupPrimitive.Indicator>
     </RadioGroupPrimitive.Item>
     {(label || description) ? (
