@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { Banner, Button, TabNav, TabNavContent, TabNavList, TabNavTrigger } from "@/components/ui";
 import AboutTab from "./tabs/AboutTab";
+import HelpTab from "./tabs/HelpTab";
+import HotkeyTab from "./tabs/HotkeyTab";
 import OutputTab from "./tabs/OutputTab";
 import SpeechTab from "./tabs/SpeechTab";
 import TranslateTab from "./tabs/TranslateTab";
@@ -12,21 +14,23 @@ type HealthWarning = {
   message: string;
 };
 
-type TabKey = "translate" | "speech" | "output" | "about";
+type TabKey = "hotkey" | "translate" | "speech" | "output" | "about" | "help";
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string }> = [
+  { key: "hotkey", label: "快捷鍵" },
   { key: "translate", label: "翻譯" },
   { key: "speech", label: "語音" },
   { key: "output", label: "輸出" },
   { key: "about", label: "關於" },
+  { key: "help", label: "使用說明" },
 ];
 
 function isTabKey(value: string): value is TabKey {
-  return value === "translate" || value === "speech" || value === "output" || value === "about";
+  return TAB_ITEMS.some((item) => item.key === value);
 }
 
 export default function SettingsView() {
-  const [activeTab, setActiveTab] = useState<TabKey>("translate");
+  const [activeTab, setActiveTab] = useState<TabKey>("hotkey");
   const [healthWarning, setHealthWarning] = useState<HealthWarning | null>(null);
 
   useEffect(() => {
@@ -64,7 +68,7 @@ export default function SettingsView() {
   }, []);
 
   async function hideAndReset() {
-    setActiveTab("translate");
+    setActiveTab("hotkey");
     try {
       await invoke("hide_settings_window");
     } catch {
@@ -135,6 +139,9 @@ export default function SettingsView() {
         </aside>
 
         <div className="min-w-0 flex-1 overflow-y-auto p-4">
+          <TabNavContent value="hotkey" className="mt-0">
+            <HotkeyTab />
+          </TabNavContent>
           <TabNavContent value="translate" className="mt-0">
             <TranslateTab />
           </TabNavContent>
@@ -146,6 +153,9 @@ export default function SettingsView() {
           </TabNavContent>
           <TabNavContent value="about" className="mt-0">
             <AboutTab />
+          </TabNavContent>
+          <TabNavContent value="help" className="mt-0">
+            <HelpTab />
           </TabNavContent>
         </div>
       </TabNav>

@@ -1,5 +1,5 @@
 use std::io;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -21,9 +21,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-const VK_Q: u32 = 0x51;
-const VK_W: u32 = 0x57;
-const VK_E: u32 = 0x45;
 const VK_ESCAPE: u32 = 0x1B;
 const HOTKEY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -38,26 +35,18 @@ struct HotkeyRuntime {
 }
 
 #[derive(Clone, Copy)]
-enum TraceKind {
-    Q,
-    W,
-    E,
-}
-
-impl fmt::Display for TraceKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Q => write!(f, "Q"),
-            Self::W => write!(f, "W"),
-            Self::E => write!(f, "E"),
-        }
-    }
+pub struct HotkeyConfig {
+    pub q: crate::window_state::HotkeyBinding,
+    pub w: crate::window_state::HotkeyBinding,
+    pub e: crate::window_state::HotkeyBinding,
 }
 
 #[derive(Clone, Copy)]
 enum TraceEvent {
-    Consumed(TraceKind),
+    Consumed(HotkeyKind),
 }
+
+static HOTKEY_CONFIG: OnceLock<RwLock<HotkeyConfig>> = OnceLock::new();
 
 pub fn install() -> io::Result<()> {
     if HOTKEY_RUNTIME.get().is_some() {
@@ -76,8 +65,9 @@ pub fn install() -> io::Result<()> {
                     match event {
                         TraceEvent::Consumed(kind) => {
                             eprintln!(
-                                "[hotkey] Win+{} detected kind={} consumed=LRESULT(1)",
-                                kind, kind
+                                "[hotkey] consumed kind={} combo={}",
+                                kind,
+                                format_binding(binding_for_kind(kind))
                             );
                         }
                     }
@@ -132,6 +122,53 @@ pub fn install() -> io::Result<()> {
         .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "hotkey runtime already initialized"))?;
 
     Ok(())
+}
+
+pub fn config() -> HotkeyConfig {
+    HOTKEY_CONFIG
+        .get_or_init(|| RwLock::new(load_config_from_state()))
+        .read()
+        .map(|guard| *guard)
+        .unwrap_or_else(|_| load_config_from_state())
+}
+
+pub fn set_config(next: HotkeyConfig) {
+    if let Ok(mut guard) = HOTKEY_CONFIG
+        .get_or_init(|| RwLock::new(load_config_from_state()))
+        .write()
+    {
+        *guard = next;
+    }
+}
+
+pub fn reload_from_state() {
+    set_config(load_config_from_state());
+}
+
+pub fn default_config() -> HotkeyConfig {
+    HotkeyConfig {
+        q: crate::window_state::HotkeyBinding {
+            modifiers: crate::window_state::HotkeyModifiers {
+                win: true,
+                ..crate::window_state::HotkeyModifiers::default()
+            },
+            key_code: 0x51,
+        },
+        w: crate::window_state::HotkeyBinding {
+            modifiers: crate::window_state::HotkeyModifiers {
+                win: true,
+                ..crate::window_state::HotkeyModifiers::default()
+            },
+            key_code: 0x57,
+        },
+        e: crate::window_state::HotkeyBinding {
+            modifiers: crate::window_state::HotkeyModifiers {
+                win: true,
+                ..crate::window_state::HotkeyModifiers::default()
+            },
+            key_code: 0x45,
+        },
+    }
 }
 
 pub fn shutdown() {
@@ -197,60 +234,94 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             return unsafe { CallNextHookEx(None, code, wparam, lparam) };
         }
 
-        let is_target = matches!(vk, VK_Q | VK_W | VK_E);
-        if is_target && win_down && !ctrl_down && !shift_down && !alt_down {
-            unsafe { send_ctrl_tap() };
+        let modifiers = crate::window_state::HotkeyModifiers {
+            ctrl: ctrl_down,
+            shift: shift_down,
+            alt: alt_down,
+            win: win_down,
+        };
+        let cfg = config();
 
-            match vk {
-                VK_Q => {
-                    trace_consumed(TraceKind::Q);
-                    let _reserved_q = HotkeyKind::Q;
+        if let Some(kind) = matched_kind(vk, modifiers, cfg) {
+            unsafe { send_ctrl_tap() };
+            match kind {
+                HotkeyKind::Q => {
+                    trace_consumed(HotkeyKind::Q);
                     if drag_overlay::is_active() {
                         drag_overlay::cancel();
                     } else {
                         drag_overlay::begin_drag();
                     }
-                    return LRESULT(1);
                 }
-                VK_W | VK_E => {
+                HotkeyKind::W | HotkeyKind::E => {
+                    trace_consumed(kind);
                     if drag_overlay::is_active() {
                         drag_overlay::cancel();
                     }
-
-                    let kind = if vk == VK_W {
-                        trace_consumed(TraceKind::W);
-                        HotkeyKind::W
-                    } else {
-                        trace_consumed(TraceKind::E);
-                        HotkeyKind::E
-                    };
-
                     if let Some(cursor) = read_cursor_point() {
                         capture::try_enqueue_from_hook(kind, cursor, Instant::now());
                     }
-                    return LRESULT(1);
                 }
-                _ => {}
             }
+            return LRESULT(1);
         }
     }
 
     if message == WM_KEYUP || message == WM_SYSKEYUP {
         let kbd = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let vk = kbd.vkCode;
-
-        if matches!(vk, VK_Q | VK_W | VK_E) {
-            let win_down = key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0));
-            if win_down {
-                return LRESULT(1);
-            }
+        let modifiers = crate::window_state::HotkeyModifiers {
+            ctrl: key_down(i32::from(VK_CONTROL.0)),
+            shift: key_down(i32::from(VK_SHIFT.0)),
+            alt: key_down(i32::from(VK_MENU.0)),
+            win: key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0)),
+        };
+        if matched_kind(vk, modifiers, config()).is_some() {
+            return LRESULT(1);
         }
     }
 
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
-fn trace_consumed(kind: TraceKind) {
+fn load_config_from_state() -> HotkeyConfig {
+    HotkeyConfig {
+        q: crate::window_state::hotkey_q(),
+        w: crate::window_state::hotkey_w(),
+        e: crate::window_state::hotkey_e(),
+    }
+}
+
+fn matched_kind(
+    vk: u32,
+    modifiers: crate::window_state::HotkeyModifiers,
+    cfg: HotkeyConfig,
+) -> Option<HotkeyKind> {
+    if binding_matches(vk, modifiers, cfg.q) {
+        return Some(HotkeyKind::Q);
+    }
+    if binding_matches(vk, modifiers, cfg.w) {
+        return Some(HotkeyKind::W);
+    }
+    if binding_matches(vk, modifiers, cfg.e) {
+        return Some(HotkeyKind::E);
+    }
+    None
+}
+
+fn binding_matches(
+    vk: u32,
+    modifiers: crate::window_state::HotkeyModifiers,
+    binding: crate::window_state::HotkeyBinding,
+) -> bool {
+    vk == binding.key_code
+        && modifiers.ctrl == binding.modifiers.ctrl
+        && modifiers.shift == binding.modifiers.shift
+        && modifiers.alt == binding.modifiers.alt
+        && modifiers.win == binding.modifiers.win
+}
+
+fn trace_consumed(kind: HotkeyKind) {
     if !HOTKEY_TRACE_ENABLED.load(Ordering::Relaxed) {
         return;
     }
@@ -261,6 +332,42 @@ fn trace_consumed(kind: TraceKind) {
         return;
     };
     let _ = tx.try_send(TraceEvent::Consumed(kind));
+}
+
+fn binding_for_kind(kind: HotkeyKind) -> crate::window_state::HotkeyBinding {
+    match kind {
+        HotkeyKind::Q => config().q,
+        HotkeyKind::W => config().w,
+        HotkeyKind::E => config().e,
+    }
+}
+
+fn format_binding(binding: crate::window_state::HotkeyBinding) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if binding.modifiers.ctrl {
+        parts.push("Ctrl".to_string());
+    }
+    if binding.modifiers.shift {
+        parts.push("Shift".to_string());
+    }
+    if binding.modifiers.alt {
+        parts.push("Alt".to_string());
+    }
+    if binding.modifiers.win {
+        parts.push("Win".to_string());
+    }
+    parts.push(format!("VK_{:X}", binding.key_code));
+    parts.join("+")
+}
+
+impl fmt::Display for HotkeyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HotkeyKind::Q => write!(f, "Q"),
+            HotkeyKind::W => write!(f, "W"),
+            HotkeyKind::E => write!(f, "E"),
+        }
+    }
 }
 
 fn key_down(vk: i32) -> bool {
@@ -314,6 +421,5 @@ unsafe fn send_ctrl_tap() {
             },
         },
     ];
-
     let _ = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }

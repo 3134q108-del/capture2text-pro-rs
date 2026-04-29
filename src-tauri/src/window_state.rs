@@ -11,6 +11,24 @@ pub struct PopupFont {
     pub size_pt: u32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct HotkeyModifiers {
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+    #[serde(default)]
+    pub win: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HotkeyBinding {
+    pub modifiers: HotkeyModifiers,
+    pub key_code: u32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum ClipboardMode {
@@ -97,6 +115,12 @@ pub struct WindowState {
     pub azure_neural_limit: u64,
     #[serde(default = "default_hd_limit")]
     pub azure_hd_limit: u64,
+    #[serde(default = "default_hotkey_q")]
+    pub hotkey_q: HotkeyBinding,
+    #[serde(default = "default_hotkey_w")]
+    pub hotkey_w: HotkeyBinding,
+    #[serde(default = "default_hotkey_e")]
+    pub hotkey_e: HotkeyBinding,
 }
 
 impl Default for WindowState {
@@ -129,6 +153,9 @@ impl Default for WindowState {
             azure_usage_month: String::new(),
             azure_neural_limit: default_neural_limit(),
             azure_hd_limit: default_hd_limit(),
+            hotkey_q: default_hotkey_q(),
+            hotkey_w: default_hotkey_w(),
+            hotkey_e: default_hotkey_e(),
         }
     }
 }
@@ -155,6 +182,36 @@ fn default_neural_limit() -> u64 {
 
 fn default_hd_limit() -> u64 {
     100_000
+}
+
+fn default_hotkey_q() -> HotkeyBinding {
+    HotkeyBinding {
+        modifiers: HotkeyModifiers {
+            win: true,
+            ..HotkeyModifiers::default()
+        },
+        key_code: 0x51,
+    }
+}
+
+fn default_hotkey_w() -> HotkeyBinding {
+    HotkeyBinding {
+        modifiers: HotkeyModifiers {
+            win: true,
+            ..HotkeyModifiers::default()
+        },
+        key_code: 0x57,
+    }
+}
+
+fn default_hotkey_e() -> HotkeyBinding {
+    HotkeyBinding {
+        modifiers: HotkeyModifiers {
+            win: true,
+            ..HotkeyModifiers::default()
+        },
+        key_code: 0x45,
+    }
 }
 
 fn default_log_enabled() -> bool {
@@ -383,6 +440,36 @@ pub fn set_clipboard_mode(v: ClipboardMode) {
     update(|state| {
         state.clipboard_mode = v;
         sync_legacy_clipboard_fields(state);
+    });
+}
+
+pub fn hotkey_q() -> HotkeyBinding {
+    get().hotkey_q
+}
+
+pub fn hotkey_w() -> HotkeyBinding {
+    get().hotkey_w
+}
+
+pub fn hotkey_e() -> HotkeyBinding {
+    get().hotkey_e
+}
+
+pub fn set_hotkey_q(binding: HotkeyBinding) {
+    update(|state| {
+        state.hotkey_q = binding;
+    });
+}
+
+pub fn set_hotkey_w(binding: HotkeyBinding) {
+    update(|state| {
+        state.hotkey_w = binding;
+    });
+}
+
+pub fn set_hotkey_e(binding: HotkeyBinding) {
+    update(|state| {
+        state.hotkey_e = binding;
     });
 }
 

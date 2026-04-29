@@ -4,6 +4,7 @@ export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, 
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { FormField, type FormFieldProps } from "./form-field";
 export { Input, type InputProps } from "./input";
+export { KeyCapture, type KeyCaptureBinding, type KeyCaptureModifiers } from "./key-capture";
 export { Modal, ModalClose, ModalContent, ModalDescription, ModalFooter, ModalHeader, ModalOverlay, ModalPortal, ModalTitle, ModalTrigger } from "./modal";
 export { PathPicker, type PathPickerFilter, type PathPickerProps } from "./path-picker";
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./popover";
