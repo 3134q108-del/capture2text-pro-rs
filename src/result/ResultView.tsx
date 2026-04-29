@@ -171,8 +171,10 @@ export default function ResultView() {
   const [fontSizeDraftPt, setFontSizeDraftPt] = useState(13);
   const [usageInfo, setUsageInfo] = useState<UsageInfo | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [copiedTarget, setCopiedTarget] = useState<TtsTarget | null>(null);
 
   const originalReadyTimerRef = useRef<number | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
   const lastOriginalRef = useRef("");
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
@@ -543,12 +545,28 @@ export default function ResultView() {
     };
   }, []);
 
-  async function copy(text: string) {
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
+  async function copy(target: TtsTarget, text: string) {
     if (!text) {
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
+      setCopiedTarget(target);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopiedTarget(null);
+        copyTimerRef.current = null;
+      }, 2000);
     } catch {
       // ignore
     }
@@ -738,10 +756,10 @@ export default function ResultView() {
                   variant="secondary"
                   disabled={!original}
                   onClick={() => {
-                    void copy(original);
+                    void copy("original", original);
                   }}
                 >
-                  Copy 原文
+                  {copiedTarget === "original" ? "已複製" : "Copy 原文"}
                 </Button>
             </div>
 
@@ -750,7 +768,7 @@ export default function ResultView() {
                 <textarea
                   className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={translated}
-                  readOnly
+                  onChange={(event) => setTranslated(event.target.value)}
                   placeholder={status === "idle" ? "Waiting for capture..." : ""}
                   style={textStyle}
                 />
@@ -783,10 +801,10 @@ export default function ResultView() {
                       variant="secondary"
                       disabled={!translated}
                       onClick={() => {
-                        void copy(translated);
+                        void copy("translated", translated);
                       }}
                     >
-                      Copy 譯文
+                      {copiedTarget === "translated" ? "已複製" : "Copy 譯文"}
                     </Button>
                   ) : null}
                 </div>
