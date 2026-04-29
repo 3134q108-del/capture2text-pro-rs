@@ -54,3 +54,6 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 
 [dev-dependencies]
 wiremock = "0.6"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2.5.1"

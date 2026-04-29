@@ -22,10 +22,20 @@ pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = crate::commands::result_window::show_settings_window(app.clone());
-        }))
+        }));
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
+    }
+
+    let app = builder
         .setup(|app| {
             app.manage(crate::azure_tts::runtime::TtsRuntime::new(&app.handle()));
             crate::app_handle::set(app.handle().clone());
