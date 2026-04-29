@@ -35,3 +35,6 @@ HANDOFF*.md
 T[0-9]*_SPEC.md
 T[0-9]*_BRIEFING.md
 *_PLAN.md
+
+# Claude Code local project settings
+.claude/
