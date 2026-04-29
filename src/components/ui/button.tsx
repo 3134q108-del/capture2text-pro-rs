@@ -1,7 +1,6 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -44,10 +43,6 @@ export interface ButtonProps
   errorContent?: React.ReactNode;
 }
 
-function Spinner() {
-  return <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />;
-}
-
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {
@@ -73,12 +68,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       state === "error"
         ? errorContent ?? children
         : state === "loading"
-          ? (
-              <>
-                <Spinner />
-                <span className="truncate">{loadingContent ?? children}</span>
-              </>
-            )
+          ? <span className="truncate">{loadingContent ?? children}</span>
           : state === "empty"
             ? emptyContent ?? children
             : children;
