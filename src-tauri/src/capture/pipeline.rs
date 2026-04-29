@@ -34,11 +34,12 @@ pub struct CaptureOutcome {
 pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<CaptureOutcome>> {
     match request {
         CaptureRequest::Hotkey {
+            seq: _,
             kind,
             cursor,
             queued_at,
         } => run_for_hotkey_event(kind, cursor, queued_at),
-        CaptureRequest::SelectedRect { rect, queued_at } => run_for_selected_rect(rect, queued_at),
+        CaptureRequest::SelectedRect { seq: _, rect, queued_at } => run_for_selected_rect(rect, queued_at),
         CaptureRequest::Exit => Ok(None),
     }
 }

@@ -9,6 +9,7 @@ pub mod screen_capture;
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use std::time::Duration;
@@ -17,6 +18,7 @@ const HOTKEY_CHANNEL_CAPACITY: usize = 8;
 const CAPTURE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 static CAPTURE_RUNTIME: OnceLock<CaptureRuntime> = OnceLock::new();
+static LATEST_REQUEST_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct CaptureRuntime {
     tx: SyncSender<CaptureRequest>,
@@ -57,11 +59,13 @@ pub struct ScreenRect {
 #[derive(Clone, Copy, Debug)]
 pub enum CaptureRequest {
     Hotkey {
+        seq: u64,
         kind: HotkeyKind,
         cursor: CursorPoint,
         queued_at: Instant,
     },
     SelectedRect {
+        seq: u64,
         rect: ScreenRect,
         queued_at: Instant,
     },
@@ -87,6 +91,7 @@ pub fn start_worker() -> io::Result<()> {
 
 pub(crate) fn try_enqueue_from_hook(kind: HotkeyKind, cursor: CursorPoint, queued_at: Instant) {
     try_enqueue_request(CaptureRequest::Hotkey {
+        seq: next_request_seq(),
         kind,
         cursor,
         queued_at,
@@ -97,6 +102,14 @@ pub(crate) fn try_enqueue_request(request: CaptureRequest) {
     if let Some(runtime) = CAPTURE_RUNTIME.get() {
         let _ = runtime.tx.try_send(request);
     }
+}
+
+pub(crate) fn next_request_seq() -> u64 {
+    LATEST_REQUEST_SEQ.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+pub(crate) fn latest_request_seq() -> u64 {
+    LATEST_REQUEST_SEQ.load(Ordering::SeqCst)
 }
 
 pub fn shutdown_worker() {

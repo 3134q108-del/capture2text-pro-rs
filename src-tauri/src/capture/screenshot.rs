@@ -38,6 +38,10 @@ pub(crate) fn worker_loop(rx: Receiver<CaptureRequest>) {
             break;
         }
 
+        if request_seq(request) < capture::latest_request_seq() {
+            continue;
+        }
+
         process_request(request);
     }
 }
@@ -49,6 +53,7 @@ fn drain_mouse_events() {
                 let rect = drag_overlay::finalize_and_get_rect();
                 if let Some(rect) = rect {
                     capture::try_enqueue_request(CaptureRequest::SelectedRect {
+                        seq: capture::next_request_seq(),
                         rect,
                         queued_at: Instant::now(),
                     });
@@ -60,6 +65,7 @@ fn drain_mouse_events() {
 }
 
 fn process_request(request: CaptureRequest) {
+    let seq = request_seq(request);
     match pipeline::run_for_request(request) {
         Ok(Some(outcome)) => {
             println!(
@@ -76,6 +82,7 @@ fn process_request(request: CaptureRequest) {
                 outcome.png_bytes,
                 current_target_lang(),
                 pipeline::mode_label(outcome.mode),
+                seq,
             );
         }
         Ok(None) => {
@@ -84,6 +91,14 @@ fn process_request(request: CaptureRequest) {
         Err(err) => {
             eprintln!("[pipeline] failed: {err}");
         }
+    }
+}
+
+fn request_seq(request: CaptureRequest) -> u64 {
+    match request {
+        CaptureRequest::Hotkey { seq, .. } => seq,
+        CaptureRequest::SelectedRect { seq, .. } => seq,
+        CaptureRequest::Exit => 0,
     }
 }
 

@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, BufReader};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -39,6 +40,8 @@ pub enum VlmError {
     ResponseDecode { raw: String, source_error: String },
     #[error("internal: {0}")]
     Internal(String),
+    #[error("cancelled by newer request")]
+    Cancelled,
 }
 
 impl From<io::Error> for VlmError {
@@ -122,6 +125,7 @@ pub enum VlmJob {
         png_bytes: Vec<u8>,
         target_lang: TargetLang,
         source: &'static str,
+        seq: u64,
     },
     TranslateText {
         text: String,
@@ -163,10 +167,12 @@ pub struct VlmOutput {
     pub translated: String,
     pub src_lang: Option<String>,
     pub duration_ms: u64,
+    pub seq: Option<u64>,
 }
 
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
 static ACTIVE_VLM_SRC_LANG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static LATEST_OCR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct VlmRuntime {
     tx: SyncSender<VlmJob>,
@@ -213,20 +219,29 @@ pub fn init_worker(app_handle: AppHandle) {
                         png_bytes,
                         target_lang,
                         source,
+                        seq,
                     } => {
+                        if is_seq_cancelled(Some(seq)) {
+                            continue;
+                        }
                         let source_label = source.to_string();
                         let source_for_partial = source_label.clone();
-                        let result = ocr_and_translate_streaming(&png_bytes, target_lang, |partial| {
-                            emit_vlm_partial_event(
-                                &app_handle,
-                                VlmPartialEventPayload {
-                                    source: source_for_partial.clone(),
-                                    original: partial.original.clone().unwrap_or_default(),
-                                    translated: partial.translated.clone().unwrap_or_default(),
-                                    src_lang: partial.src_lang.clone(),
-                                },
-                            );
-                        });
+                        let result = ocr_and_translate_streaming(
+                            &png_bytes,
+                            target_lang,
+                            Some(seq),
+                            |partial| {
+                                emit_vlm_partial_event(
+                                    &app_handle,
+                                    VlmPartialEventPayload {
+                                        source: source_for_partial.clone(),
+                                        original: partial.original.clone().unwrap_or_default(),
+                                        translated: partial.translated.clone().unwrap_or_default(),
+                                        src_lang: partial.src_lang.clone(),
+                                    },
+                                );
+                            },
+                        );
                         (source_label, result)
                     }
                     VlmJob::TranslateText {
@@ -253,6 +268,9 @@ pub fn init_worker(app_handle: AppHandle) {
 
                 match result {
                     Ok(out) => {
+                        if is_seq_cancelled(out.seq) {
+                            continue;
+                        }
                         println!("[vlm] source={} original: {}", source, out.original);
                         println!("[vlm] source={} translated: {}", source, out.translated);
                         println!("[vlm] source={} duration_ms: {}", source, out.duration_ms);
@@ -272,6 +290,9 @@ pub fn init_worker(app_handle: AppHandle) {
                         );
                     }
                     Err(err) => {
+                        if matches!(err, VlmError::Cancelled) {
+                            continue;
+                        }
                         eprintln!("[vlm] source={} failed: {err}", source);
                         set_active_src_lang(None);
                         emit_vlm_event(
@@ -315,11 +336,13 @@ fn set_active_src_lang(lang: Option<String>) {
     }
 }
 
-pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: TargetLang, source: &'static str) {
+pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: TargetLang, source: &'static str, seq: u64) {
+    LATEST_OCR_SEQ.store(seq, Ordering::SeqCst);
     try_submit(VlmJob::OcrAndTranslate {
         png_bytes,
         target_lang,
         source,
+        seq,
     });
 }
 
@@ -498,6 +521,7 @@ pub fn warmup() {
 pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     png_bytes: &[u8],
     target_lang: TargetLang,
+    seq: Option<u64>,
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
     let png_bytes = ensure_min_dimension(png_bytes)?;
@@ -510,7 +534,10 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
         true,
     );
 
-    let (raw_accumulated, duration_ns) = run_streaming_request(request, |raw| {
+    let (raw_accumulated, duration_ns) = run_streaming_request(request, seq, |raw| {
+        if is_seq_cancelled(seq) {
+            return;
+        }
         on_partial(&PartialOutput {
             raw_accumulated: raw.to_string(),
             original: extract_partial_json_string(raw, "original"),
@@ -528,6 +555,7 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
         translated: parsed.translated,
         src_lang: parsed.src_lang,
         duration_ms,
+        seq,
     })
 }
 
@@ -544,7 +572,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
         true,
     );
 
-    let (raw_accumulated, duration_ns) = run_streaming_request(request, |raw| {
+    let (raw_accumulated, duration_ns) = run_streaming_request(request, None, |raw| {
         on_partial(&PartialOutput {
             raw_accumulated: raw.to_string(),
             original: Some(text.to_string()),
@@ -562,6 +590,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
         translated: parsed.translated,
         src_lang: parsed.src_lang,
         duration_ms,
+        seq: None,
     })
 }
 
@@ -620,11 +649,13 @@ pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult
         translated: parsed.translated,
         src_lang: parsed.src_lang,
         duration_ms,
+        seq: None,
     })
 }
 
 fn run_streaming_request<F: FnMut(&str)>(
     request: ChatRequest,
+    seq: Option<u64>,
     mut on_partial_raw: F,
 ) -> VlmResult<(String, Option<u64>)> {
     let client = reqwest::blocking::Client::builder()
@@ -651,6 +682,9 @@ fn run_streaming_request<F: FnMut(&str)>(
     let final_duration_ns: Option<u64> = None;
     let reader = BufReader::new(response);
     for line in reader.lines() {
+        if is_seq_cancelled(seq) {
+            return Err(VlmError::Cancelled);
+        }
         let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -773,6 +807,13 @@ fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
         VlmError::VlmRuntimeDown
     } else {
         VlmError::Internal(format!("llama-server request failed: {err}"))
+    }
+}
+
+fn is_seq_cancelled(seq: Option<u64>) -> bool {
+    match seq {
+        Some(current) => current < LATEST_OCR_SEQ.load(Ordering::SeqCst),
+        None => false,
     }
 }
 
