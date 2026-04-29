@@ -811,14 +811,14 @@ export default function ResultView() {
         <div className="ml-auto flex items-center gap-2">
           <Popover open={usageOpen} onOpenChange={(next) => { void onUsageOpenChange(next); }}>
             <PopoverTrigger asChild>
-              <Button type="button" variant="secondary" aria-label="Azure usage">
+              <Button type="button" variant="secondary" aria-label="Azure 用量">
                 <UsageDonut
                   size="md"
                   percent={usagePercent(usageInfo)}
                   tone={usageTone(usagePercent(usageInfo))}
-                  aria-label="Azure usage donut"
+                  aria-label="Azure 用量圖示"
+                  aria-hidden="true"
                 />
-                <span className="text-xs">Azure {usageInfo?.tier ?? "F0"}</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent size="md">
