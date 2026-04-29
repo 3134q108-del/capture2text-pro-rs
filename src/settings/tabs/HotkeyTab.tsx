@@ -8,7 +8,9 @@ import {
   SectionBody,
   SectionHeader,
   StatusText,
+  Toggle,
 } from "@/components/ui";
+import { disable, enable, isEnabled } from "@/services/autostart";
 import {
   getHotkeyConfig,
   resetHotkeyDefault,
@@ -53,9 +55,30 @@ export default function HotkeyTab() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [recordingRows, setRecordingRows] = useState<Set<RowKey>>(new Set());
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [autostartUpdating, setAutostartUpdating] = useState(false);
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void isEnabled()
+      .then((value) => {
+        if (!cancelled) {
+          setAutostart(value);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAutostart(false);
+          setStatus(String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const rows = useMemo(
@@ -118,6 +141,28 @@ export default function HotkeyTab() {
     });
   }
 
+  async function onToggleAutostart(next: boolean) {
+    if (autostartUpdating || autostart === null) {
+      return;
+    }
+    setAutostartUpdating(true);
+    setAutostart(next);
+    try {
+      if (next) {
+        await enable();
+      } else {
+        await disable();
+      }
+      setStatus("開機自動啟動設定已更新");
+    } catch (error) {
+      const actual = await isEnabled().catch(() => !next);
+      setAutostart(actual);
+      setStatus(String(error));
+    } finally {
+      setAutostartUpdating(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Section>
@@ -151,6 +196,15 @@ export default function HotkeyTab() {
                 </FormField>
               </div>
             ))}
+            <div className="rounded-md border border-border p-3">
+              <Toggle
+                checked={autostart ?? false}
+                disabled={autostart === null || autostartUpdating}
+                onCheckedChange={(next) => void onToggleAutostart(next)}
+                label="開機自動啟動 (僅當前使用者)"
+                description="此設定僅影響目前 Windows 使用者帳號。"
+              />
+            </div>
           </div>
         </SectionBody>
       </Section>
