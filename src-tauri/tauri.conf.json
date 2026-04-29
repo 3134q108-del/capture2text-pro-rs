@@ -69,7 +69,8 @@
         "languages": [
           "TradChinese",
           "English"
-        ]
+        ],
+        "installerHooks": "./windows/installer.nsh"
       }
     }
   }
