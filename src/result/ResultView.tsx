@@ -810,7 +810,7 @@ export default function ResultView() {
         <div className="ml-auto flex items-center gap-2">
           <Popover open={usageOpen} onOpenChange={(next) => { void onUsageOpenChange(next); }}>
             <PopoverTrigger asChild>
-              <Button type="button" variant="ghost" aria-label="Azure 用量">
+              <Button type="button" variant="ghost" className="hover:bg-transparent focus-visible:ring-2 focus-visible:ring-ring" aria-label="Azure 用量">
                 <UsageDonut
                   size="md"
                   percent={usagePercent(usageInfo)}

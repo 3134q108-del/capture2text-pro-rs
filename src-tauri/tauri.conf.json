@@ -22,8 +22,8 @@
       {
         "label": "result",
         "title": "Capture2Text - OCR Text",
-        "width": 661,
-        "height": 371,
+        "width": 415,
+        "height": 403,
         "visible": false,
         "skipTaskbar": false,
         "alwaysOnTop": true,
@@ -36,8 +36,8 @@
       {
         "label": "settings",
         "title": "設定 - Capture2Text",
-        "width": 700,
-        "height": 500,
+        "width": 846,
+        "height": 551,
         "visible": false,
         "skipTaskbar": false,
         "resizable": true
