@@ -52,6 +52,7 @@ export default function HotkeyTab() {
   const [config, setConfig] = useState<HotkeyConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
+  const [recordingRows, setRecordingRows] = useState<Set<RowKey>>(new Set());
 
   useEffect(() => {
     void load();
@@ -105,6 +106,18 @@ export default function HotkeyTab() {
     }
   }
 
+  function setRowRecording(key: RowKey, recording: boolean) {
+    setRecordingRows((prev) => {
+      const next = new Set(prev);
+      if (recording) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Section>
@@ -124,10 +137,16 @@ export default function HotkeyTab() {
                 </div>
                 <FormField label="按鍵組合" orientation="vertical">
                   <div className="flex flex-wrap items-center gap-2">
-                    <KeyCapture value={row.binding} onChange={(value) => void updateOne(row.key, value)} />
-                    <Button type="button" variant="secondary" onClick={() => void resetOne(row.key)}>
-                      重設此項
-                    </Button>
+                    <KeyCapture
+                      value={row.binding}
+                      onChange={(value) => void updateOne(row.key, value)}
+                      onRecordingChange={(recording) => setRowRecording(row.key, recording)}
+                    />
+                    {!recordingRows.has(row.key) ? (
+                      <Button type="button" variant="secondary" onClick={() => void resetOne(row.key)}>
+                        重設此項
+                      </Button>
+                    ) : null}
                   </div>
                 </FormField>
               </div>

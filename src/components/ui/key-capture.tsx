@@ -20,6 +20,7 @@ type CaptureState = "idle" | "capturing" | "review";
 type Props = {
   value: KeyCaptureBinding;
   onChange: (value: KeyCaptureBinding) => void;
+  onRecordingChange?: (recording: boolean) => void;
   className?: string;
 };
 
@@ -98,7 +99,7 @@ function vkLabel(vk: number): string {
   return `VK ${vk}`;
 }
 
-export function KeyCapture({ value, onChange, className }: Props) {
+export function KeyCapture({ value, onChange, onRecordingChange, className }: Props) {
   const [state, setState] = useState<CaptureState>("idle");
   const [candidate, setCandidate] = useState<KeyCaptureBinding | null>(null);
   const [error, setError] = useState("");
@@ -113,12 +114,14 @@ export function KeyCapture({ value, onChange, className }: Props) {
     setError("");
     setCandidate(null);
     setState("capturing");
+    onRecordingChange?.(true);
   }
 
   function cancelCapture() {
     setError("");
     setCandidate(null);
     setState("idle");
+    onRecordingChange?.(false);
   }
 
   function confirmCapture() {
@@ -127,6 +130,7 @@ export function KeyCapture({ value, onChange, className }: Props) {
     setState("idle");
     setCandidate(null);
     setError("");
+    onRecordingChange?.(false);
   }
 
   function onCaptureKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
