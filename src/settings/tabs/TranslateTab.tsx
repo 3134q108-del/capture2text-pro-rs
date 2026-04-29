@@ -231,8 +231,8 @@ export default function TranslateTab() {
           description="情境會影響 OCR 結果的翻譯語氣與格式。"
         />
         <SectionBody>
-          <div className="grid gap-4 lg:grid-cols-4">
-            <Card className="lg:col-span-1">
+          <div className="grid gap-4 sm:grid-cols-4">
+            <Card className="sm:col-span-1">
               <CardHeader className="gap-3 p-3">
                 <Button type="button" variant="secondary" onClick={createScenario}>
                   新增情境
@@ -266,7 +266,7 @@ export default function TranslateTab() {
               </CardContent>
             </Card>
 
-            <Card className="lg:col-span-3 lg:max-w-3xl">
+            <Card className="sm:col-span-3 sm:max-w-3xl">
               <CardContent className="flex flex-col gap-4 p-4">
                 <FormField label="情境名稱" htmlFor="scenario-name" required>
                   <Input
