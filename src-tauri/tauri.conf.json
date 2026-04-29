@@ -65,7 +65,6 @@
     "longDescription": "按 Win+Q 截圖即時 OCR + 翻譯,Qwen3-VL 8B 本機 7 語(繁中/簡中/英/日/韓/德/法),選用 Azure TTS BYOK 朗讀。",
     "windows": {
       "nsis": {
-        "license": "../LICENSE",
         "installMode": "perMachine",
         "languages": [
           "TradChinese",
