@@ -1,14 +1,8 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import {
-  Button,
-  PathPicker,
-  Section,
-  SectionBody,
-  SectionHeader,
-  StatusText,
-} from "@/components/ui";
+import { Button, Section, SectionBody, SectionHeader, StatusText } from "@/components/ui";
 
 const VLM_ENDPOINT = "http://localhost:11434";
 const MODEL_NAME = "qwen3-vl:8b-instruct";
@@ -30,8 +24,6 @@ export default function AboutTab() {
   const [vlmStatus, setVlmStatus] = useState("");
   const [updateStatus, setUpdateStatus] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
-  const [exportPath, setExportPath] = useState("");
-  const [importPath, setImportPath] = useState("");
 
   useEffect(() => {
     void getVersion()
@@ -63,24 +55,26 @@ export default function AboutTab() {
     }
   }
 
-  async function runExport(path: string) {
-    setExportPath(path);
+  async function exportSettings() {
     try {
-      const result = await invoke<string>("export_settings", {
-        targetDir: path,
-      });
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+      const result = await invoke<string>("export_settings", { targetDir: selected });
       setStatusMsg(result);
     } catch (error) {
       setStatusMsg(`匯出失敗: ${String(error)}`);
     }
   }
 
-  async function runImport(path: string) {
-    setImportPath(path);
+  async function importSettings() {
     try {
-      const result = await invoke<string>("import_settings", {
-        sourceDir: path,
-      });
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+      const result = await invoke<string>("import_settings", { sourceDir: selected });
       setStatusMsg(result);
     } catch (error) {
       setStatusMsg(`匯入失敗: ${String(error)}`);
@@ -126,28 +120,14 @@ export default function AboutTab() {
       <Section>
         <SectionHeader title="設定匯出與匯入" />
         <SectionBody>
-          <PathPicker
-            mode="directory"
-            label="匯出設定"
-            value={exportPath}
-            placeholder="選擇匯出資料夾"
-            buttonLabel="選擇資料夾並匯出"
-            onChange={(path) => {
-              void runExport(path);
-            }}
-            onPickError={(message) => setStatusMsg(message)}
-          />
-          <PathPicker
-            mode="directory"
-            label="匯入設定"
-            value={importPath}
-            placeholder="選擇匯入資料夾"
-            buttonLabel="選擇資料夾並匯入"
-            onChange={(path) => {
-              void runImport(path);
-            }}
-            onPickError={(message) => setStatusMsg(message)}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => void exportSettings()}>
+              匯出設定
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void importSettings()}>
+              匯入設定
+            </Button>
+          </div>
         </SectionBody>
       </Section>
 
