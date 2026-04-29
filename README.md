@@ -19,25 +19,27 @@ Windows 桌面 OCR + 翻譯。按 Win+Q 框選螢幕,本地 VLM 辨識,可選 Az
 - 同熱鍵連按會中斷正跑的 OCR,只跑最後一次
 - 熱鍵自訂
 
-## 系統需求
+## 系統需求 / 硬體性能 / 耗能
 
-- Windows 10 / 11(x64)
-- 16 GB RAM(VLM Q4 約佔 5–6 GB)
-- 約 6 GB 硬碟(模型)
-- GPU 加速隨意:NVIDIA / AMD / Intel 或純 CPU 都行,llama.cpp 自動選
+**為了在 7 語上做到不錯的 OCR + 翻譯品質,選用了 8B 級 VLM(Qwen3-VL-8B-Instruct Q4_K_M),而不是更輕量的專用 OCR 模型(像 Tesseract / PaddleOCR)。這是為了高品質的體驗刻意選的取捨,代價是吃硬體比較兇,先說清楚:**
 
-## 耗能
+基本門檻:
 
-為了單一模型涵蓋 7 語 + 翻譯品質夠用,用了 8B 級 VLM(Qwen3-VL-8B-Instruct Q4_K_M)而不是更輕的專用 OCR 模型。代價是常駐記憶體比較大、推論時 GPU/CPU 會吃滿。如果在意省電省記憶體,這個程式可能不適合你。
+- **OS**:Windows 10 / 11(x64)
+- **RAM**:16 GB 起跳(model 常駐約 5–6 GB,加上系統 + browser)
+- **硬碟**:約 6 GB(模型)
+- **GPU**:NVIDIA / AMD / Intel 隨意,純 CPU 也能跑,llama.cpp 自動選
 
-| 狀態 | 記憶體佔用 | GPU / CPU |
-|---|---|---|
-| 待機(model 已載入,閒置) | GPU 模式 ~5–6 GB VRAM;CPU 模式 ~5 GB RAM | idle,接近 0 W |
-| OCR + 翻譯(每次按 Win+Q,1–3 秒) | 同上 | 滿載 100%(GPU 約 1–3 秒,CPU 約 5–10 秒) |
+待機 vs OCR + 翻譯中的實測:
 
-GPU 滿載功耗看卡:RTX 3060 約 170 W、RTX 4070 約 200 W、RTX 4090 約 450 W。純 CPU 推論期間 CPU 滿載大約 45–80 W。
+| 狀態 | RAM / VRAM | GPU / CPU 負載 | 功耗(估) |
+|---|---|---|---|
+| **待機**(model 已載入,等熱鍵) | GPU 模式 ~5–6 GB VRAM;CPU 模式 ~5 GB RAM | idle | 接近 0 W |
+| **OCR + 翻譯中**(每按 Win+Q,持續 1–10 秒) | 同上 | 滿載 100% | GPU:RTX 3060 ~170 W、RTX 4070 ~200 W、RTX 4090 ~450 W;CPU 滿載 ~45–80 W |
 
-llama-server 在程式啟動時就把 model 載進來常駐,所以熱鍵響應快(只要等推論);代價是 5–6 GB 記憶體一直佔住。為了 OCR 即時性犧牲了記憶體使用,是設計取捨。
+推論單次時間:**GPU 約 1–3 秒**,**純 CPU 約 5–10 秒**。
+
+llama-server 在程式啟動時就把 model 載入並常駐,所以熱鍵響應只等推論時間,代價是 5–6 GB 記憶體一直佔住。在意省電 / 省記憶體的人不適合這支程式 — 拿低階筆電想跑這個會很吃力,建議至少 16 GB RAM + 中階獨顯。
 
 ## 安裝
 
