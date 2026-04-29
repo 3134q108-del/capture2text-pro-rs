@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "capture2text-pro-rs",
+  "productName": "Capture2Text Pro",
   "version": "0.1.0",
   "identifier": "com.capture2text.pro",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "capture2text-pro-rs",
+        "title": "Capture2Text Pro",
         "width": 800,
         "height": 600,
         "visible": false,
@@ -61,10 +61,11 @@
       "icons/icon.ico"
     ],
     "publisher": "Capture2Text Pro",
-    "shortDescription": "Windows OCR + 翻譯 + 朗讀工具",
-    "longDescription": "按 Win+Q/W/E 截圖文字，本機 Qwen3-VL 即時翻譯、Edge TTS 朗讀。",
+    "shortDescription": "Windows 桌面 OCR + 翻譯 + Azure TTS 朗讀",
+    "longDescription": "按 Win+Q 截圖即時 OCR + 翻譯,Qwen3-VL 8B 本機 7 語(繁中/簡中/英/日/韓/德/法),選用 Azure TTS BYOK 朗讀。",
     "windows": {
       "nsis": {
+        "license": "../LICENSE",
         "installMode": "perMachine",
         "languages": [
           "TradChinese",
