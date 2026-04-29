@@ -16,7 +16,6 @@ import {
   PopoverContent,
   PopoverTrigger,
   ProgressBar,
-  Section,
   Select,
   SelectContent,
   SelectItem,
@@ -713,8 +712,7 @@ export default function ResultView() {
         {status === "error" ? (
           <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
         ) : (
-          <Section className="flex min-h-0 flex-1 flex-col gap-0 p-2">
-            <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <>
               <textarea
                 className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 value={original}
@@ -745,13 +743,10 @@ export default function ResultView() {
                 >
                   Copy 原文
                 </Button>
-              </div>
             </div>
 
             {showTranslated ? (
               <>
-                <div className="border-t border-border" />
-                <div className="flex min-h-0 flex-1 flex-col gap-2">
                 <textarea
                   className="min-h-0 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   value={translated}
@@ -795,10 +790,9 @@ export default function ResultView() {
                     </Button>
                   ) : null}
                 </div>
-                </div>
               </>
             ) : null}
-          </Section>
+          </>
         )}
       </div>
 
