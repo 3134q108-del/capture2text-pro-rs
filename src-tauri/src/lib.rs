@@ -114,6 +114,8 @@ pub fn run() {
             commands::azure_tts::preview_voice,
             commands::azure_tts::get_speech_rate,
             commands::azure_tts::set_speech_rate,
+            commands::azure_tts::get_speech_volume,
+            commands::azure_tts::set_speech_volume,
             commands::azure_tts::get_azure_usage_info,
             commands::azure_tts::set_billing_tier,
             commands::azure_tts::set_neural_limit,

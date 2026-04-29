@@ -22,6 +22,7 @@ pub trait TtsProvider: Send + Sync {
         text: &str,
         voice_id: &str,
         rate: f32,
+        volume: f32,
     ) -> Result<Vec<u8>, TtsError>;
 }
 

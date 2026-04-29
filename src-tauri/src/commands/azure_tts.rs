@@ -117,19 +117,23 @@ pub async fn preview_voice(
     let current_task = state.current_task.clone();
     let handle = tokio::spawn(async move {
         let result = async {
-            if let Some(bytes) = crate::azure_tts::preview_cache::read_cached(&voice_id) {
-                playback.play(bytes)?;
-                return Ok::<(), String>(());
-            }
-
             let provider = provider_from_config()?;
             let phrase = preview_text_for_lang(&lang);
             let rate = crate::window_state::azure_speech_rate();
+            let volume = crate::window_state::azure_speech_volume();
+            if let Some(bytes) =
+                crate::azure_tts::preview_cache::read_cached(&voice_id, rate, volume)
+            {
+                playback.play(bytes)?;
+                return Ok::<(), String>(());
+            }
             let bytes = provider
-                .synthesize(phrase, &voice_id, rate)
+                .synthesize(phrase, &voice_id, rate, volume)
                 .await
                 .map_err(|err| err.to_string())?;
-            if let Err(err) = crate::azure_tts::preview_cache::write_cache(&voice_id, &bytes) {
+            if let Err(err) = crate::azure_tts::preview_cache::write_cache(
+                &voice_id, rate, volume, &bytes,
+            ) {
                 eprintln!("[azure-tts] preview cache write failed voice={voice_id}: {err}");
             }
             playback.play(bytes)?;
@@ -162,6 +166,17 @@ pub fn get_speech_rate() -> f32 {
 #[tauri::command]
 pub fn set_speech_rate(rate: f32) -> Result<(), String> {
     crate::window_state::set_azure_speech_rate(rate);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_speech_volume() -> f32 {
+    crate::window_state::azure_speech_volume()
+}
+
+#[tauri::command]
+pub fn set_speech_volume(volume: f32) -> Result<(), String> {
+    crate::window_state::set_azure_speech_volume(volume);
     Ok(())
 }
 

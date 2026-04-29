@@ -69,6 +69,14 @@ export function setSpeechRate(rate: number): Promise<void> {
   return invoke("set_speech_rate", { rate });
 }
 
+export function getSpeechVolume(): Promise<number> {
+  return invoke("get_speech_volume");
+}
+
+export function setSpeechVolume(volume: number): Promise<void> {
+  return invoke("set_speech_volume", { volume });
+}
+
 export function getAzureUsageInfo(): Promise<UsageInfo> {
   return invoke("get_azure_usage_info");
 }

@@ -111,8 +111,9 @@ impl TtsProvider for AzureProvider {
         text: &str,
         voice_id: &str,
         rate: f32,
+        volume: f32,
     ) -> Result<Vec<u8>, TtsError> {
-        let ssml = build_ssml(text, voice_id, rate);
+        let ssml = build_ssml(text, voice_id, rate, volume);
         let response = self
             .http
             .post(self.synthesize_url())
@@ -224,11 +225,12 @@ struct SsmlBody {
     prosody_close: &'static str,
 }
 
-fn build_ssml(text: &str, voice_id: &str, rate: f32) -> SsmlBody {
+fn build_ssml(text: &str, voice_id: &str, rate: f32, volume: f32) -> SsmlBody {
     let lang = lang_from_voice_id(voice_id);
     let escaped_text = escape_xml(text);
     let rate_pct = rate_percent(rate);
-    let prosody_open = format!(r#"<prosody rate="{rate_pct}">"#);
+    let volume_pct = volume_percent(volume);
+    let prosody_open = format!(r#"<prosody rate="{rate_pct}" volume="{volume_pct}">"#);
     let prosody_close = "</prosody>";
     let body = format!(
         r#"<speak version="1.0" xml:lang="{lang}"><voice name="{voice_id}">{prosody_open}{escaped_text}{prosody_close}</voice></speak>"#
@@ -253,6 +255,15 @@ fn lang_from_voice_id(voice_id: &str) -> String {
 
 fn rate_percent(rate: f32) -> String {
     let pct = ((rate.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32;
+    if pct > 0 {
+        format!("+{pct}%")
+    } else {
+        format!("{pct}%")
+    }
+}
+
+fn volume_percent(volume: f32) -> String {
+    let pct = ((volume.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32;
     if pct > 0 {
         format!("+{pct}%")
     } else {
@@ -369,7 +380,8 @@ mod azure_voices {
             .and(body_string_contains(
                 "hello &amp; &lt;world&gt; &quot;quoted&quot; &apos;ok&apos;",
             ))
-            .and(body_string_contains(r#"<prosody rate="+20%">"#))
+            .and(body_string_contains(r#"<prosody rate="+20%" volume="0%">"#))
+            .and(body_string_contains(r#"volume="0%""#))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1, 2, 3, 4]))
             .mount(&server)
             .await;
@@ -384,6 +396,7 @@ mod azure_voices {
                 "hello & <world> \"quoted\" 'ok'",
                 "zh-TW-HsiaoChenNeural",
                 1.2,
+                1.0,
             )
             .await
             .unwrap();
@@ -406,7 +419,7 @@ mod azure_voices {
             server.uri(),
         );
         let err = provider
-            .synthesize("hello", "zh-TW-HsiaoChenNeural", 1.0)
+            .synthesize("hello", "zh-TW-HsiaoChenNeural", 1.0, 1.0)
             .await
             .unwrap_err();
 

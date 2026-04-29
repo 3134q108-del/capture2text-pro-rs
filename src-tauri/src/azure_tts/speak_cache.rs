@@ -9,12 +9,12 @@ pub fn cache_dir() -> Result<PathBuf, String> {
     Ok(base.join("Capture2TextPro").join("tts_speak_cache"))
 }
 
-pub fn cache_path(voice_id: &str, text: &str, rate: f32) -> Result<PathBuf, String> {
-    Ok(cache_dir()?.join(format!("{}.mp3", cache_key_hex(voice_id, text, rate))))
+pub fn cache_path(voice_id: &str, text: &str, rate: f32, volume: f32) -> Result<PathBuf, String> {
+    Ok(cache_dir()?.join(format!("{}.mp3", cache_key_hex(voice_id, text, rate, volume))))
 }
 
-pub fn read_cached(voice_id: &str, text: &str, rate: f32) -> Option<Vec<u8>> {
-    let path = match cache_path(voice_id, text, rate) {
+pub fn read_cached(voice_id: &str, text: &str, rate: f32, volume: f32) -> Option<Vec<u8>> {
+    let path = match cache_path(voice_id, text, rate, volume) {
         Ok(path) => path,
         Err(err) => {
             eprintln!("[azure-tts] speak cache path failed voice={voice_id}: {err}");
@@ -36,8 +36,8 @@ pub fn read_cached(voice_id: &str, text: &str, rate: f32) -> Option<Vec<u8>> {
     }
 }
 
-pub fn write_cache(voice_id: &str, text: &str, rate: f32, bytes: &[u8]) -> Result<(), String> {
-    let path = cache_path(voice_id, text, rate)?;
+pub fn write_cache(voice_id: &str, text: &str, rate: f32, volume: f32, bytes: &[u8]) -> Result<(), String> {
+    let path = cache_path(voice_id, text, rate, volume)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
@@ -53,13 +53,15 @@ pub fn write_cache(voice_id: &str, text: &str, rate: f32, bytes: &[u8]) -> Resul
     Ok(())
 }
 
-fn cache_key_hex(voice_id: &str, text: &str, rate: f32) -> String {
+fn cache_key_hex(voice_id: &str, text: &str, rate: f32, volume: f32) -> String {
     let mut hasher = DefaultHasher::new();
     voice_id.hash(&mut hasher);
     "|".hash(&mut hasher);
     escape_xml(text).hash(&mut hasher);
     "|".hash(&mut hasher);
     rate.to_bits().hash(&mut hasher);
+    "|".hash(&mut hasher);
+    volume.to_bits().hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -109,15 +111,22 @@ mod tests {
 
     #[test]
     fn cache_key_uses_rate_bits() {
-        let a = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.0);
-        let b = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.1);
+        let a = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.0, 1.0);
+        let b = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.1, 1.0);
         assert_ne!(a, b);
     }
 
     #[test]
     fn cache_key_uses_escaped_text() {
-        let a = cache_key_hex("zh-TW-HsiaoChenNeural", "a&b", 1.0);
-        let b = cache_key_hex("zh-TW-HsiaoChenNeural", "a&amp;b", 1.0);
+        let a = cache_key_hex("zh-TW-HsiaoChenNeural", "a&b", 1.0, 1.0);
+        let b = cache_key_hex("zh-TW-HsiaoChenNeural", "a&amp;b", 1.0, 1.0);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn cache_key_uses_volume_bits() {
+        let a = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.0, 1.0);
+        let b = cache_key_hex("zh-TW-HsiaoChenNeural", "hello", 1.0, 1.1);
         assert_ne!(a, b);
     }
 }

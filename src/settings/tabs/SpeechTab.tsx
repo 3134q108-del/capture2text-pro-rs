@@ -4,6 +4,7 @@ import {
   getAzureCredentialsStatus,
   getAzureUsageInfo,
   getSpeechRate,
+  getSpeechVolume,
   getVoiceRouting,
   listAzureVoices,
   previewVoice,
@@ -12,6 +13,7 @@ import {
   setHdLimit,
   setNeuralLimit,
   setSpeechRate,
+  setSpeechVolume,
   setVoiceRouting,
   testAzureConnection,
   type AzureCredentialsStatus,
@@ -89,7 +91,9 @@ export default function SpeechTab() {
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [saving, setSaving] = useState(false);
   const [speechRate, setSpeechRateState] = useState(1.0);
+  const [speechVolume, setSpeechVolumeState] = useState(1.0);
   const [rateLoaded, setRateLoaded] = useState(false);
+  const [volumeLoaded, setVolumeLoaded] = useState(false);
   const [previewingLang, setPreviewingLang] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageInfo>(DEFAULT_USAGE);
   const [tier, setTier] = useState<BillingTier>("F0");
@@ -130,6 +134,18 @@ export default function SpeechTab() {
   }, [rateLoaded, speechRate]);
 
   useEffect(() => {
+    if (!volumeLoaded) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void setSpeechVolume(speechVolume);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [volumeLoaded, speechVolume]);
+
+  useEffect(() => {
     if (!limitsLoaded || tier !== "S0") {
       return;
     }
@@ -161,16 +177,19 @@ export default function SpeechTab() {
 
   async function refreshInitial() {
     try {
-      const [status, route, rate, usageInfo] = await Promise.all([
+      const [status, route, rate, volume, usageInfo] = await Promise.all([
         getAzureCredentialsStatus(),
         getVoiceRouting(),
         getSpeechRate(),
+        getSpeechVolume(),
         getAzureUsageInfo(),
       ]);
       setCredStatus(status);
       setRouting(route);
       setSpeechRateState(rate);
+      setSpeechVolumeState(volume);
       setRateLoaded(true);
+      setVolumeLoaded(true);
       applyUsage(usageInfo);
 
       if (status.region) {
@@ -482,7 +501,7 @@ export default function SpeechTab() {
       <Section>
         <SectionHeader
           title="語音路由"
-          description="朗讀速度只影響 OCR 朗讀，語音試聽固定使用 1.0x。"
+          description="朗讀速度與音量會同步套用於 OCR 朗讀與語音試聽。"
         />
         <SectionBody>
           <FormField label="朗讀速度">
@@ -501,6 +520,26 @@ export default function SpeechTab() {
               />
               <span className="w-12 text-right text-sm text-muted-foreground">
                 {speechRate.toFixed(2)}x
+              </span>
+            </div>
+          </FormField>
+
+          <FormField label="音量">
+            <div className="flex items-center gap-3">
+              <Slider
+                min={0.5}
+                max={2.0}
+                step={0.05}
+                value={[speechVolume]}
+                onValueChange={(values) => {
+                  const next = values[0];
+                  if (typeof next === "number") {
+                    setSpeechVolumeState(next);
+                  }
+                }}
+              />
+              <span className="w-12 text-right text-sm text-muted-foreground">
+                {speechVolume.toFixed(2)}x
               </span>
             </div>
           </FormField>
@@ -528,22 +567,15 @@ export default function SpeechTab() {
 
               return (
                 <div key={item.code} className="rounded-md border border-border p-3">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-foreground">
                       {item.label} ({item.code})
                     </span>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!credStatus.configured || previewing || loadingVoices}
-                      onClick={() => void handlePreview(item.code)}
-                    >
-                      {previewing ? "試聽中..." : "試聽"}
-                    </Button>
                   </div>
 
                   <FormField label="語音選擇" htmlFor={`voice-select-${item.code}`}>
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
                     <Select
                       value={selected}
                       onValueChange={(value) => void changeVoice(item.code, value)}
@@ -564,6 +596,17 @@ export default function SpeechTab() {
                         )}
                       </SelectContent>
                     </Select>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="h-11 w-28 shrink-0"
+                        disabled={!credStatus.configured || previewing || loadingVoices}
+                        onClick={() => void handlePreview(item.code)}
+                      >
+                        {previewing ? "試聽中..." : "試聽"}
+                      </Button>
+                    </div>
                   </FormField>
                   <StatusText tone="info" size="sm">
                     試聽文字：{item.sample}

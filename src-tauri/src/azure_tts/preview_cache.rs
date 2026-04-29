@@ -1,18 +1,20 @@
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
+use std::collections::hash_map::DefaultHasher;
 
 pub fn cache_dir() -> Result<PathBuf, String> {
     let base = dirs::data_local_dir().ok_or_else(|| "local appdata not found".to_string())?;
     Ok(base.join("Capture2TextPro").join("tts_preview_cache"))
 }
 
-pub fn cache_path(voice_id: &str) -> Result<PathBuf, String> {
-    Ok(cache_dir()?.join(format!("{}.mp3", sanitize_voice_id(voice_id))))
+pub fn cache_path(voice_id: &str, rate: f32, volume: f32) -> Result<PathBuf, String> {
+    Ok(cache_dir()?.join(format!("{}.mp3", cache_key_hex(voice_id, rate, volume))))
 }
 
-pub fn read_cached(voice_id: &str) -> Option<Vec<u8>> {
-    let path = match cache_path(voice_id) {
+pub fn read_cached(voice_id: &str, rate: f32, volume: f32) -> Option<Vec<u8>> {
+    let path = match cache_path(voice_id, rate, volume) {
         Ok(path) => path,
         Err(err) => {
             eprintln!("[azure-tts] preview cache path failed voice={voice_id}: {err}");
@@ -34,8 +36,8 @@ pub fn read_cached(voice_id: &str) -> Option<Vec<u8>> {
     }
 }
 
-pub fn write_cache(voice_id: &str, bytes: &[u8]) -> Result<(), String> {
-    let path = cache_path(voice_id)?;
+pub fn write_cache(voice_id: &str, rate: f32, volume: f32, bytes: &[u8]) -> Result<(), String> {
+    let path = cache_path(voice_id, rate, volume)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
@@ -76,28 +78,26 @@ fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Resu
     fs::rename(from, to)
 }
 
-fn sanitize_voice_id(voice_id: &str) -> String {
-    voice_id
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
+fn cache_key_hex(voice_id: &str, rate: f32, volume: f32) -> String {
+    let mut hasher = DefaultHasher::new();
+    voice_id.hash(&mut hasher);
+    "|".hash(&mut hasher);
+    rate.to_bits().hash(&mut hasher);
+    "|".hash(&mut hasher);
+    volume.to_bits().hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_voice_id;
+    use super::cache_key_hex;
 
     #[test]
-    fn preview_cache_sanitizes_windows_reserved_chars() {
-        assert_eq!(
-            sanitize_voice_id("en-US-Ava:DragonHDLatestNeural"),
-            "en-US-Ava_DragonHDLatestNeural"
-        );
+    fn preview_cache_key_uses_rate_and_volume() {
+        let base = cache_key_hex("en-US-Ava:DragonHDLatestNeural", 1.0, 1.0);
+        let rate_changed = cache_key_hex("en-US-Ava:DragonHDLatestNeural", 1.1, 1.0);
+        let volume_changed = cache_key_hex("en-US-Ava:DragonHDLatestNeural", 1.0, 1.1);
+        assert_ne!(base, rate_changed);
+        assert_ne!(base, volume_changed);
     }
 }

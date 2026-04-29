@@ -83,6 +83,8 @@ pub struct WindowState {
     pub azure_voice_map: HashMap<String, String>,
     #[serde(default = "default_speech_rate")]
     pub azure_speech_rate: f32,
+    #[serde(default = "default_speech_volume")]
+    pub azure_speech_volume: f32,
     #[serde(default)]
     pub azure_billing_tier: BillingTier,
     #[serde(default)]
@@ -120,6 +122,7 @@ impl Default for WindowState {
             azure_region: None,
             azure_voice_map: HashMap::new(),
             azure_speech_rate: default_speech_rate(),
+            azure_speech_volume: default_speech_volume(),
             azure_billing_tier: BillingTier::default(),
             azure_usage_neural_chars: 0,
             azure_usage_hd_chars: 0,
@@ -139,6 +142,10 @@ fn default_active_preset() -> String {
 }
 
 fn default_speech_rate() -> f32 {
+    1.0
+}
+
+fn default_speech_volume() -> f32 {
     1.0
 }
 
@@ -291,6 +298,16 @@ pub fn azure_speech_rate() -> f32 {
 pub fn set_azure_speech_rate(rate: f32) {
     update(|state| {
         state.azure_speech_rate = rate.clamp(0.5, 2.0);
+    });
+}
+
+pub fn azure_speech_volume() -> f32 {
+    get().azure_speech_volume.clamp(0.5, 2.0)
+}
+
+pub fn set_azure_speech_volume(volume: f32) {
+    update(|state| {
+        state.azure_speech_volume = volume.clamp(0.5, 2.0);
     });
 }
 
