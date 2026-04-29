@@ -33,7 +33,7 @@ const pathPickerRootVariants = cva("flex w-full flex-col gap-2", {
   },
 });
 
-const pathValueVariants = cva("flex min-h-11 flex-1 items-center rounded-md border bg-background px-3", {
+const pathValueVariants = cva("inline-flex h-8 flex-1 items-center rounded-md border bg-background px-3", {
   variants: {
     state: {
       content: "border-input text-foreground",
@@ -138,9 +138,9 @@ export const PathPicker = React.forwardRef<HTMLDivElement, PathPickerProps>(
     return (
       <div ref={ref} className={cn(pathPickerRootVariants({ mode, state: visualState }), className)} data-state={visualState} {...props}>
         {label ? <span className="text-sm font-medium text-foreground">{label}</span> : null}
-        <div className="flex min-h-11 items-stretch gap-2">
+        <div className="flex items-center gap-2">
           <div className={cn(pathValueVariants({ state: visualState }))} aria-live="polite">
-            <span className="block w-full truncate text-sm">{visiblePath}</span>
+            <span className="block w-full truncate text-sm leading-none">{visiblePath}</span>
           </div>
           <Button
             type="button"

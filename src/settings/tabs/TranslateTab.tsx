@@ -210,7 +210,7 @@ export default function TranslateTab() {
             orientation="vertical"
             value={outputLang}
             onValueChange={(value) => void changeOutputLang(normalizeLang(value))}
-            className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4"
+            className="flex flex-wrap gap-x-4 gap-y-2"
           >
             {LANG_OPTIONS.map((option) => (
               <RadioGroupItem
@@ -231,7 +231,7 @@ export default function TranslateTab() {
           description="情境會影響 OCR 結果的翻譯語氣與格式。"
         />
         <SectionBody>
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-4">
             <Card className="lg:col-span-1">
               <CardHeader className="gap-3 p-3">
                 <Button type="button" variant="secondary" onClick={createScenario}>
@@ -266,7 +266,7 @@ export default function TranslateTab() {
               </CardContent>
             </Card>
 
-            <Card className="lg:col-span-2">
+            <Card className="lg:col-span-3">
               <CardContent className="flex flex-col gap-4 p-4">
                 <FormField label="情境名稱" htmlFor="scenario-name" required>
                   <Input
