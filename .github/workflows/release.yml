@@ -31,6 +31,22 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Leptonica 是 W/E mode (游標單行抓字) 的 bounding rect 依賴
+      # Windows runner 預裝 vcpkg 在 C:\vcpkg (環境變數 VCPKG_INSTALLATION_ROOT)
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/installed
+            C:/vcpkg/packages
+          key: vcpkg-leptonica-x64-windows-static-md-v1
+
+      - name: Install Leptonica via vcpkg
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install leptonica:x64-windows-static-md
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
       - name: Install npm dependencies
         run: npm ci
 
