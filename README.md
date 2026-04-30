@@ -26,20 +26,34 @@ Windows 桌面 OCR + 翻譯。按 Win+Q 框選螢幕,本地 VLM 辨識,可選 Az
 基本門檻:
 
 - **OS**:Windows 10 / 11(x64)
-- **RAM**:16 GB 起跳(model 常駐約 5–6 GB,加上系統 + browser)
+- **RAM**:16 GB 起跳(model 常駐約 5.4 GB,加上系統 + browser)
 - **硬碟**:約 6 GB(模型)
-- **GPU**:NVIDIA / AMD / Intel 隨意,純 CPU 也能跑,llama.cpp 自動選
+- **GPU**:NVIDIA / AMD / Intel 都可,純 CPU 也能跑,llama.cpp 自動選
 
-待機 vs OCR + 翻譯中的實測:
+### 建議規格
 
-| 狀態 | RAM / VRAM | GPU / CPU 負載 | 功耗(估) |
-|---|---|---|---|
-| **待機**(model 已載入,等熱鍵) | GPU 模式 ~5–6 GB VRAM;CPU 模式 ~5 GB RAM | idle | 接近 0 W |
-| **OCR + 翻譯中**(每按 Win+Q,持續 1–10 秒) | 同上 | 滿載 100% | GPU:RTX 3060 ~170 W、RTX 4070 ~200 W、RTX 4090 ~450 W;CPU 滿載 ~45–80 W |
+| 等級 | CPU | RAM | GPU | OCR 推論時間 |
+|---|---|---|---|---|
+| **入門** | i5 / Ryzen 5 級別 | 16 GB | 內顯 / 純 CPU | 5–10 秒(慢但堪用) |
+| **推薦** | i7 / Ryzen 7 級別 | 16–32 GB | RTX 3060 / 4060 (8+ GB VRAM) | 1–3 秒 |
+| **發燒** | i9 / Ryzen 9 級別 | 32+ GB | RTX 4070 Ti+ | < 1.5 秒 |
 
-推論單次時間:**GPU 約 1–3 秒**,**純 CPU 約 5–10 秒**。
+### 實測數據(開發機)
 
-llama-server 在程式啟動時就把 model 載入並常駐,所以熱鍵響應只等推論時間,代價是 5–6 GB 記憶體一直佔住。在意省電 / 省記憶體的人不適合這支程式 — 拿低階筆電想跑這個會很吃力,建議至少 16 GB RAM + 中階獨顯。
+```
+CPU:  Intel Core i9-14900KF
+GPU:  NVIDIA GeForce RTX 4070 Ti(12 GB VRAM)
+RAM:  64 GB
+```
+
+| 狀態 | llama-server RAM | GPU VRAM | GPU 使用率 | CPU 使用率 |
+|---|---|---|---|---|
+| **待機**(model 載入,等熱鍵) | 5,403 MB | 7,377 MiB(含其他 GPU app baseline) | ~0%(程式自身) | < 1% |
+| **OCR + 翻譯中**(1–3 秒) | 5,434 MB(peak) | 7,357 MiB(peak) | **62–80%**(LLM 推論期間)| 5–10% |
+
+推論單次時間在這台機器約 **1–3 秒**(包含 OCR + 翻譯)。CPU 模式(沒 GPU)推論會慢到 **5–10 秒**,且 CPU 會吃滿 70–100%(全 core)。
+
+llama-server 在程式啟動時就把 model 載入並常駐,熱鍵響應只等推論時間,代價是 5.4 GB 記憶體一直佔住。在意省電 / 省記憶體的人不適合這支程式 — 拿低階筆電想跑這個會很吃力。
 
 ## 安裝
 
