@@ -447,28 +447,24 @@ fn ensure_result_window_visible(app_handle: &AppHandle) {
     ) {
         Ok(window) => window,
         Err(err) => {
-            eprintln!(
-                "[emit] ensure_result_window_visible: window_exists={} was_visible={} err={}",
-                false, false, err
-            );
+            eprintln!("[emit] ensure_result_window_visible: window creation failed: {err}");
             return;
         }
     };
-    let was_visible = window.is_visible().ok().unwrap_or(false);
-    eprintln!(
-        "[emit] ensure_result_window_visible: window_exists={} was_visible={}",
-        true, was_visible
-    );
-    if was_visible {
-        return;
+
+    if let Err(err) = window.unminimize() {
+        eprintln!("[emit] unminimize failed: {err}");
     }
+
     if let Err(err) = window.show() {
-        eprintln!(
-            "[emit] ensure_result_window_visible: show failed err={}",
-            err
-        );
+        eprintln!("[emit] show failed: {err}");
         return;
     }
+
+    if let Err(err) = window.set_focus() {
+        eprintln!("[emit] set_focus failed: {err}");
+    }
+
     thread::sleep(Duration::from_millis(50));
 }
 
