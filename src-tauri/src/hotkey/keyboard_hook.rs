@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::{mpsc, Mutex, OnceLock, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use std::{env, fmt};
@@ -12,13 +12,14 @@ use crate::drag_overlay;
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetCursorPos, GetMessageW, GetPhysicalCursorPos, PostThreadMessageW,
-    SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 const VK_ESCAPE: u32 = 0x1B;
@@ -26,6 +27,12 @@ const HOTKEY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 static HOTKEY_RUNTIME: OnceLock<HotkeyRuntime> = OnceLock::new();
 static HOTKEY_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
+static MODIFIER_STATE: AtomicU8 = AtomicU8::new(0);
+
+const MOD_CTRL: u8 = 1 << 0;
+const MOD_SHIFT: u8 = 1 << 1;
+const MOD_ALT: u8 = 1 << 2;
+const MOD_WIN: u8 = 1 << 3;
 
 struct HotkeyRuntime {
     thread_id: u32,
@@ -52,6 +59,8 @@ pub fn install() -> io::Result<()> {
     if HOTKEY_RUNTIME.get().is_some() {
         return Ok(());
     }
+
+    MODIFIER_STATE.store(0, Ordering::Relaxed);
 
     let trace_enabled = matches!(env::var("C2T_HOTKEY_TRACE").ok().as_deref(), Some("1"));
     HOTKEY_TRACE_ENABLED.store(trace_enabled, Ordering::Relaxed);
@@ -216,16 +225,22 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     let message = wparam.0 as u32;
+    let kbd = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
+    let vk = kbd.vkCode;
+    let injected = (kbd.flags.0 & LLKHF_INJECTED.0) != 0;
+
+    if !injected {
+        if let Some(bit) = vk_to_modifier_bit(vk) {
+            match message {
+                WM_KEYDOWN | WM_SYSKEYDOWN => set_modifier(bit, true),
+                WM_KEYUP | WM_SYSKEYUP => set_modifier(bit, false),
+                _ => {}
+            }
+        }
+    }
+
     if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
-        let kbd = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let vk = kbd.vkCode;
-
-        let ctrl_down = key_down(i32::from(VK_CONTROL.0));
-        let shift_down = key_down(i32::from(VK_SHIFT.0));
-        let win_down = key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0));
-        let alt_down = key_down(i32::from(VK_MENU.0));
-
-        let no_modifiers = !win_down && !ctrl_down && !shift_down && !alt_down;
+        let no_modifiers = MODIFIER_STATE.load(Ordering::Relaxed) == 0;
         if vk == VK_ESCAPE && no_modifiers {
             if drag_overlay::is_active() {
                 drag_overlay::cancel();
@@ -234,16 +249,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             return unsafe { CallNextHookEx(None, code, wparam, lparam) };
         }
 
-        let modifiers = crate::window_state::HotkeyModifiers {
-            ctrl: ctrl_down,
-            shift: shift_down,
-            alt: alt_down,
-            win: win_down,
-        };
+        let modifiers = current_modifiers();
         let cfg = config();
 
         if let Some(kind) = matched_kind(vk, modifiers, cfg) {
-            unsafe { send_ctrl_tap() };
+            if !injected {
+                unsafe { send_ctrl_tap() };
+            }
             match kind {
                 HotkeyKind::Q => {
                     trace_consumed(HotkeyKind::Q);
@@ -268,15 +280,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     if message == WM_KEYUP || message == WM_SYSKEYUP {
-        let kbd = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let vk = kbd.vkCode;
-        let modifiers = crate::window_state::HotkeyModifiers {
-            ctrl: key_down(i32::from(VK_CONTROL.0)),
-            shift: key_down(i32::from(VK_SHIFT.0)),
-            alt: key_down(i32::from(VK_MENU.0)),
-            win: key_down(i32::from(VK_LWIN.0)) || key_down(i32::from(VK_RWIN.0)),
-        };
-        if matched_kind(vk, modifiers, config()).is_some() {
+        if matched_kind(vk, current_modifiers(), config()).is_some() {
             return LRESULT(1);
         }
     }
@@ -370,8 +374,38 @@ impl fmt::Display for HotkeyKind {
     }
 }
 
-fn key_down(vk: i32) -> bool {
-    (unsafe { GetKeyState(vk) } as u16 & 0x8000) != 0
+fn set_modifier(bit: u8, on: bool) {
+    if on {
+        MODIFIER_STATE.fetch_or(bit, Ordering::Relaxed);
+    } else {
+        MODIFIER_STATE.fetch_and(!bit, Ordering::Relaxed);
+    }
+}
+
+fn current_modifiers() -> crate::window_state::HotkeyModifiers {
+    let state = MODIFIER_STATE.load(Ordering::Relaxed);
+    crate::window_state::HotkeyModifiers {
+        ctrl: (state & MOD_CTRL) != 0,
+        shift: (state & MOD_SHIFT) != 0,
+        alt: (state & MOD_ALT) != 0,
+        win: (state & MOD_WIN) != 0,
+    }
+}
+
+fn vk_to_modifier_bit(vk: u32) -> Option<u8> {
+    if vk == VK_CONTROL.0 as u32 || vk == VK_LCONTROL.0 as u32 || vk == VK_RCONTROL.0 as u32 {
+        return Some(MOD_CTRL);
+    }
+    if vk == VK_SHIFT.0 as u32 || vk == VK_LSHIFT.0 as u32 || vk == VK_RSHIFT.0 as u32 {
+        return Some(MOD_SHIFT);
+    }
+    if vk == VK_MENU.0 as u32 || vk == VK_LMENU.0 as u32 || vk == VK_RMENU.0 as u32 {
+        return Some(MOD_ALT);
+    }
+    if vk == VK_LWIN.0 as u32 || vk == VK_RWIN.0 as u32 {
+        return Some(MOD_WIN);
+    }
+    None
 }
 
 fn read_cursor_point() -> Option<CursorPoint> {
