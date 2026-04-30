@@ -86,7 +86,9 @@ pub fn show_result_window(app: AppHandle) -> Result<(), String> {
     window
         .set_always_on_top(state.popup_topmost)
         .map_err(|err| err.to_string())?;
-    window.show().map_err(|err| err.to_string())
+    let _ = window.unminimize();
+    window.show().map_err(|err| err.to_string())?;
+    window.set_focus().map_err(|err| err.to_string())
 }
 
 #[tauri::command]
