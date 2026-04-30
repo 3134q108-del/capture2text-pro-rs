@@ -1,11 +1,50 @@
 use std::process::{Child, Command};
+use std::os::windows::io::AsRawHandle;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 use super::app_dir;
 use super::manifest::{self, ModelId};
 
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
+
+fn get_or_init_job() -> Option<HANDLE> {
+    JOB_HANDLE.get_or_init(|| unsafe {
+        let h = match CreateJobObjectW(None, None) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[llama-runtime] CreateJobObject failed: {e:?}");
+                return 0;
+            }
+        };
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(e) = SetInformationJobObject(
+            h,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) {
+            eprintln!("[llama-runtime] SetInformationJobObject failed: {e:?}");
+        }
+
+        h.0 as isize
+    });
+
+    let raw = *JOB_HANDLE.get()?;
+    if raw == 0 {
+        None
+    } else {
+        Some(HANDLE(raw as *mut std::ffi::c_void))
+    }
+}
 
 pub fn spawn_for(id: &ModelId) -> Result<(), String> {
     let spec = manifest::lookup(id).ok_or_else(|| "unknown model".to_string())?;
@@ -47,6 +86,20 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
     let child = command
         .spawn()
         .map_err(|e| format!("spawn llama-server failed: {e}"))?;
+
+    unsafe {
+        if let Some(job) = get_or_init_job() {
+            let raw = child.as_raw_handle();
+            let proc_handle = HANDLE(raw as *mut std::ffi::c_void);
+            if let Err(e) = AssignProcessToJobObject(job, proc_handle) {
+                eprintln!(
+                    "[llama-runtime] AssignProcessToJobObject failed (continuing without auto-cleanup): {e:?}"
+                );
+            } else {
+                eprintln!("[llama-runtime] child assigned to job (auto-cleanup on parent death)");
+            }
+        }
+    }
 
     eprintln!("[llama-runtime] spawned pid={} for model={:?}", child.id(), id);
     let slot = LLAMA_CHILD.get_or_init(|| Mutex::new(None));
