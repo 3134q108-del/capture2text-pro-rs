@@ -129,37 +129,41 @@ pub fn list_runtime() -> io::Result<Vec<Scenario>> {
 }
 
 pub fn upsert_runtime(scenario: Scenario) -> io::Result<()> {
-    let mut runtime = runtime_guard()?;
-    if let Some(existing) = runtime.scenarios.iter_mut().find(|item| item.id == scenario.id) {
-        existing.name = scenario.name;
-        existing.prompt = scenario.prompt;
-        if !existing.builtin {
-            existing.builtin = scenario.builtin;
+    {
+        let mut runtime = runtime_guard()?;
+        if let Some(existing) = runtime.scenarios.iter_mut().find(|item| item.id == scenario.id) {
+            existing.name = scenario.name;
+            existing.prompt = scenario.prompt;
+            if !existing.builtin {
+                existing.builtin = scenario.builtin;
+            }
+        } else {
+            runtime.scenarios.push(scenario);
         }
-    } else {
-        runtime.scenarios.push(scenario);
+        runtime.scenarios = merge_builtin(runtime.scenarios.clone());
+        persist_runtime(&runtime)?;
     }
-    runtime.scenarios = merge_builtin(runtime.scenarios.clone());
-    persist_runtime(&runtime)?;
     emit_scenarios_changed();
     Ok(())
 }
 
 pub fn delete_runtime(id: &str) -> io::Result<()> {
-    let mut runtime = runtime_guard()?;
-    if let Some(s) = runtime.scenarios.iter().find(|item| item.id == id) {
-        if s.builtin {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "builtin scenario cannot be deleted",
-            ));
+    {
+        let mut runtime = runtime_guard()?;
+        if let Some(s) = runtime.scenarios.iter().find(|item| item.id == id) {
+            if s.builtin {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "builtin scenario cannot be deleted",
+                ));
+            }
         }
-    }
 
-    runtime.scenarios.retain(|item| item.id != id);
-    runtime.scenarios = merge_builtin(runtime.scenarios.clone());
-    runtime.active_id = sanitize_active_id(&runtime.scenarios, &runtime.active_id);
-    persist_runtime(&runtime)?;
+        runtime.scenarios.retain(|item| item.id != id);
+        runtime.scenarios = merge_builtin(runtime.scenarios.clone());
+        runtime.active_id = sanitize_active_id(&runtime.scenarios, &runtime.active_id);
+        persist_runtime(&runtime)?;
+    }
     emit_scenarios_changed();
     Ok(())
 }
@@ -172,9 +176,11 @@ pub fn get_active_scenario_id() -> String {
 }
 
 pub fn set_active_scenario_id(id: String) -> io::Result<()> {
-    let mut runtime = runtime_guard()?;
-    runtime.active_id = sanitize_active_id(&runtime.scenarios, &id);
-    persist_runtime(&runtime)?;
+    {
+        let mut runtime = runtime_guard()?;
+        runtime.active_id = sanitize_active_id(&runtime.scenarios, &id);
+        persist_runtime(&runtime)?;
+    }
     emit_scenarios_changed();
     Ok(())
 }
