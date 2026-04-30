@@ -38,3 +38,6 @@ T[0-9]*_BRIEFING.md
 
 # Claude Code local project settings
 .claude/
+
+# Upstream Capture2Text source for reference only(GPL,not redistributed in our repo)
+upstream-reference/

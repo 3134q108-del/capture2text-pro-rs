@@ -26,6 +26,7 @@ pub fn run() {
     app_paths::ensure_migration();
 
     let mut builder = tauri::Builder::default()
+        .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = crate::commands::result_window::show_settings_window(app.clone());
         }));
