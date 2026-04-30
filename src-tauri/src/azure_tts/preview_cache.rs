@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use std::collections::hash_map::DefaultHasher;
 
 pub fn cache_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir().ok_or_else(|| "local appdata not found".to_string())?;
-    Ok(base.join("Capture2TextPro").join("tts_preview_cache"))
+    Ok(crate::app_paths::data_dir().join("tts_preview_cache"))
 }
 
 pub fn cache_path(voice_id: &str, rate: f32, volume: f32) -> Result<PathBuf, String> {

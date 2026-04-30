@@ -223,8 +223,7 @@ fn default_clipboard_mode() -> ClipboardMode {
 }
 
 fn default_log_file_path() -> String {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("Capture2TextPro")
+    crate::app_paths::data_dir()
         .join("captures.log")
         .to_string_lossy()
         .to_string()
@@ -553,10 +552,7 @@ fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Resu
 }
 
 fn storage_path() -> std::io::Result<PathBuf> {
-    let local = dirs::data_local_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "local appdata not found")
-    })?;
-    Ok(local.join("Capture2TextPro").join("window_state.json"))
+    Ok(crate::app_paths::data_dir().join("window_state.json"))
 }
 
 fn clipboard_mode_from_legacy(save_to_clipboard: bool, translate_append_to_clipboard: bool) -> ClipboardMode {

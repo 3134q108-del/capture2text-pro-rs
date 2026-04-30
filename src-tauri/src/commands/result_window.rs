@@ -242,9 +242,7 @@ pub fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn export_settings(target_dir: String) -> Result<String, String> {
-    let src = dirs::data_local_dir()
-        .ok_or_else(|| "local appdata not found".to_string())?
-        .join("Capture2TextPro");
+    let src = crate::app_paths::data_dir();
     if !src.exists() {
         return Err("settings directory does not exist".to_string());
     }
@@ -273,9 +271,7 @@ pub fn import_settings(source_dir: String) -> Result<String, String> {
         return Err("source directory does not exist".to_string());
     }
 
-    let dst = dirs::data_local_dir()
-        .ok_or_else(|| "local appdata not found".to_string())?
-        .join("Capture2TextPro");
+    let dst = crate::app_paths::data_dir();
     std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
 
     let mut count = 0;

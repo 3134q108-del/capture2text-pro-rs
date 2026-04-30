@@ -9,6 +9,7 @@ mod hotkey;
 mod llama_runtime;
 mod overlay;
 mod output_lang;
+mod app_paths;
 mod app_handle;
 mod azure_tts;
 mod scenarios;
@@ -22,6 +23,8 @@ pub use crate::capture::preprocess;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    app_paths::ensure_migration();
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = crate::commands::result_window::show_settings_window(app.clone());

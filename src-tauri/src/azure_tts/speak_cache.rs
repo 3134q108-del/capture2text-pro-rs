@@ -5,8 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 pub fn cache_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_local_dir().ok_or_else(|| "local appdata not found".to_string())?;
-    Ok(base.join("Capture2TextPro").join("tts_speak_cache"))
+    Ok(crate::app_paths::data_dir().join("tts_speak_cache"))
 }
 
 pub fn cache_path(voice_id: &str, text: &str, rate: f32, volume: f32) -> Result<PathBuf, String> {

@@ -69,9 +69,7 @@ pub fn builtin_default() -> Vec<Scenario> {
 }
 
 pub fn storage_path() -> io::Result<PathBuf> {
-    let local = dirs::data_local_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "local appdata not found"))?;
-    Ok(local.join("Capture2TextPro").join("scenarios.json"))
+    Ok(crate::app_paths::data_dir().join("scenarios.json"))
 }
 
 pub fn load_scenarios() -> io::Result<Vec<Scenario>> {

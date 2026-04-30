@@ -52,9 +52,7 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
 }
 
 pub fn app_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Capture2TextPro")
+    crate::app_paths::data_dir()
 }
 
 fn set_active_model(model: Option<ModelId>) {

@@ -97,7 +97,5 @@ fn persist(lang: &str) -> io::Result<()> {
 }
 
 fn storage_path() -> io::Result<PathBuf> {
-    let local = dirs::data_local_dir()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "local appdata not found"))?;
-    Ok(local.join("Capture2TextPro").join("output_lang.txt"))
+    Ok(crate::app_paths::data_dir().join("output_lang.txt"))
 }

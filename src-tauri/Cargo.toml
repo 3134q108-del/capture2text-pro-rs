@@ -58,10 +58,5 @@ wiremock = "0.6"
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
 
-# Release build crash workaround:
-# rustc 1.94.1 在 release codegen 階段隨機撞 STATUS_HEAP_CORRUPTION / ACCESS_VIOLATION
-# (試過 cargo clean / CARGO_BUILD_JOBS=1 都沒解)
-# codegen-units = 1 強制 serialize 內部 codegen, incremental = false 排除 cache 殘留
-[profile.release]
-codegen-units = 1
-incremental = false
+# Release profile 用 cargo default(codegen-units=16, lto=off, opt-level=3)
+# rustc 1.95.0 + 全新 toolchain reinstall 後,codegen-units=1 反而觸發 lib 階段 crash,改回 default
