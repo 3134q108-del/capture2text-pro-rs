@@ -121,6 +121,12 @@ pub struct WindowState {
     pub hotkey_w: HotkeyBinding,
     #[serde(default = "default_hotkey_e")]
     pub hotkey_e: HotkeyBinding,
+    #[serde(default = "default_native_lang")]
+    pub native_lang: String,
+    #[serde(default = "default_target_lang")]
+    pub target_lang: String,
+    #[serde(default = "default_enabled_langs")]
+    pub enabled_langs: Vec<String>,
 }
 
 impl Default for WindowState {
@@ -156,6 +162,9 @@ impl Default for WindowState {
             hotkey_q: default_hotkey_q(),
             hotkey_w: default_hotkey_w(),
             hotkey_e: default_hotkey_e(),
+            native_lang: default_native_lang(),
+            target_lang: default_target_lang(),
+            enabled_langs: default_enabled_langs(),
         }
     }
 }
@@ -227,6 +236,24 @@ fn default_log_file_path() -> String {
         .join("captures.log")
         .to_string_lossy()
         .to_string()
+}
+
+fn default_native_lang() -> String {
+    "zh-TW".to_string()
+}
+
+fn default_target_lang() -> String {
+    "en-US".to_string()
+}
+
+fn default_enabled_langs() -> Vec<String> {
+    vec![
+        "zh-CN".to_string(),
+        "zh-TW".to_string(),
+        "en-US".to_string(),
+        "ja-JP".to_string(),
+        "ko-KR".to_string(),
+    ]
 }
 
 static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
@@ -472,6 +499,41 @@ pub fn set_hotkey_e(binding: HotkeyBinding) {
     });
 }
 
+pub fn native_lang() -> String {
+    get().native_lang
+}
+
+pub fn target_lang() -> String {
+    get().target_lang
+}
+
+pub fn enabled_langs() -> Vec<String> {
+    get().enabled_langs
+}
+
+pub fn set_native_lang(lang: String) -> Result<(), String> {
+    let state = get();
+    set_language_preferences(lang, state.target_lang, state.enabled_langs)
+}
+
+pub fn set_target_lang(lang: String) -> Result<(), String> {
+    let state = get();
+    set_language_preferences(state.native_lang, lang, state.enabled_langs)
+}
+
+pub fn set_enabled_langs(langs: Vec<String>) -> Result<(), String> {
+    let state = get();
+    set_language_preferences(state.native_lang, state.target_lang, langs)
+}
+
+pub fn set_language_preferences(
+    native_lang: String,
+    target_lang: String,
+    enabled_langs: Vec<String>,
+) -> Result<(), String> {
+    update_result(|state| apply_language_preferences(state, native_lang, target_lang, enabled_langs))
+}
+
 fn update(mutator: impl FnOnce(&mut WindowState)) {
     let slot = WINDOW_STATE.get_or_init(|| Mutex::new(load_or_default()));
     let snapshot = if let Ok(mut guard) = slot.lock() {
@@ -490,11 +552,40 @@ fn update(mutator: impl FnOnce(&mut WindowState)) {
     }
 }
 
+fn update_result(mutator: impl FnOnce(&mut WindowState) -> Result<(), String>) -> Result<(), String> {
+    let slot = WINDOW_STATE.get_or_init(|| Mutex::new(load_or_default()));
+    let snapshot = if let Ok(mut guard) = slot.lock() {
+        mutator(&mut guard)?;
+        persist_best_effort(&guard);
+        Some(guard.clone())
+    } else {
+        return Err("window_state lock poisoned".to_string());
+    };
+
+    if let Some(snap) = snapshot {
+        if let Some(app) = crate::app_handle::get() {
+            use tauri::Emitter;
+            let _ = app.emit("window-state-changed", &snap);
+        }
+    }
+    Ok(())
+}
+
 fn load_or_default() -> WindowState {
     let mut state = load_from_disk().unwrap_or_default();
+    migrate_legacy_output_lang(&mut state);
     sanitize_clipboard_mode(&mut state);
     if state.speech_active_preset.trim().is_empty() {
         state.speech_active_preset = default_active_preset();
+    }
+    let native = state.native_lang.clone();
+    let target = state.target_lang.clone();
+    let enabled = state.enabled_langs.clone();
+    if apply_language_preferences(&mut state, native, target, enabled).is_err() {
+        let defaults = default_enabled_langs();
+        state.native_lang = default_native_lang();
+        state.target_lang = default_target_lang();
+        state.enabled_langs = defaults;
     }
     persist_best_effort(&state);
     state
@@ -555,6 +646,10 @@ fn storage_path() -> std::io::Result<PathBuf> {
     Ok(crate::app_paths::data_dir().join("window_state.json"))
 }
 
+fn legacy_output_lang_path() -> std::io::Result<PathBuf> {
+    Ok(crate::app_paths::data_dir().join("output_lang.txt"))
+}
+
 fn clipboard_mode_from_legacy(save_to_clipboard: bool, translate_append_to_clipboard: bool) -> ClipboardMode {
     if !save_to_clipboard {
         ClipboardMode::None
@@ -596,6 +691,106 @@ fn sanitize_clipboard_mode(state: &mut WindowState) {
     sync_legacy_clipboard_fields(state);
 }
 
+fn normalize_language_code(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let canonical_guess = match trimmed.to_ascii_lowercase().as_str() {
+        "zh" | "zh-tw" => "zh-TW",
+        "zh-cn" => "zh-CN",
+        "en" | "en-us" => "en-US",
+        "ja" | "ja-jp" => "ja-JP",
+        "ko" | "ko-kr" => "ko-KR",
+        "fr" | "fr-fr" => "fr-FR",
+        "de" | "de-de" => "de-DE",
+        _ => trimmed,
+    };
+
+    if let Some(lang) = crate::languages::by_code(canonical_guess) {
+        return Some(lang.code.as_str().to_string());
+    }
+
+    crate::languages::all()
+        .iter()
+        .find(|lang| lang.code.as_str().eq_ignore_ascii_case(canonical_guess))
+        .map(|lang| lang.code.as_str().to_string())
+}
+
+fn dedup_language_codes(codes: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for code in codes {
+        if !out.iter().any(|existing| existing == &code) {
+            out.push(code);
+        }
+    }
+    out
+}
+
+fn apply_language_preferences(
+    state: &mut WindowState,
+    native_lang: String,
+    target_lang: String,
+    enabled_langs: Vec<String>,
+) -> Result<(), String> {
+    let native = normalize_language_code(&native_lang)
+        .ok_or_else(|| format!("invalid native_lang: {}", native_lang))?;
+    let target = normalize_language_code(&target_lang)
+        .ok_or_else(|| format!("invalid target_lang: {}", target_lang))?;
+
+    let mut enabled = Vec::new();
+    for code in enabled_langs {
+        let normalized = normalize_language_code(&code)
+            .ok_or_else(|| format!("invalid enabled_lang code: {}", code))?;
+        enabled.push(normalized);
+    }
+    let enabled = dedup_language_codes(enabled);
+    if enabled.is_empty() {
+        return Err("enabled_langs must not be empty".to_string());
+    }
+    if native == target {
+        return Err("native_lang and target_lang must be different".to_string());
+    }
+    if !enabled.iter().any(|code| code == &native) {
+        return Err("native_lang must be included in enabled_langs".to_string());
+    }
+    if !enabled.iter().any(|code| code == &target) {
+        return Err("target_lang must be included in enabled_langs".to_string());
+    }
+
+    state.native_lang = native;
+    state.target_lang = target;
+    state.enabled_langs = enabled;
+    Ok(())
+}
+
+fn migrate_legacy_output_lang(state: &mut WindowState) {
+    if state.enabled_langs.is_empty() {
+        state.enabled_langs = default_enabled_langs();
+    }
+
+    let Ok(path) = legacy_output_lang_path() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
+    let Ok(raw) = fs::read_to_string(path) else {
+        return;
+    };
+    let Some(legacy) = normalize_language_code(raw.trim()) else {
+        return;
+    };
+
+    let mut next = state.enabled_langs.clone();
+    next.push(legacy.clone());
+    state.enabled_langs = dedup_language_codes(next);
+
+    if state.target_lang.trim().is_empty() {
+        state.target_lang = legacy;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,5 +823,53 @@ mod tests {
         );
         assert_eq!(state.azure_usage_neural_chars, 7);
         assert_eq!(state.azure_usage_hd_chars, 42);
+    }
+
+    #[test]
+    fn language_preferences_require_non_empty_enabled_langs() {
+        let mut state = WindowState::default();
+        let result = apply_language_preferences(
+            &mut state,
+            "zh-TW".to_string(),
+            "en-US".to_string(),
+            vec![],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn language_preferences_require_distinct_native_and_target() {
+        let mut state = WindowState::default();
+        let result = apply_language_preferences(
+            &mut state,
+            "zh-TW".to_string(),
+            "zh-TW".to_string(),
+            vec!["zh-TW".to_string(), "en-US".to_string()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn language_preferences_require_native_and_target_in_enabled() {
+        let mut state = WindowState::default();
+        let result = apply_language_preferences(
+            &mut state,
+            "zh-TW".to_string(),
+            "en-US".to_string(),
+            vec!["zh-TW".to_string()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn language_preferences_reject_unknown_language_code() {
+        let mut state = WindowState::default();
+        let result = apply_language_preferences(
+            &mut state,
+            "xx-XX".to_string(),
+            "en-US".to_string(),
+            vec!["zh-TW".to_string(), "en-US".to_string()],
+        );
+        assert!(result.is_err());
     }
 }
