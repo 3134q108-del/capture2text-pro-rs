@@ -147,27 +147,47 @@ fn stop_player_silent(state: &TtsRuntime) {
 }
 
 fn default_voice_for_lang(lang: &str) -> &'static str {
-    match lang {
-        "zh-TW" => "zh-TW-HsiaoChenNeural",
-        "zh-CN" => "zh-CN-XiaoxiaoNeural",
-        "en-US" | "en-GB" | "en" => "en-US-AvaMultilingualNeural",
-        "ja-JP" | "ja" => "ja-JP-NanamiNeural",
-        "ko-KR" | "ko" => "ko-KR-SunHiNeural",
-        "de-DE" | "de" => "de-DE-SeraphinaMultilingualNeural",
-        "fr-FR" | "fr" => "fr-FR-VivienneMultilingualNeural",
-        _ => "en-US-AvaMultilingualNeural",
-    }
+    crate::languages::by_code(normalize_lang(lang))
+        .map(|lang| lang.default_voice_id)
+        .unwrap_or("en-US-AvaNeural")
 }
 
 fn normalize_lang(lang: &str) -> &str {
-    match lang {
-        "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR" | "de-DE" | "fr-FR" => lang,
-        "en" | "en-GB" => "en-US",
-        "ja" => "ja-JP",
-        "ko" => "ko-KR",
-        "de" => "de-DE",
-        "fr" => "fr-FR",
-        _ => lang,
+    let trimmed = lang.trim();
+    match trimmed.to_ascii_lowercase().as_str() {
+        "zh" | "zh-tw" => "zh-TW",
+        "zh-cn" => "zh-CN",
+        "en" | "en-us" | "en-gb" => "en-US",
+        "ja" | "ja-jp" => "ja-JP",
+        "ko" | "ko-kr" => "ko-KR",
+        "fr" | "fr-fr" => "fr-FR",
+        "de" | "de-de" => "de-DE",
+        "es" | "es-es" => "es-ES",
+        "pt" | "pt-pt" => "pt-PT",
+        "it" | "it-it" => "it-IT",
+        "ru" | "ru-ru" => "ru-RU",
+        "vi" | "vi-vn" => "vi-VN",
+        "ar" | "ar-sa" => "ar-SA",
+        "id" | "id-id" => "id-ID",
+        "th" | "th-th" => "th-TH",
+        "hi" | "hi-in" => "hi-IN",
+        "el" | "el-gr" => "el-GR",
+        "he" | "he-il" => "he-IL",
+        "tr" | "tr-tr" => "tr-TR",
+        "pl" | "pl-pl" => "pl-PL",
+        "nl" | "nl-nl" => "nl-NL",
+        "uk" | "uk-ua" => "uk-UA",
+        "cs" | "cs-cz" => "cs-CZ",
+        "sv" | "sv-se" => "sv-SE",
+        "da" | "da-dk" => "da-DK",
+        "no" | "no-no" => "no-NO",
+        "fi" | "fi-fi" => "fi-FI",
+        "hu" | "hu-hu" => "hu-HU",
+        "ro" | "ro-ro" => "ro-RO",
+        "bg" | "bg-bg" => "bg-BG",
+        "ms" | "ms-my" => "ms-MY",
+        "tl" | "fil" | "fil-ph" => "fil-PH",
+        _ => trimmed,
     }
 }
 
