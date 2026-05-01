@@ -6,6 +6,7 @@ mod commands;
 mod drag_overlay;
 mod error;
 mod hotkey;
+mod languages;
 mod llama_runtime;
 mod overlay;
 mod output_lang;
