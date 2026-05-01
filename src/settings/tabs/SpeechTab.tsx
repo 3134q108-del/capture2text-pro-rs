@@ -1,13 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import {
   deleteAzureCredentials,
   getAzureCredentialsStatus,
+  getSpeechRate,
+  getSpeechVolume,
   getVoiceRouting,
   listAzureVoices,
   previewVoice,
   saveAzureCredentials,
+  setSpeechRate,
+  setSpeechVolume,
   setVoiceRouting,
+  stopSpeaking,
   testAzureConnection,
   type AzureCredentialsStatus,
   type AzureVoice,
@@ -24,6 +30,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Slider,
   StatusText,
 } from "@/components/ui";
 
@@ -75,6 +82,8 @@ export default function SpeechTab() {
   const [statusMsg, setStatusMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [previewingLang, setPreviewingLang] = useState<string | null>(null);
+  const [speechRate, setSpeechRateState] = useState(1.0);
+  const [speechVolume, setSpeechVolumeState] = useState(1.0);
 
   const [enabledLanguages, setEnabledLanguages] = useState<LanguageItem[]>([]);
   const [voicesByLang, setVoicesByLang] = useState<Record<string, AzureVoice[]>>({});
@@ -88,14 +97,18 @@ export default function SpeechTab() {
 
   async function refreshInitial() {
     try {
-      const [status, route, allLanguages, enabled] = await Promise.all([
+      const [status, route, allLanguages, enabled, rate, volume] = await Promise.all([
         getAzureCredentialsStatus(),
         getVoiceRouting(),
         invoke<LanguageItem[]>("get_languages"),
         invoke<string[]>("get_enabled_langs"),
+        getSpeechRate(),
+        getSpeechVolume(),
       ]);
       setCredStatus(status);
       setRouting(route);
+      setSpeechRateState(rate);
+      setSpeechVolumeState(volume);
       if (status.region) {
         setRegion(status.region);
       }
@@ -109,10 +122,32 @@ export default function SpeechTab() {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: undefined | (() => void);
+    listen<{ target?: string }>("tts-done", () => {
+      setPreviewingLang(null);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   async function saveAndTest() {
     const key = keyInput.trim();
+    if (!key && credStatus.configured) {
+      await testAndLoadVoices();
+      return;
+    }
     if (!key) {
-      setStatusMsg("Azure subscription key is required.");
+      setStatusMsg("請輸入 Azure 訂閱金鑰。");
       return;
     }
 
@@ -141,7 +176,7 @@ export default function SpeechTab() {
       setRouting({});
       setTestStatus("idle");
       setTestError("");
-      setStatusMsg("Azure credentials deleted.");
+      setStatusMsg("Azure 認證已刪除。");
     } catch (error) {
       setStatusMsg(String(error));
     } finally {
@@ -175,7 +210,7 @@ export default function SpeechTab() {
     try {
       await setVoiceRouting(lang, voiceId);
       setRouting((prev) => ({ ...prev, [lang]: voiceId }));
-      setStatusMsg(`${lang} voice updated.`);
+      setStatusMsg(`${lang} 音色已更新。`);
     } catch (error) {
       setStatusMsg(String(error));
     }
@@ -186,9 +221,36 @@ export default function SpeechTab() {
       setPreviewingLang(lang);
       await previewVoice(lang, voiceId);
     } catch (error) {
-      setStatusMsg(`Preview failed: ${String(error)}`);
+      setStatusMsg(`試聽失敗：${String(error)}`);
+      setPreviewingLang(null);
+    }
+  }
+
+  async function handleStopPreview() {
+    try {
+      await stopSpeaking();
+    } catch (error) {
+      setStatusMsg(`停止失敗：${String(error)}`);
     } finally {
       setPreviewingLang(null);
+    }
+  }
+
+  async function handleRateChange(value: number) {
+    setSpeechRateState(value);
+    try {
+      await setSpeechRate(value);
+    } catch (error) {
+      setStatusMsg(`朗讀速度更新失敗：${String(error)}`);
+    }
+  }
+
+  async function handleVolumeChange(value: number) {
+    setSpeechVolumeState(value);
+    try {
+      await setSpeechVolume(value);
+    } catch (error) {
+      setStatusMsg(`音量更新失敗：${String(error)}`);
     }
   }
 
@@ -207,22 +269,22 @@ export default function SpeechTab() {
   return (
     <div className="flex flex-col gap-4">
       <Section>
-        <SectionHeader title="Azure TTS" />
+        <SectionHeader title="Azure 語音合成" />
         <SectionBody>
-          <FormField label="Subscription Key" htmlFor="azure-subscription-key">
+          <FormField label="訂閱金鑰" htmlFor="azure-subscription-key">
             <Input
               id="azure-subscription-key"
               type="password"
               value={keyInput}
-              placeholder={credStatus.configured ? "Enter new key to replace existing one" : "Enter Azure subscription key"}
+              placeholder={credStatus.configured ? "輸入新金鑰以取代現有金鑰" : "輸入 Azure 訂閱金鑰"}
               onChange={(event) => setKeyInput(event.target.value)}
             />
           </FormField>
 
-          <FormField label="Region" htmlFor="azure-region-select">
+          <FormField label="區域" htmlFor="azure-region-select">
             <Select value={region} onValueChange={(value) => setRegion(value)}>
               <SelectTrigger id="azure-region-select">
-                <SelectValue placeholder="Select region" />
+                <SelectValue placeholder="選擇區域" />
               </SelectTrigger>
               <SelectContent>
                 {REGIONS.map((item) => (
@@ -236,25 +298,51 @@ export default function SpeechTab() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="primary" disabled={saving} onClick={() => void saveAndTest()}>
-              Save & Test
+              儲存並測試
             </Button>
             <Button type="button" variant="secondary" disabled={!credStatus.configured} onClick={() => void testAndLoadVoices()}>
-              Test
+              測試
             </Button>
             <Button type="button" variant="destructive" disabled={!credStatus.configured || saving} onClick={() => void deleteCredentials()}>
-              Delete
+              刪除
             </Button>
           </div>
 
           <StatusText tone="info" size="sm">
-            {credStatus.configured ? `Configured (${credStatus.region ?? region})` : "Not configured"}
+            {credStatus.configured ? `已設定 (${credStatus.region ?? region})` : "未設定"}
           </StatusText>
           {testError ? <StatusText tone="error" size="sm">{testError}</StatusText> : null}
         </SectionBody>
       </Section>
 
       <Section>
-        <SectionHeader title="Voice Routing" description="Only enabled languages are shown here." />
+        <SectionHeader title="朗讀控制" description="調整 OCR 結果朗讀的速度與音量。" />
+        <SectionBody>
+          <FormField label={`朗讀速度（${speechRate.toFixed(2)}x）`} htmlFor="speech-rate-slider">
+            <Slider
+              id="speech-rate-slider"
+              value={[speechRate]}
+              onValueChange={(v) => void handleRateChange(v[0])}
+              min={0.5}
+              max={2.0}
+              step={0.05}
+            />
+          </FormField>
+          <FormField label={`音量（${(speechVolume * 100).toFixed(0)}%）`} htmlFor="speech-volume-slider">
+            <Slider
+              id="speech-volume-slider"
+              value={[speechVolume]}
+              onValueChange={(v) => void handleVolumeChange(v[0])}
+              min={0.5}
+              max={2.0}
+              step={0.05}
+            />
+          </FormField>
+        </SectionBody>
+      </Section>
+
+      <Section>
+        <SectionHeader title="音色路由" description="僅顯示在語言 tab 中啟用的語言。" />
         <SectionBody>
           <div className="grid gap-3">
             {enabledLanguages.map((item) => {
@@ -266,7 +354,7 @@ export default function SpeechTab() {
                   <div className="mb-2 text-sm font-medium text-foreground">
                     {item.native_name} ({item.english_name}) - {item.code}
                   </div>
-                  <FormField label="Voice" htmlFor={`voice-select-${item.code}`}>
+                  <FormField label="音色" htmlFor={`voice-select-${item.code}`}>
                     <div className="flex items-center gap-2">
                       <div className="min-w-0 flex-1">
                         <Select
@@ -275,7 +363,7 @@ export default function SpeechTab() {
                           disabled={!canOperate}
                         >
                           <SelectTrigger id={`voice-select-${item.code}`}>
-                            <SelectValue placeholder="Select voice" />
+                            <SelectValue placeholder="選擇音色" />
                           </SelectTrigger>
                           <SelectContent>
                             {options.map((voiceId) => (
@@ -286,20 +374,33 @@ export default function SpeechTab() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="h-11 w-24 shrink-0"
-                        disabled={!canOperate || previewingLang === item.code}
-                        onClick={() => void handlePreview(item.code, selected)}
-                      >
-                        {previewingLang === item.code ? "..." : "Preview"}
-                      </Button>
+                      {previewingLang === item.code ? (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className="h-11 w-24 shrink-0"
+                          onClick={() => void handleStopPreview()}
+                        >
+                          停止
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="h-11 w-24 shrink-0"
+                          disabled={!canOperate || previewingLang !== null}
+                          onClick={() => void handlePreview(item.code, selected)}
+                        >
+                          試聽
+                        </Button>
+                      )}
                     </div>
                   </FormField>
                   {fallbackTier ? (
                     <StatusText tone="info" size="sm">
-                      Tier {item.tier}: fallback voice may have weaker quality.
+                      {item.tier === "B"
+                        ? "進階語言：fallback 音色品質較低，可能不符合該語言發音"
+                        : "實驗語言：走英文 fallback 音色，僅供測試"}
                     </StatusText>
                   ) : null}
                 </div>

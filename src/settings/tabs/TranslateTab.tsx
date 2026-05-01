@@ -27,7 +27,12 @@ type Scenario = {
   builtin: boolean;
 };
 
-type LanguageCode = "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
+type LanguageItem = {
+  code: string;
+  native_name: string;
+  english_name: string;
+  tier: string;
+};
 
 type WindowStatePayload = {
   native_lang?: string;
@@ -41,30 +46,15 @@ const EMPTY_SCENARIO: Scenario = {
   builtin: false,
 };
 
-const LANG_OPTIONS: { code: LanguageCode; label: string }[] = [
-  { code: "zh-TW", label: "繁體中文" },
-  { code: "zh-CN", label: "简体中文" },
-  { code: "en-US", label: "English" },
-  { code: "ja-JP", label: "日本語" },
-  { code: "ko-KR", label: "한국어" },
-];
-
-function normalizeLang(value: string): LanguageCode {
-  return (
-    ["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR"] as const
-  ).includes(value as LanguageCode)
-    ? (value as LanguageCode)
-    : "zh-TW";
-}
-
 export default function TranslateTab() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [activeId, setActiveId] = useState<string>("default");
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState<Scenario>(EMPTY_SCENARIO);
 
-  const [nativeLang, setNativeLang] = useState<LanguageCode>("zh-TW");
-  const [targetLang, setTargetLang] = useState<LanguageCode>("en-US");
+  const [nativeLang, setNativeLang] = useState("zh-TW");
+  const [targetLang, setTargetLang] = useState("en-US");
+  const [enabledLangs, setEnabledLangs] = useState<LanguageItem[]>([]);
   const [savingLang, setSavingLang] = useState(false);
 
   const [statusMsg, setStatusMsg] = useState<string>("");
@@ -75,6 +65,16 @@ export default function TranslateTab() {
     [scenarios, selectedId],
   );
 
+  const languageOptions = useMemo(() => {
+    if (enabledLangs.length > 0) {
+      return enabledLangs;
+    }
+    return [
+      { code: nativeLang, native_name: nativeLang, english_name: nativeLang, tier: "" },
+      { code: targetLang, native_name: targetLang, english_name: targetLang, tier: "" },
+    ].filter((item, index, arr) => arr.findIndex((x) => x.code === item.code) === index);
+  }, [enabledLangs, nativeLang, targetLang]);
+
   useEffect(() => {
     void refresh();
   }, []);
@@ -84,7 +84,7 @@ export default function TranslateTab() {
     let offLang: undefined | (() => void);
 
     listen<string>("output-language-changed", (event) => {
-      setTargetLang(normalizeLang(event.payload));
+      setTargetLang(event.payload);
     }).then((unlisten) => {
       if (cancelled) {
         unlisten();
@@ -101,17 +101,22 @@ export default function TranslateTab() {
 
   async function refresh() {
     try {
-      const [list, active, outputLang, state] = await Promise.all([
+      const [list, active, allLanguages, enabledCodes, state] = await Promise.all([
         invoke<Scenario[]>("list_scenarios"),
         invoke<string>("get_active_scenario"),
-        invoke<string>("get_output_language"),
+        invoke<LanguageItem[]>("get_languages"),
+        invoke<string[]>("get_enabled_langs"),
         invoke<WindowStatePayload>("get_window_state"),
       ]);
 
+      const enabledSet = new Set(enabledCodes);
+      const filtered = allLanguages.filter((item) => enabledSet.has(item.code));
+
       setScenarios(list);
       setActiveId(active);
-      setNativeLang(normalizeLang(state.native_lang ?? "zh-TW"));
-      setTargetLang(normalizeLang(state.target_lang ?? outputLang));
+      setEnabledLangs(filtered);
+      setNativeLang(state.native_lang ?? "zh-TW");
+      setTargetLang(state.target_lang ?? "en-US");
 
       const fallback =
         list.find((item) => item.id === selectedId) ??
@@ -137,15 +142,13 @@ export default function TranslateTab() {
 
     setSavingLang(true);
     try {
-      try {
-        await invoke("set_language_preferences", {
-          nativeLang,
-          targetLang,
-          enabledLangs: LANG_OPTIONS.map((item) => item.code),
-        });
-      } catch {
-        await invoke("set_output_language", { lang: targetLang });
-      }
+      const currentEnabled = await invoke<string[]>("get_enabled_langs");
+      const enabled = Array.from(new Set([...currentEnabled, nativeLang, targetLang]));
+      await invoke("set_language_preferences", {
+        nativeLang,
+        targetLang,
+        enabledLangs: enabled,
+      });
       setStatusMsg("語言設定已儲存");
     } catch (error) {
       setStatusMsg(String(error));
@@ -235,14 +238,14 @@ export default function TranslateTab() {
         <SectionBody>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="母語" htmlFor="native-lang-select" required>
-              <Select value={nativeLang} onValueChange={(value) => setNativeLang(normalizeLang(value))}>
+              <Select value={nativeLang} onValueChange={(value) => setNativeLang(value)}>
                 <SelectTrigger id="native-lang-select">
                   <SelectValue placeholder="選擇母語" />
                 </SelectTrigger>
                 <SelectContent>
-                  {LANG_OPTIONS.map((option) => (
-                    <SelectItem key={`native-${option.code}`} value={option.code}>
-                      {option.label}
+                  {languageOptions.map((item) => (
+                    <SelectItem key={`native-${item.code}`} value={item.code}>
+                      {`${item.native_name} (${item.english_name})`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -250,14 +253,14 @@ export default function TranslateTab() {
             </FormField>
 
             <FormField label="目標語言" htmlFor="target-lang-select" required>
-              <Select value={targetLang} onValueChange={(value) => setTargetLang(normalizeLang(value))}>
+              <Select value={targetLang} onValueChange={(value) => setTargetLang(value)}>
                 <SelectTrigger id="target-lang-select">
                   <SelectValue placeholder="選擇目標語言" />
                 </SelectTrigger>
                 <SelectContent>
-                  {LANG_OPTIONS.map((option) => (
-                    <SelectItem key={`target-${option.code}`} value={option.code}>
-                      {option.label}
+                  {languageOptions.map((item) => (
+                    <SelectItem key={`target-${item.code}`} value={item.code}>
+                      {`${item.native_name} (${item.english_name})`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -318,8 +321,8 @@ export default function TranslateTab() {
                         >
                           <span className="truncate text-left">{item.name}</span>
                           <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                            {item.builtin ? <span>Built-in</span> : null}
-                            {item.id === activeId ? <span>Active</span> : null}
+                            {item.builtin ? <span>內建</span> : null}
+                            {item.id === activeId ? <span>使用中</span> : null}
                           </span>
                         </Button>
                       </li>
@@ -339,7 +342,7 @@ export default function TranslateTab() {
                   />
                 </FormField>
 
-                <FormField label="Prompt" htmlFor="scenario-prompt">
+                <FormField label="提示詞" htmlFor="scenario-prompt">
                   <textarea
                     id="scenario-prompt"
                     value={draft.prompt}

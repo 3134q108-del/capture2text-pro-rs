@@ -476,6 +476,7 @@ pub fn warmup() {
             model: CHAT_MODEL_NAME.to_string(),
             stream: false,
             messages: vec![ChatMessage::new_text("user", "hi".to_string())],
+            response_format: None,
         };
 
         match client.post(LLAMA_CHAT_URL).json(&request).send() {
@@ -502,66 +503,12 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     seq: Option<u64>,
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
-    let first_pass = ocr_and_translate_to_lang_streaming(png_bytes, native_lang, seq, &mut on_partial)?;
-    let effective_target = decide_effective_target(first_pass.src_lang.as_deref(), native_lang, &target_lang);
-
-    if effective_target == native_lang {
-        return Ok(first_pass);
-    }
-    if is_seq_cancelled(seq) {
-        return Err(VlmError::Cancelled);
-    }
-    if let Err(err) = llama_runtime::ensure_model_for_lang(&effective_target) {
-        return Err(VlmError::Internal(format!(
-            "switch model for lang {} failed: {err}",
-            effective_target
-        )));
-    }
-    let second_pass = translate_text_to_lang_streaming(
-        &first_pass.original,
-        &effective_target,
-        seq,
-        |_| {},
-    )?;
-    Ok(VlmOutput {
-        original: first_pass.original,
-        translated: second_pass.translated,
-        src_lang: first_pass.src_lang,
-        duration_ms: first_pass.duration_ms.saturating_add(second_pass.duration_ms),
-        seq,
-    })
-}
-
-pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
-    text: &str,
-    native_lang: &str,
-    target_lang: &str,
-    on_partial: F,
-) -> VlmResult<VlmOutput> {
-    let effective_target = decide_effective_target(active_src_lang().as_deref(), native_lang, target_lang);
-    translate_text_to_lang_streaming(text, &effective_target, None, on_partial)
-}
-
-pub fn ocr_and_translate(
-    png_bytes: &[u8],
-    native_lang: &str,
-    target_lang: &str,
-) -> VlmResult<VlmOutput> {
-    ocr_and_translate_streaming(png_bytes, native_lang, target_lang.to_string(), None, |_| {})
-}
-
-fn ocr_and_translate_to_lang_streaming<F: FnMut(&PartialOutput)>(
-    png_bytes: &[u8],
-    target_lang: &str,
-    seq: Option<u64>,
-    mut on_partial: F,
-) -> VlmResult<VlmOutput> {
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
     let request = build_chat_request(
-        build_system_prompt(target_lang),
-        "Extract full text from the image and translate.".to_string(),
+        build_smart_system_prompt(native_lang, &target_lang),
+        "Extract text from the image and translate per the rules.".to_string(),
         Some(vec![image_b64]),
         true,
     );
@@ -589,6 +536,24 @@ fn ocr_and_translate_to_lang_streaming<F: FnMut(&PartialOutput)>(
         duration_ms,
         seq,
     })
+}
+
+pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
+    text: &str,
+    native_lang: &str,
+    target_lang: &str,
+    on_partial: F,
+) -> VlmResult<VlmOutput> {
+    let effective_target = decide_effective_target(active_src_lang().as_deref(), native_lang, target_lang);
+    translate_text_to_lang_streaming(text, &effective_target, None, on_partial)
+}
+
+pub fn ocr_and_translate(
+    png_bytes: &[u8],
+    native_lang: &str,
+    target_lang: &str,
+) -> VlmResult<VlmOutput> {
+    ocr_and_translate_streaming(png_bytes, native_lang, target_lang.to_string(), None, |_| {})
 }
 
 fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
@@ -708,6 +673,38 @@ fn build_system_prompt(target_lang: &str) -> String {
     )
 }
 
+fn build_smart_system_prompt(native_lang: &str, target_lang: &str) -> String {
+    let scenario = scenarios::current_scenario();
+    let native = crate::languages::by_code(native_lang)
+        .or_else(|| crate::languages::by_code("zh-TW"))
+        .expect("native language fallback");
+    let target = crate::languages::by_code(target_lang)
+        .or_else(|| crate::languages::by_code("en-US"))
+        .expect("target language fallback");
+    let language_codes = crate::languages::all()
+        .iter()
+        .map(|lang| lang.code.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    format!(
+        "{scenario_prompt}\n\n\
+         You are an OCR + smart translator. The user's native language is {native_name} ({native_code}). Their target study language is {target_name} ({target_code}).\n\n\
+         Step 1: OCR the image text exactly.\n\
+         Step 2: Identify the source language.\n\
+         Step 3: Apply translation direction:\n\
+         - If source is {native_name} ({native_code}), translate to {target_name} ({target_code}).\n\
+         - For any other source language (including {target_name}), translate to {native_name} ({native_code}).\n\n\
+         Return strict JSON only: {{\"original\":\"<exact OCR text>\",\"translated\":\"<translation per Step 3>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}. No thinking. No explanation. No markdown.",
+        scenario_prompt = scenario.prompt,
+        native_name = native.english_name,
+        native_code = native.code.as_str(),
+        target_name = target.english_name,
+        target_code = target.code.as_str(),
+        codes = language_codes,
+    )
+}
+
 fn normalize_lang_code(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -760,6 +757,9 @@ fn build_chat_request(
     ChatRequest {
         model: CHAT_MODEL_NAME.to_string(),
         stream,
+        response_format: Some(ResponseFormat {
+            format_type: ResponseFormatType::JsonObject,
+        }),
         messages: vec![
             ChatMessage::new_text("system", system_prompt),
             ChatMessage {
@@ -802,10 +802,18 @@ fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
         return Ok(parsed);
     }
 
-    let json_body = extract_first_json_object(content).ok_or_else(|| VlmError::ResponseDecode {
-        raw: content.to_string(),
-        source_error: "model content does not contain a JSON object".to_string(),
-    })?;
+    let Some(json_body) = extract_first_json_object(content) else {
+        let translated = content.trim().to_string();
+        eprintln!(
+            "[vlm] lenient parse used: model returned non-JSON, raw len={}",
+            content.len()
+        );
+        return Ok(ModelOutput {
+            original: String::new(),
+            translated,
+            src_lang: None,
+        });
+    };
 
     serde_json::from_str::<ModelOutput>(json_body).map_err(|err| VlmError::ResponseDecode {
         raw: content.to_string(),
@@ -876,7 +884,21 @@ fn extract_partial_json_string(raw: &str, key: &str) -> Option<String> {
 struct ChatRequest {
     model: String,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<ResponseFormat>,
     messages: Vec<ChatMessage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ResponseFormatType {
+    JsonObject,
+}
+
+#[derive(Debug, Serialize)]
+struct ResponseFormat {
+    #[serde(rename = "type")]
+    format_type: ResponseFormatType,
 }
 
 #[derive(Debug, Serialize)]
@@ -942,6 +964,57 @@ struct ModelOutput {
     translated: String,
     #[serde(default)]
     src_lang: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_strict_json_passes() {
+        let parsed = parse_model_output(r#"{"original":"a","translated":"b","src_lang":"en-US"}"#)
+            .expect("strict JSON should parse");
+        assert_eq!(parsed.original, "a");
+        assert_eq!(parsed.translated, "b");
+        assert_eq!(parsed.src_lang.as_deref(), Some("en-US"));
+    }
+
+    #[test]
+    fn parse_extracts_first_json_object() {
+        let parsed = parse_model_output(r#"blah {"original":"a","translated":"b"} blah"#)
+            .expect("should extract embedded JSON");
+        assert_eq!(parsed.original, "a");
+        assert_eq!(parsed.translated, "b");
+        assert_eq!(parsed.src_lang, None);
+    }
+
+    #[test]
+    fn parse_lenient_fallback_when_no_braces() {
+        let parsed = parse_model_output("This fix is permanent.")
+            .expect("non-JSON text should use lenient fallback");
+        assert_eq!(parsed.original, "");
+        assert_eq!(parsed.translated, "This fix is permanent.");
+        assert_eq!(parsed.src_lang, None);
+    }
+
+    #[test]
+    fn parse_lenient_strips_whitespace() {
+        let parsed = parse_model_output("  hello \n")
+            .expect("lenient fallback should trim whitespace");
+        assert_eq!(parsed.original, "");
+        assert_eq!(parsed.translated, "hello");
+        assert_eq!(parsed.src_lang, None);
+    }
+
+    #[test]
+    fn parse_returns_error_for_malformed_json_with_braces() {
+        let err = parse_model_output("{not valid}").expect_err("malformed JSON should remain error");
+        match err {
+            VlmError::ResponseDecode { .. } => {}
+            other => panic!("expected ResponseDecode, got {other:?}"),
+        }
+    }
+
 }
 
 

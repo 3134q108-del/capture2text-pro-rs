@@ -19,6 +19,12 @@ type WindowStatePayload = {
 
 const DEFAULT_ENABLED = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"];
 const TIERS: Tier[] = ["S", "A", "B", "C"];
+const TIER_META: Record<Tier, { label: string; subtitle: string }> = {
+  S: { label: "主推語言", subtitle: "OCR + 翻譯品質最佳，預設啟用" },
+  A: { label: "常用語言", subtitle: "歐美亞主流語系，品質良好" },
+  B: { label: "進階語言", subtitle: "含 RTL 或特殊字元，可運作但建議測試" },
+  C: { label: "實驗語言", subtitle: "支援度有限，TTS 走英文 fallback 音色" },
+};
 
 export default function LanguagesTab() {
   const [languages, setLanguages] = useState<LanguageItem[]>([]);
@@ -131,10 +137,10 @@ export default function LanguagesTab() {
         <SectionBody>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" size="sm" onClick={selectTierS}>
-              全選 Tier S
+              主推 5 語
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={selectTierSA}>
-              全選 Tier S+A
+              主推 + 常用 (12 語)
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={selectAll}>
               全勾
@@ -151,8 +157,9 @@ export default function LanguagesTab() {
           <CardContent className="p-4">
             <div className="mb-3 flex items-center justify-between">
               <Button type="button" variant="ghost" size="sm" onClick={() => toggleTierCollapse(group.tier)}>
-                {collapsed[group.tier] ? "展開" : "收合"} Tier {group.tier} ({group.items.length})
+                {collapsed[group.tier] ? "展開" : "收合"} {TIER_META[group.tier].label} ({group.items.length})
               </Button>
+              <span className="text-xs text-muted-foreground">{TIER_META[group.tier].subtitle}</span>
             </div>
             {!collapsed[group.tier] ? (
               <div className="grid gap-2 sm:grid-cols-2">
@@ -169,7 +176,7 @@ export default function LanguagesTab() {
                           <span className="inline-flex items-center gap-2">
                             <span>{item.native_name}</span>
                             <span className="text-xs text-muted-foreground">({item.english_name})</span>
-                            <span className="rounded border border-border px-1.5 py-0.5 text-xs">Tier {item.tier}</span>
+                            <span className="rounded border border-border px-1.5 py-0.5 text-xs">{TIER_META[item.tier].label}</span>
                             {locked ? <Lock className="h-3.5 w-3.5" aria-hidden="true" /> : null}
                           </span>
                         )}

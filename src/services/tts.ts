@@ -61,6 +61,10 @@ export function previewVoice(lang: string, voiceId: string): Promise<void> {
   return invoke("preview_voice", { lang, voiceId });
 }
 
+export function stopSpeaking(): Promise<void> {
+  return invoke("stop_speaking");
+}
+
 export function getSpeechRate(): Promise<number> {
   return invoke("get_speech_rate");
 }
