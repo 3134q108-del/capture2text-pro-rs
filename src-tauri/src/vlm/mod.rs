@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader};
+﻿use std::io::{self, BufRead, BufReader};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -95,41 +95,18 @@ impl HealthStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetLang {
-    TraditionalChinese,
-    SimplifiedChinese,
-    English,
-    Japanese,
-    Korean,
-    German,
-    French,
-}
-
-impl TargetLang {
-    fn display_name(self) -> &'static str {
-        match self {
-            Self::TraditionalChinese => "繁體中文",
-            Self::SimplifiedChinese => "簡體中文",
-            Self::English => "英文",
-            Self::Japanese => "日文",
-            Self::Korean => "韓文",
-            Self::German => "德文",
-            Self::French => "法文",
-        }
-    }
-}
-
 pub enum VlmJob {
     OcrAndTranslate {
         png_bytes: Vec<u8>,
-        target_lang: TargetLang,
+        native_lang: String,
+        target_lang: String,
         source: &'static str,
         seq: u64,
     },
     TranslateText {
         text: String,
-        target_lang: TargetLang,
+        native_lang: String,
+        target_lang: String,
         source: &'static str,
     },
 }
@@ -192,7 +169,7 @@ pub fn init_worker(app_handle: AppHandle) {
             while let Ok(job) = rx.recv() {
                 state::set_loading(job_source(&job));
                 let source_label = job_source(&job).to_string();
-                let lang_code = target_lang_to_code(job_target_lang(&job));
+                let lang_code = job_model_lang(&job);
                 if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
                     let message = format!(
                         "switch model for lang {lang_code} failed: {err}"
@@ -217,6 +194,7 @@ pub fn init_worker(app_handle: AppHandle) {
                 let (source, result) = match job {
                     VlmJob::OcrAndTranslate {
                         png_bytes,
+                        native_lang,
                         target_lang,
                         source,
                         seq,
@@ -228,6 +206,7 @@ pub fn init_worker(app_handle: AppHandle) {
                         let source_for_partial = source_label.clone();
                         let result = ocr_and_translate_streaming(
                             &png_bytes,
+                            &native_lang,
                             target_lang,
                             Some(seq),
                             |partial| {
@@ -246,12 +225,13 @@ pub fn init_worker(app_handle: AppHandle) {
                     }
                     VlmJob::TranslateText {
                         text,
+                        native_lang,
                         target_lang,
                         source,
                     } => {
                         let source_label = source.to_string();
                         let source_for_partial = source_label.clone();
-                        let result = translate_text_streaming(&text, target_lang, |partial| {
+                        let result = translate_text_streaming(&text, &native_lang, &target_lang, |partial| {
                             emit_vlm_partial_event(
                                 &app_handle,
                                 VlmPartialEventPayload {
@@ -336,19 +316,32 @@ fn set_active_src_lang(lang: Option<String>) {
     }
 }
 
-pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: TargetLang, source: &'static str, seq: u64) {
+pub fn try_submit_ocr(
+    png_bytes: Vec<u8>,
+    native_lang: String,
+    target_lang: String,
+    source: &'static str,
+    seq: u64,
+) {
     LATEST_OCR_SEQ.store(seq, Ordering::SeqCst);
     try_submit(VlmJob::OcrAndTranslate {
         png_bytes,
+        native_lang,
         target_lang,
         source,
         seq,
     });
 }
 
-pub fn try_submit_text(text: String, target_lang: TargetLang, source: &'static str) {
+pub fn try_submit_text(
+    text: String,
+    native_lang: String,
+    target_lang: String,
+    source: &'static str,
+) {
     try_submit(VlmJob::TranslateText {
         text,
+        native_lang,
         target_lang,
         source,
     });
@@ -378,22 +371,10 @@ fn job_source(job: &VlmJob) -> &'static str {
     }
 }
 
-fn job_target_lang(job: &VlmJob) -> TargetLang {
+fn job_model_lang(job: &VlmJob) -> &str {
     match job {
-        VlmJob::OcrAndTranslate { target_lang, .. } => *target_lang,
-        VlmJob::TranslateText { target_lang, .. } => *target_lang,
-    }
-}
-
-fn target_lang_to_code(lang: TargetLang) -> &'static str {
-    match lang {
-        TargetLang::TraditionalChinese => "zh-TW",
-        TargetLang::SimplifiedChinese => "zh-CN",
-        TargetLang::English => "en-US",
-        TargetLang::Japanese => "ja-JP",
-        TargetLang::Korean => "ko-KR",
-        TargetLang::German => "de-DE",
-        TargetLang::French => "fr-FR",
+        VlmJob::OcrAndTranslate { native_lang, .. } => native_lang.as_str(),
+        VlmJob::TranslateText { target_lang, .. } => target_lang.as_str(),
     }
 }
 
@@ -516,7 +497,62 @@ pub fn warmup() {
 
 pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     png_bytes: &[u8],
-    target_lang: TargetLang,
+    native_lang: &str,
+    target_lang: String,
+    seq: Option<u64>,
+    mut on_partial: F,
+) -> VlmResult<VlmOutput> {
+    let first_pass = ocr_and_translate_to_lang_streaming(png_bytes, native_lang, seq, &mut on_partial)?;
+    let effective_target = decide_effective_target(first_pass.src_lang.as_deref(), native_lang, &target_lang);
+
+    if effective_target == native_lang {
+        return Ok(first_pass);
+    }
+    if is_seq_cancelled(seq) {
+        return Err(VlmError::Cancelled);
+    }
+    if let Err(err) = llama_runtime::ensure_model_for_lang(&effective_target) {
+        return Err(VlmError::Internal(format!(
+            "switch model for lang {} failed: {err}",
+            effective_target
+        )));
+    }
+    let second_pass = translate_text_to_lang_streaming(
+        &first_pass.original,
+        &effective_target,
+        seq,
+        |_| {},
+    )?;
+    Ok(VlmOutput {
+        original: first_pass.original,
+        translated: second_pass.translated,
+        src_lang: first_pass.src_lang,
+        duration_ms: first_pass.duration_ms.saturating_add(second_pass.duration_ms),
+        seq,
+    })
+}
+
+pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
+    text: &str,
+    native_lang: &str,
+    target_lang: &str,
+    on_partial: F,
+) -> VlmResult<VlmOutput> {
+    let effective_target = decide_effective_target(active_src_lang().as_deref(), native_lang, target_lang);
+    translate_text_to_lang_streaming(text, &effective_target, None, on_partial)
+}
+
+pub fn ocr_and_translate(
+    png_bytes: &[u8],
+    native_lang: &str,
+    target_lang: &str,
+) -> VlmResult<VlmOutput> {
+    ocr_and_translate_streaming(png_bytes, native_lang, target_lang.to_string(), None, |_| {})
+}
+
+fn ocr_and_translate_to_lang_streaming<F: FnMut(&PartialOutput)>(
+    png_bytes: &[u8],
+    target_lang: &str,
     seq: Option<u64>,
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
@@ -525,7 +561,7 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     let image_b64 = STANDARD.encode(&png_bytes);
     let request = build_chat_request(
         build_system_prompt(target_lang),
-        "請分析這張圖片中的文字並翻譯。".to_string(),
+        "Extract full text from the image and translate.".to_string(),
         Some(vec![image_b64]),
         true,
     );
@@ -555,9 +591,10 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     })
 }
 
-pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
+fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
     text: &str,
-    target_lang: TargetLang,
+    target_lang: &str,
+    seq: Option<u64>,
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
     let started_at = Instant::now();
@@ -568,7 +605,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
         true,
     );
 
-    let (raw_accumulated, duration_ns) = run_streaming_request(request, None, |raw| {
+    let (raw_accumulated, duration_ns) = run_streaming_request(request, seq, |raw| {
         on_partial(&PartialOutput {
             raw_accumulated: raw.to_string(),
             original: Some(text.to_string()),
@@ -586,66 +623,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
         translated: parsed.translated,
         src_lang: parsed.src_lang,
         duration_ms,
-        seq: None,
-    })
-}
-
-pub fn ocr_and_translate(png_bytes: &[u8], target_lang: TargetLang) -> VlmResult<VlmOutput> {
-    let png_bytes = ensure_min_dimension(png_bytes)?;
-    let started_at = Instant::now();
-    let image_b64 = STANDARD.encode(&png_bytes);
-    let request = build_chat_request(
-        build_system_prompt(target_lang),
-        "請分析這張圖片中的文字並翻譯。".to_string(),
-        Some(vec![image_b64]),
-        false,
-    );
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .build()
-        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
-
-    let response = client
-        .post(LLAMA_CHAT_URL)
-        .json(&request)
-        .send()
-        .map_err(map_reqwest_send_error)?;
-
-    let status = response.status();
-    let raw = response.text().map_err(map_reqwest_send_error)?;
-    if !status.is_success() {
-        return Err(VlmError::VlmRuntimeHttpError {
-            status: status.as_u16(),
-            body: raw,
-        });
-    }
-
-    let response = serde_json::from_str::<ChatResponse>(&raw).map_err(|err| {
-        VlmError::ResponseDecode {
-            raw,
-            source_error: err.to_string(),
-        }
-    })?;
-
-    let content = response
-        .choices
-        .first()
-        .and_then(|choice| choice.message.as_ref())
-        .and_then(|msg| msg.content.as_deref())
-        .ok_or_else(|| VlmError::ResponseDecode {
-            raw: "<missing choices[0].message.content>".to_string(),
-            source_error: "missing choices[0].message.content".to_string(),
-        })?;
-
-    let parsed = parse_model_output(content)?;
-    let duration_ms = started_at.elapsed().as_millis() as u64;
-    Ok(VlmOutput {
-        original: parsed.original,
-        translated: parsed.translated,
-        src_lang: parsed.src_lang,
-        duration_ms,
-        seq: None,
+        seq,
     })
 }
 
@@ -714,13 +692,52 @@ fn run_streaming_request<F: FnMut(&str)>(
     Ok((raw_accumulated, final_duration_ns))
 }
 
-fn build_system_prompt(target_lang: TargetLang) -> String {
+fn build_system_prompt(target_lang: &str) -> String {
     let scenario = scenarios::current_scenario();
+    let language_name = crate::languages::by_code(target_lang)
+        .map(|lang| lang.english_name)
+        .unwrap_or("English");
+    let language_codes = crate::languages::all()
+        .iter()
+        .map(|lang| lang.code.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
     format!(
-        "{}\n\n輸出嚴格 JSON：{{\"original\":\"<圖片或文字中的完整原文，保留原語言>\",\"translated\":\"<翻譯成{}的結果>\",\"src_lang\":\"<BCP-47 code: zh-TW | zh-CN | en-US | ja-JP | ko-KR | de-DE | fr-FR | other>\"}}。src_lang 只能輸出上述 8 個值其中之一。禁止 thinking、禁止解釋、禁止 markdown。",
-        scenario.prompt,
-        target_lang.display_name()
+        "{}\n\nReturn strict JSON only: {{\"original\":\"<full source text>\",\"translated\":\"<translation in {}>\",\"src_lang\":\"<BCP-47 from: {} | other>\"}}. No thinking. No explanation. No markdown.",
+        scenario.prompt, language_name, language_codes
     )
+}
+
+fn normalize_lang_code(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let canonical_guess = match trimmed.to_ascii_lowercase().as_str() {
+        "zh" | "zh-tw" => "zh-TW",
+        "zh-cn" => "zh-CN",
+        "en" | "en-us" => "en-US",
+        "ja" | "ja-jp" => "ja-JP",
+        "ko" | "ko-kr" => "ko-KR",
+        "fr" | "fr-fr" => "fr-FR",
+        "de" | "de-de" => "de-DE",
+        _ => trimmed,
+    };
+
+    crate::languages::all()
+        .iter()
+        .find(|lang| lang.code.as_str().eq_ignore_ascii_case(canonical_guess))
+        .map(|lang| lang.code.as_str().to_string())
+}
+
+fn decide_effective_target(src_lang: Option<&str>, native_lang: &str, target_lang: &str) -> String {
+    let native = normalize_lang_code(native_lang).unwrap_or_else(|| "zh-TW".to_string());
+    let target = normalize_lang_code(target_lang).unwrap_or_else(|| "en-US".to_string());
+    match src_lang.and_then(normalize_lang_code) {
+        Some(src) if src == native => target,
+        Some(_) => native,
+        None => native,
+    }
 }
 
 fn build_chat_request(
@@ -926,3 +943,5 @@ struct ModelOutput {
     #[serde(default)]
     src_lang: Option<String>,
 }
+
+

@@ -1,5 +1,5 @@
-use crate::output_lang;
-use crate::vlm::{self, TargetLang};
+use crate::vlm;
+use crate::window_state;
 
 #[tauri::command]
 pub fn retranslate(text: String) -> Result<(), String> {
@@ -7,16 +7,7 @@ pub fn retranslate(text: String) -> Result<(), String> {
         return Err("empty text".to_string());
     }
 
-    let target_lang = match output_lang::current().as_str() {
-        "zh-CN" => TargetLang::SimplifiedChinese,
-        "en-US" => TargetLang::English,
-        "ja-JP" => TargetLang::Japanese,
-        "ko-KR" => TargetLang::Korean,
-        "de-DE" => TargetLang::German,
-        "fr-FR" => TargetLang::French,
-        _ => TargetLang::TraditionalChinese,
-    };
-
-    vlm::try_submit_text(text, target_lang, "Retrans");
+    let state = window_state::get();
+    vlm::try_submit_text(text, state.native_lang, state.target_lang, "Retrans");
     Ok(())
 }

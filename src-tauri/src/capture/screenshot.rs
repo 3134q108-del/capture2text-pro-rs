@@ -6,8 +6,8 @@ use crate::capture::{self, CaptureRequest};
 use crate::drag_overlay;
 use crate::mouse_hook::{self, MouseEvent};
 use crate::overlay;
-use crate::output_lang;
-use crate::vlm::{self, TargetLang};
+use crate::vlm;
+use crate::window_state;
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -80,6 +80,7 @@ fn process_request(request: CaptureRequest) {
 
             vlm::try_submit_ocr(
                 outcome.png_bytes,
+                current_native_lang(),
                 current_target_lang(),
                 pipeline::mode_label(outcome.mode),
                 seq,
@@ -102,14 +103,10 @@ fn request_seq(request: CaptureRequest) -> u64 {
     }
 }
 
-fn current_target_lang() -> TargetLang {
-    match output_lang::current().as_str() {
-        "zh-CN" => TargetLang::SimplifiedChinese,
-        "en-US" => TargetLang::English,
-        "ja-JP" => TargetLang::Japanese,
-        "ko-KR" => TargetLang::Korean,
-        "de-DE" => TargetLang::German,
-        "fr-FR" => TargetLang::French,
-        _ => TargetLang::TraditionalChinese,
-    }
+fn current_native_lang() -> String {
+    window_state::native_lang()
+}
+
+fn current_target_lang() -> String {
+    window_state::target_lang()
 }
