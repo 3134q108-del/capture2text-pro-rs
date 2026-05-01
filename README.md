@@ -128,3 +128,30 @@ npm run tauri build -- --debug # debug(編譯較快,適合測 installer)
 ## License
 
 Apache License 2.0(`LICENSE`)。
+
+## v0.4.0 語言與智慧對翻更新
+
+### 智慧對翻邏輯
+
+- 若偵測到 `src_lang == native_lang`：翻譯為 `target_lang`（練習方向）
+- 若偵測到 `src_lang != native_lang`：翻譯為 `native_lang`（看懂方向）
+- 若 `src_lang` 偵測失敗：預設翻譯為 `native_lang`
+
+### 32 語與 Tier 分等
+
+- Tier S: `zh-CN`, `zh-TW`, `en-US`, `ja-JP`, `ko-KR`
+- Tier A: `fr-FR`, `de-DE`, `es-ES`, `pt-PT`, `it-IT`, `ru-RU`, `vi-VN`
+- Tier B: `ar-SA`, `id-ID`, `th-TH`, `hi-IN`, `el-GR`, `he-IL`, `tr-TR`, `pl-PL`
+- Tier C: `nl-NL`, `uk-UA`, `cs-CZ`, `sv-SE`, `da-DK`, `no-NO`, `fi-FI`, `hu-HU`, `ro-RO`, `bg-BG`, `ms-MY`, `fil-PH`
+
+### 啟用語言設定流程
+
+1. 開啟 `Settings -> 語言 (Languages)`
+2. 在 Tier S/A/B/C 中勾選要啟用的語言
+3. 儲存後，翻譯與語音頁只顯示啟用語言
+4. Tray 的「目標語言」子選單也只顯示啟用語言
+
+### 升級相容行為
+
+- 舊版 `output_lang.txt` 會在啟動時自動合併（union）進 `enabled_langs`
+- 合併時會做語言碼正規化與去重，避免舊資料失效

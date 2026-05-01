@@ -60,6 +60,8 @@ type VlmSnapshot = {
 type WindowState = {
   popup_topmost: boolean;
   popup_font: PopupFont;
+  native_lang?: string;
+  target_lang?: string;
 };
 
 type UsageInfo = {
@@ -159,7 +161,7 @@ export default function ResultView() {
   const [original, setOriginal] = useState("");
   const [translated, setTranslated] = useState("");
   const [srcLang, setSrcLang] = useState<string | null>(null);
-  const [outputLang, setOutputLang] = useState("zh-TW");
+  const [targetLang, setTargetLang] = useState("zh-TW");
   const [errorMsg, setErrorMsg] = useState("");
   const [speakingState, dispatchSpeaking] = useReducer(speakReducer, { kind: "idle" } as SpeakingState);
   const [originalReady, setOriginalReady] = useState(false);
@@ -360,40 +362,6 @@ export default function ResultView() {
   useEffect(() => () => clearOriginalReadyTimer(), []);
 
   useEffect(() => {
-    let disposed = false;
-    let offLang: null | (() => void) = null;
-
-    const setup = async () => {
-      try {
-        const current = await invoke<string>("get_output_language");
-        if (!disposed) {
-          setOutputLang(current);
-        }
-      } catch {
-        // ignore
-      }
-      if (disposed) {
-        return;
-      }
-
-      offLang = await listen<string>("output-language-changed", (event) => {
-        setOutputLang(event.payload);
-      });
-      if (disposed) {
-        offLang();
-        offLang = null;
-      }
-    };
-
-    void setup();
-
-    return () => {
-      disposed = true;
-      offLang?.();
-    };
-  }, []);
-
-  useEffect(() => {
     void refreshUsageInfo();
   }, []);
 
@@ -407,6 +375,7 @@ export default function ResultView() {
         if (!disposed) {
           setIsTopmost(Boolean(state.popup_topmost));
           setPopupFont(state.popup_font ?? null);
+          setTargetLang(state.target_lang ?? "zh-TW");
         }
       } catch {
         // ignore
@@ -422,6 +391,7 @@ export default function ResultView() {
       offState = await listen<WindowState>("window-state-changed", (event) => {
         setIsTopmost(Boolean(event.payload.popup_topmost));
         setPopupFont(event.payload.popup_font ?? null);
+        setTargetLang(event.payload.target_lang ?? "zh-TW");
       });
       if (disposed) {
         offState();
@@ -637,7 +607,7 @@ export default function ResultView() {
       return;
     }
 
-    const lang = target === "translated" ? outputLang : (srcLang ?? detectLang(content));
+    const lang = target === "translated" ? targetLang : (srcLang ?? detectLang(content));
 
     try {
       if (speakingState.kind !== "idle") {
