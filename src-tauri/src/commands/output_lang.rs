@@ -1,6 +1,6 @@
 #[tauri::command]
 pub fn get_output_language() -> String {
-    crate::output_lang::current()
+    crate::window_state::target_lang()
 }
 
 #[tauri::command]
