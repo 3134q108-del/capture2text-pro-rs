@@ -5,6 +5,7 @@ import { Banner, Button, TabNav, TabNavContent, TabNavList, TabNavTrigger } from
 import AboutTab from "./tabs/AboutTab";
 import HelpTab from "./tabs/HelpTab";
 import HotkeyTab from "./tabs/HotkeyTab";
+import LanguagesTab from "./tabs/LanguagesTab";
 import OutputTab from "./tabs/OutputTab";
 import SpeechTab from "./tabs/SpeechTab";
 import TranslateTab from "./tabs/TranslateTab";
@@ -14,15 +15,16 @@ type HealthWarning = {
   message: string;
 };
 
-type TabKey = "hotkey" | "translate" | "speech" | "output" | "about" | "help";
+type TabKey = "hotkey" | "translate" | "languages" | "speech" | "output" | "about" | "help";
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string }> = [
   { key: "hotkey", label: "快捷鍵" },
   { key: "translate", label: "翻譯" },
+  { key: "languages", label: "語言" },
   { key: "speech", label: "語音" },
   { key: "output", label: "輸出" },
   { key: "about", label: "關於" },
-  { key: "help", label: "使用說明" },
+  { key: "help", label: "說明" },
 ];
 
 function isTabKey(value: string): value is TabKey {
@@ -84,7 +86,7 @@ export default function SettingsView() {
       } else {
         setHealthWarning({
           status: code,
-          message: `重試後仍異常: ${code}`,
+          message: `健康檢查未通過: ${code}`,
         });
       }
     } catch (error) {
@@ -102,7 +104,7 @@ export default function SettingsView() {
           <Banner
             tone="warning"
             size="sm"
-            title="服務警示"
+            title="服務狀態異常"
             description={healthWarning.message}
             action={(
               <Button type="button" variant="secondary" size="sm" onClick={() => void retryHealthCheck()}>
@@ -145,6 +147,9 @@ export default function SettingsView() {
           <TabNavContent value="translate" className="mt-0">
             <TranslateTab />
           </TabNavContent>
+          <TabNavContent value="languages" className="mt-0">
+            <LanguagesTab />
+          </TabNavContent>
           <TabNavContent value="speech" className="mt-0">
             <SpeechTab />
           </TabNavContent>
@@ -165,7 +170,7 @@ export default function SettingsView() {
           取消
         </Button>
         <Button type="button" variant="primary" onClick={() => void hideAndReset()}>
-          確定
+          完成
         </Button>
       </footer>
     </div>

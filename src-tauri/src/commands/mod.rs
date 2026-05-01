@@ -1,6 +1,7 @@
 pub mod azure_tts;
 pub mod files;
 pub mod hotkey;
+pub mod languages;
 pub mod output_lang;
 pub mod result_window;
 pub mod scenarios;
