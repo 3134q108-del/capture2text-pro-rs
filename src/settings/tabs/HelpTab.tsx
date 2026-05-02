@@ -11,8 +11,8 @@ export default function HelpTab() {
         <SectionHeader title="程式用途" />
         <SectionBody>
           <p className="text-sm text-muted-foreground">
-            Capture2Text Pro 是駐留系統匣的桌面 OCR + 翻譯工具。截圖辨識 + 翻譯 + Azure TTS
-            朗讀，7 種語言全本機處理（翻譯不走雲端，僅 TTS 可選 Azure）。
+            Capture2Text Pro 是駐留系統匣的桌面 OCR + 翻譯工具。截圖辨識 + 智慧雙向翻譯 + Azure TTS
+            朗讀，支援 32 種語言（主推 5 / 常用 7 / 進階 8 / 實驗 12），翻譯全本機處理（不走雲端，僅 TTS 可選 Azure）。
           </p>
         </SectionBody>
       </Section>
@@ -27,8 +27,9 @@ export default function HelpTab() {
           </ol>
           <div className="mt-3 space-y-1 text-sm text-muted-foreground">
             <p>需要做的設定（可選）：</p>
-            <p>A. 翻譯目標語言：在「翻譯」tab 選輸出語言（預設繁體中文）</p>
-            <p>B. Azure TTS（用於 Speak 朗讀）：F0 Free tier 月 500K 字符免費，設定步驟見下</p>
+            <p>A. 啟用語言：在「語言」tab 勾選要使用的語言（預設啟用主推 5 語）</p>
+            <p>B. 母語 + 目標語言：在「翻譯」tab 設定（預設母語 zh-TW、目標 en-US；智慧對翻會自動切方向，抓母語翻成目標、抓其他語言翻成母語）</p>
+            <p>C. Azure TTS（用於 Speak 朗讀）：F0 Free tier 月 500K 字符免費，設定步驟見下</p>
           </div>
         </SectionBody>
       </Section>
