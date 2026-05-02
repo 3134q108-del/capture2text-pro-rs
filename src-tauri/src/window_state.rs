@@ -71,6 +71,19 @@ impl Default for BillingTier {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum TranslationMode {
+    Smart,
+    Direct,
+}
+
+impl Default for TranslationMode {
+    fn default() -> Self {
+        Self::Smart
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     pub popup_width: u32,
@@ -127,6 +140,8 @@ pub struct WindowState {
     pub target_lang: String,
     #[serde(default = "default_enabled_langs")]
     pub enabled_langs: Vec<String>,
+    #[serde(default)]
+    pub translation_mode: TranslationMode,
 }
 
 impl Default for WindowState {
@@ -165,6 +180,7 @@ impl Default for WindowState {
             native_lang: default_native_lang(),
             target_lang: default_target_lang(),
             enabled_langs: default_enabled_langs(),
+            translation_mode: TranslationMode::default(),
         }
     }
 }
@@ -511,6 +527,16 @@ pub fn enabled_langs() -> Vec<String> {
     get().enabled_langs
 }
 
+pub fn translation_mode() -> TranslationMode {
+    get().translation_mode
+}
+
+pub fn set_translation_mode(mode: TranslationMode) {
+    update(|state| {
+        state.translation_mode = mode;
+    });
+}
+
 pub fn set_native_lang(lang: String) -> Result<(), String> {
     let state = get();
     set_language_preferences(lang, state.target_lang, state.enabled_langs)
@@ -748,9 +774,6 @@ fn apply_language_preferences(
     if enabled.is_empty() {
         return Err("enabled_langs must not be empty".to_string());
     }
-    if native == target {
-        return Err("native_lang and target_lang must be different".to_string());
-    }
     if !enabled.iter().any(|code| code == &native) {
         return Err("native_lang must be included in enabled_langs".to_string());
     }
@@ -833,18 +856,6 @@ mod tests {
             "zh-TW".to_string(),
             "en-US".to_string(),
             vec![],
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn language_preferences_require_distinct_native_and_target() {
-        let mut state = WindowState::default();
-        let result = apply_language_preferences(
-            &mut state,
-            "zh-TW".to_string(),
-            "zh-TW".to_string(),
-            vec!["zh-TW".to_string(), "en-US".to_string()],
         );
         assert!(result.is_err());
     }

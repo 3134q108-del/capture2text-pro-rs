@@ -8,6 +8,8 @@ import {
   CardHeader,
   FormField,
   Input,
+  RadioGroup,
+  RadioGroupItem,
   Section,
   SectionBody,
   SectionHeader,
@@ -26,6 +28,8 @@ type Scenario = {
   prompt: string;
   builtin: boolean;
 };
+
+type TranslationMode = "Smart" | "Direct";
 
 type LanguageItem = {
   code: string;
@@ -54,11 +58,12 @@ export default function TranslateTab() {
 
   const [nativeLang, setNativeLang] = useState("zh-TW");
   const [targetLang, setTargetLang] = useState("en-US");
+  const [translationMode, setTranslationMode] = useState<TranslationMode>("Smart");
   const [enabledLangs, setEnabledLangs] = useState<LanguageItem[]>([]);
   const [savingLang, setSavingLang] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const [statusMsg, setStatusMsg] = useState<string>("");
-  const hasSameLang = nativeLang === targetLang;
 
   const selectedScenario = useMemo(
     () => scenarios.find((item) => item.id === selectedId) ?? null,
@@ -99,14 +104,27 @@ export default function TranslateTab() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!saveSuccess) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSaveSuccess(false);
+      setStatusMsg("");
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [saveSuccess]);
+
   async function refresh() {
     try {
-      const [list, active, allLanguages, enabledCodes, state] = await Promise.all([
+      const [list, active, outputLang, state, allLanguages, enabledCodes, mode] = await Promise.all([
         invoke<Scenario[]>("list_scenarios"),
         invoke<string>("get_active_scenario"),
+        invoke<string>("get_output_language"),
+        invoke<WindowStatePayload>("get_window_state"),
         invoke<LanguageItem[]>("get_languages"),
         invoke<string[]>("get_enabled_langs"),
-        invoke<WindowStatePayload>("get_window_state"),
+        invoke<string>("get_translation_mode"),
       ]);
 
       const enabledSet = new Set(enabledCodes);
@@ -116,7 +134,8 @@ export default function TranslateTab() {
       setActiveId(active);
       setEnabledLangs(filtered);
       setNativeLang(state.native_lang ?? "zh-TW");
-      setTargetLang(state.target_lang ?? "en-US");
+      setTargetLang(state.target_lang ?? outputLang ?? "en-US");
+      setTranslationMode(mode === "Direct" ? "Direct" : "Smart");
 
       const fallback =
         list.find((item) => item.id === selectedId) ??
@@ -135,12 +154,19 @@ export default function TranslateTab() {
     }
   }
 
-  async function saveLanguagePreferences() {
-    if (hasSameLang) {
-      return;
+  async function changeTranslationMode(next: TranslationMode) {
+    setTranslationMode(next);
+    try {
+      await invoke("set_translation_mode", { mode: next });
+      setStatusMsg("");
+    } catch (error) {
+      setStatusMsg(String(error));
     }
+  }
 
+  async function saveLanguagePreferences() {
     setSavingLang(true);
+    setSaveSuccess(false);
     try {
       const currentEnabled = await invoke<string[]>("get_enabled_langs");
       const enabled = Array.from(new Set([...currentEnabled, nativeLang, targetLang]));
@@ -149,9 +175,11 @@ export default function TranslateTab() {
         targetLang,
         enabledLangs: enabled,
       });
-      setStatusMsg("語言設定已儲存");
+      setStatusMsg("✅ 語言設定已儲存");
+      setSaveSuccess(true);
     } catch (error) {
       setStatusMsg(String(error));
+      setSaveSuccess(false);
     } finally {
       setSavingLang(false);
     }
@@ -177,7 +205,7 @@ export default function TranslateTab() {
     };
     setSelectedId(id);
     setDraft(next);
-    setStatusMsg("已建立新情境草稿");
+    setStatusMsg("已新增情境草稿");
   }
 
   async function saveScenario() {
@@ -225,7 +253,7 @@ export default function TranslateTab() {
     try {
       await invoke("set_active_scenario", { id });
       await refresh();
-      setStatusMsg("已套用為目前情境");
+      setStatusMsg("已套用使用中的情境");
     } catch (error) {
       setStatusMsg(String(error));
     }
@@ -236,11 +264,24 @@ export default function TranslateTab() {
       <Section>
         <SectionHeader title="語言設定" />
         <SectionBody>
+          <FormField label="翻譯模式" htmlFor="translation-mode-radio" required>
+            <RadioGroup
+              id="translation-mode-radio"
+              orientation="horizontal"
+              value={translationMode}
+              onValueChange={(value) => void changeTranslationMode(value as TranslationMode)}
+              className="gap-4"
+            >
+              <RadioGroupItem id="mode-smart" value="Smart" size="sm" label="智慧對翻" />
+              <RadioGroupItem id="mode-direct" value="Direct" size="sm" label="直接翻譯" />
+            </RadioGroup>
+          </FormField>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="母語" htmlFor="native-lang-select" required>
               <Select value={nativeLang} onValueChange={(value) => setNativeLang(value)}>
                 <SelectTrigger id="native-lang-select">
-                  <SelectValue placeholder="選擇母語" />
+                  <SelectValue placeholder="請選擇母語" />
                 </SelectTrigger>
                 <SelectContent>
                   {languageOptions.map((item) => (
@@ -255,7 +296,7 @@ export default function TranslateTab() {
             <FormField label="目標語言" htmlFor="target-lang-select" required>
               <Select value={targetLang} onValueChange={(value) => setTargetLang(value)}>
                 <SelectTrigger id="target-lang-select">
-                  <SelectValue placeholder="選擇目標語言" />
+                  <SelectValue placeholder="請選擇目標語言" />
                 </SelectTrigger>
                 <SelectContent>
                   {languageOptions.map((item) => (
@@ -268,34 +309,42 @@ export default function TranslateTab() {
             </FormField>
           </div>
 
-          {hasSameLang ? (
-            <StatusText tone="info" size="sm">
-              母語與目標語言不能相同，請調整後再儲存。
-            </StatusText>
-          ) : null}
-
           <StatusText tone="info" size="sm">
-            智慧對翻:
-            框到母語 → 翻成目標語言(練習)
-            框到其他語言 → 翻成母語(看懂)
+            {translationMode === "Smart" ? (
+              <>
+                智慧對翻：
+                框到母語 → 翻成目標語言（練習）；
+                框到其他語言 → 翻成母語（看懂）
+              </>
+            ) : (
+              <>
+                直接翻譯：
+                不論原文語言，一律翻譯成目標語言。如果原文已是目標語言，模型可能回原文不變。
+              </>
+            )}
           </StatusText>
 
-          <div>
+          <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="primary"
               onClick={() => void saveLanguagePreferences()}
-              aria-disabled={hasSameLang || savingLang}
-              disabled={hasSameLang || savingLang}
+              aria-disabled={savingLang}
+              disabled={savingLang}
             >
-              儲存語言設定
+              {savingLang ? "儲存中..." : saveSuccess ? "✅ 已儲存" : "儲存語言設定"}
             </Button>
+            {statusMsg ? (
+              <StatusText tone={saveSuccess ? "success" : "info"} size="sm">
+                {statusMsg}
+              </StatusText>
+            ) : null}
           </div>
         </SectionBody>
       </Section>
 
       <Section>
-        <SectionHeader title="翻譯情境" description="可維護 OCR 翻譯時使用的 Prompt。" />
+        <SectionHeader title="翻譯情境" description="可針對 OCR 翻譯流程自訂 Prompt。" />
         <SectionBody>
           <div className="grid gap-4 sm:grid-cols-4">
             <Card className="sm:col-span-1">
@@ -342,7 +391,7 @@ export default function TranslateTab() {
                   />
                 </FormField>
 
-                <FormField label="提示詞" htmlFor="scenario-prompt">
+                <FormField label="提示內容" htmlFor="scenario-prompt">
                   <textarea
                     id="scenario-prompt"
                     value={draft.prompt}
@@ -356,7 +405,7 @@ export default function TranslateTab() {
                     儲存
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => void applyActiveScenario()}>
-                    設為啟用
+                    設為使用中
                   </Button>
                   <Button
                     type="button"
@@ -369,7 +418,7 @@ export default function TranslateTab() {
                 </div>
 
                 <StatusText tone="info" size="sm">
-                  情境會在 OCR 翻譯時生效，可依場景調整 Prompt。
+                  情境會影響 OCR 翻譯流程中送給模型的 Prompt。
                 </StatusText>
                 {statusMsg ? (
                   <StatusText tone="info" size="sm">

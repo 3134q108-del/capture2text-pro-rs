@@ -18,9 +18,12 @@ struct TrayMenuState {
     clip_original_item: CheckMenuItem<Wry>,
     clip_translated_item: CheckMenuItem<Wry>,
     clip_both_item: CheckMenuItem<Wry>,
+    mode_smart_item: CheckMenuItem<Wry>,
+    mode_direct_item: CheckMenuItem<Wry>,
     lang_items: Vec<(String, CheckMenuItem<Wry>)>,
     lang_id_to_code: HashMap<String, String>,
     scenario_items: Vec<CheckMenuItem<Wry>>,
+    translation_mode: crate::window_state::TranslationMode,
     enabled_langs: Vec<String>,
 }
 
@@ -41,11 +44,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let _ = crate::commands::result_window::show_settings_window(app.clone());
             }
             "toggle_show_popup" => {
-                if let Ok(guard) = shared_state_for_menu.lock() {
-                    let next = !guard.show_popup_item.is_checked().ok().unwrap_or(false);
-                    window_state::set_popup_show_enabled(next);
-                    let _ = guard.show_popup_item.set_checked(next);
-                }
+                let next = match shared_state_for_menu.lock() {
+                    Ok(guard) => !guard.show_popup_item.is_checked().ok().unwrap_or(false),
+                    Err(_) => return,
+                };
+                window_state::set_popup_show_enabled(next);
             }
             "clip_none" => {
                 window_state::set_clipboard_mode(ClipboardMode::None);
@@ -63,14 +66,29 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 window_state::set_clipboard_mode(ClipboardMode::Both);
                 sync_clipboard_checks(ClipboardMode::Both, &shared_state_for_menu);
             }
+            "translation_mode_smart" => {
+                crate::window_state::set_translation_mode(crate::window_state::TranslationMode::Smart);
+                if let Ok(mut guard) = shared_state_for_menu.lock() {
+                    let _ = guard.mode_smart_item.set_checked(true);
+                    let _ = guard.mode_direct_item.set_checked(false);
+                    guard.translation_mode = crate::window_state::TranslationMode::Smart;
+                }
+            }
+            "translation_mode_direct" => {
+                crate::window_state::set_translation_mode(crate::window_state::TranslationMode::Direct);
+                if let Ok(mut guard) = shared_state_for_menu.lock() {
+                    let _ = guard.mode_smart_item.set_checked(false);
+                    let _ = guard.mode_direct_item.set_checked(true);
+                    guard.translation_mode = crate::window_state::TranslationMode::Direct;
+                }
+            }
             id if id.starts_with("target_lang_") => {
-                if let Ok(guard) = shared_state_for_menu.lock() {
-                    if let Some(code) = guard.lang_id_to_code.get(id) {
-                        let _ = output_lang::set(code);
-                        for (lang_code, item) in &guard.lang_items {
-                            let _ = item.set_checked(lang_code == code);
-                        }
-                    }
+                let code = match shared_state_for_menu.lock() {
+                    Ok(guard) => guard.lang_id_to_code.get(id).cloned(),
+                    Err(_) => None,
+                };
+                if let Some(code) = code {
+                    let _ = output_lang::set(&code);
                 }
             }
             id if id.starts_with("scenario_") => {
@@ -144,12 +162,28 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             let _ = guard
                 .clip_both_item
                 .set_checked(next_state.clipboard_mode == ClipboardMode::Both);
+            let _ = guard
+                .mode_smart_item
+                .set_checked(next_state.translation_mode == crate::window_state::TranslationMode::Smart);
+            let _ = guard
+                .mode_direct_item
+                .set_checked(next_state.translation_mode == crate::window_state::TranslationMode::Direct);
         }
 
-        let should_rebuild = if let Ok(guard) = shared_state_for_state.lock() {
-            guard.enabled_langs != next_state.enabled_langs
-        } else {
-            false
+        if let Ok(mut guard) = shared_state_for_state.lock() {
+            guard.translation_mode = next_state.translation_mode;
+        }
+
+        if let Ok(guard) = shared_state_for_state.lock() {
+            let new_target = next_state.target_lang.as_str();
+            for (code, item) in &guard.lang_items {
+                let _ = item.set_checked(code == new_target);
+            }
+        }
+
+        let should_rebuild = match shared_state_for_state.lock() {
+            Ok(guard) => guard.enabled_langs != next_state.enabled_langs,
+            Err(_) => true,
         };
         if !should_rebuild {
             return;
@@ -240,6 +274,30 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     )?;
     let sep2 = PredefinedMenuItem::separator(app)?;
 
+    let current_mode = state.translation_mode;
+    let mode_smart = CheckMenuItem::with_id(
+        app,
+        "translation_mode_smart",
+        "智慧對翻",
+        true,
+        current_mode == crate::window_state::TranslationMode::Smart,
+        None::<&str>,
+    )?;
+    let mode_direct = CheckMenuItem::with_id(
+        app,
+        "translation_mode_direct",
+        "直接翻譯",
+        true,
+        current_mode == crate::window_state::TranslationMode::Direct,
+        None::<&str>,
+    )?;
+    let mode_submenu = Submenu::with_items(
+        app,
+        "翻譯模式",
+        true,
+        &[&mode_smart, &mode_direct],
+    )?;
+
     let (lang_submenu, lang_items, lang_id_to_code) =
         build_lang_submenu(app, &state.enabled_langs, current_lang)?;
 
@@ -277,6 +335,7 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
             &toggle_show_popup,
             &clip_submenu,
             &sep2,
+            &mode_submenu,
             &lang_submenu,
             &sep_between_submenus,
             &scenario_submenu,
@@ -294,9 +353,12 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
             clip_original_item: clip_original,
             clip_translated_item: clip_translated,
             clip_both_item: clip_both,
+            mode_smart_item: mode_smart,
+            mode_direct_item: mode_direct,
             lang_items,
             lang_id_to_code,
             scenario_items,
+            translation_mode: current_mode,
             enabled_langs: state.enabled_langs.clone(),
         },
     ))

@@ -506,8 +506,15 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
+    let mode = crate::window_state::translation_mode();
+    let system_prompt = match mode {
+        crate::window_state::TranslationMode::Smart => {
+            build_smart_system_prompt(native_lang, &target_lang)
+        }
+        crate::window_state::TranslationMode::Direct => build_direct_system_prompt(&target_lang),
+    };
     let request = build_chat_request(
-        build_smart_system_prompt(native_lang, &target_lang),
+        system_prompt,
         "Extract text from the image and translate per the rules.".to_string(),
         Some(vec![image_b64]),
         true,
@@ -699,6 +706,31 @@ fn build_smart_system_prompt(native_lang: &str, target_lang: &str) -> String {
         scenario_prompt = scenario.prompt,
         native_name = native.english_name,
         native_code = native.code.as_str(),
+        target_name = target.english_name,
+        target_code = target.code.as_str(),
+        codes = language_codes,
+    )
+}
+
+fn build_direct_system_prompt(target_lang: &str) -> String {
+    let scenario = scenarios::current_scenario();
+    let target = crate::languages::by_code(target_lang)
+        .or_else(|| crate::languages::by_code("en-US"))
+        .expect("target language fallback");
+    let language_codes = crate::languages::all()
+        .iter()
+        .map(|lang| lang.code.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    format!(
+        "{scenario_prompt}\n\n\
+         You are an OCR translator. Translate the image text to {target_name} ({target_code}), regardless of source language.\n\n\
+         Step 1: OCR the image text exactly.\n\
+         Step 2: Translate the text to {target_name} ({target_code}). If the source is already in {target_name}, return it unchanged.\n\
+         Step 3: Identify the source language for src_lang field.\n\n\
+         Return strict JSON only: {{\"original\":\"<exact OCR text>\",\"translated\":\"<translation in {target_name}>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}. No thinking. No explanation. No markdown.",
+        scenario_prompt = scenario.prompt,
         target_name = target.english_name,
         target_code = target.code.as_str(),
         codes = language_codes,

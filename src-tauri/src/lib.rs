@@ -116,6 +116,8 @@ pub fn run() {
             commands::output_lang::set_output_language,
             commands::languages::get_languages,
             commands::languages::get_enabled_langs,
+            commands::languages::get_translation_mode,
+            commands::languages::set_translation_mode,
             commands::languages::set_language_preferences,
             commands::scenarios::list_scenarios,
             commands::scenarios::save_scenario,

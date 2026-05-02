@@ -33,6 +33,25 @@ pub fn get_enabled_langs() -> Vec<String> {
 }
 
 #[tauri::command]
+pub fn get_translation_mode() -> String {
+    match crate::window_state::translation_mode() {
+        crate::window_state::TranslationMode::Smart => "Smart".to_string(),
+        crate::window_state::TranslationMode::Direct => "Direct".to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn set_translation_mode(mode: String) -> Result<(), String> {
+    let parsed = match mode.as_str() {
+        "Smart" => crate::window_state::TranslationMode::Smart,
+        "Direct" => crate::window_state::TranslationMode::Direct,
+        other => return Err(format!("invalid translation mode: {}", other)),
+    };
+    crate::window_state::set_translation_mode(parsed);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_language_preferences(
     native_lang: String,
     target_lang: String,
