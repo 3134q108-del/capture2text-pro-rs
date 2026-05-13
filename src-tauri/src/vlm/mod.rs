@@ -352,9 +352,21 @@ fn try_submit(job: VlmJob) {
         Ok(()) => {}
         Err(TrySendError::Full(job)) => {
             eprintln!("[vlm] queue full, dropping source={}", job_source(&job));
+            if let Some(app) = crate::app_handle::get() {
+                let _ = app.emit("vlm-error", serde_json::json!({
+                    "code": "queue_full",
+                    "message": "VLM 處理佇列已滿，請稍候再試",
+                }));
+            }
         }
         Err(TrySendError::Disconnected(job)) => {
             eprintln!("[vlm] worker disconnected, dropping source={}", job_source(&job));
+            if let Some(app) = crate::app_handle::get() {
+                let _ = app.emit("vlm-error", serde_json::json!({
+                    "code": "channel_disconnected",
+                    "message": "VLM 處理通道斷線",
+                }));
+            }
         }
     }
 }
@@ -402,7 +414,10 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
     }
     LAST_PARTIAL_EMIT_NS.store(0, Ordering::SeqCst);
     SHOWN_FOR_SEQ.store(0, Ordering::SeqCst);
-    ensure_result_window_visible(app_handle);
+    let app_clone = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        ensure_result_window_visible(&app_clone);
+    });
     let _ = app_handle.emit_to("result", "vlm-result", &payload);
 }
 
@@ -418,7 +433,10 @@ fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayloa
     if let Some(s) = seq {
         let prev = SHOWN_FOR_SEQ.swap(s, Ordering::SeqCst);
         if prev != s {
-            ensure_result_window_visible(app_handle);
+            let app_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                ensure_result_window_visible(&app_clone);
+            });
         }
     }
 
