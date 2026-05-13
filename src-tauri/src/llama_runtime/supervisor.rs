@@ -158,7 +158,8 @@ fn spawn_with_paths(
         .arg("--ubatch-size")
         .arg("2048")
         .arg("--flash-attn")
-        .arg("on")
+        .arg("off")
+        .arg("--jinja")
         .creation_flags(CREATE_NO_WINDOW);
 
     command

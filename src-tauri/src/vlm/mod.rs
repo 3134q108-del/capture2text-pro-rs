@@ -495,6 +495,10 @@ pub fn warmup() {
             stream: false,
             messages: vec![ChatMessage::new_text("user", "hi".to_string())],
             response_format: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            min_p: None,
         };
 
         match client.post(LLAMA_CHAT_URL).json(&request).send() {
@@ -690,19 +694,11 @@ fn build_system_prompt(target_lang: &str) -> String {
         .map(|lang| lang.code.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
-    let output_rule = format!(
-        "Output strict JSON only matching the schema. No prose, no markdown fences. \
-         The 'translated' field MUST contain the full text rewritten in {language_name}. \
-         Translate every word of 'original' into {language_name}, regardless of source language.",
-        language_name = language_name,
-    );
     format!(
-        "You are a translator. Translate the input text to {language_name}.\n\n\
-         {output_rule}\n\n\
-         The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
-         Schema: {{\"original\":\"<input text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}",
+        "Translate the text to {language_name}.\n\
+         Output strict JSON only: {{\"original\":\"<input text>\",\"translated\":\"<{language_name} text>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}\n\
+         No markdown, no prose.",
         language_name = language_name,
-        output_rule = output_rule,
         language_codes = language_codes,
     )
 }
@@ -716,25 +712,11 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .map(|lang| lang.code.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
-    let output_rule = format!(
-        "Output strict JSON only matching the schema. No prose, no markdown fences. \
-         The 'translated' field MUST contain the full text rewritten in {target_name}. \
-         Translate every word of 'original' into {target_name}, regardless of source language.",
-        target_name = target.english_name,
-    );
-
     format!(
-        "You are an OCR translator. Translate image text to {target_name} ({target_code}) regardless of source language.\n\n\
-         Process:\n\
-         1. OCR the image text exactly into a buffer.\n\
-         2. Translate the buffer to {target_name}.\n\
-         3. Detect source language code.\n\n\
-         {output_rule}\n\n\
-         The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
-         Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
+        "Translate the text in this image to {target_name}.\n\
+         Output strict JSON only: {{\"original\":\"<source text>\",\"translated\":\"<{target_name} text>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}\n\
+         No markdown, no prose.",
         target_name = target.english_name,
-        target_code = target.code.as_str(),
-        output_rule = output_rule,
         codes = language_codes,
     )
 }
@@ -770,6 +752,10 @@ fn build_chat_request(
                 content: user_parts,
             },
         ],
+        temperature: Some(0.5),
+        top_p: Some(0.8),
+        top_k: Some(20),
+        min_p: Some(0.05),
     }
 }
 
@@ -890,6 +876,14 @@ struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
     messages: Vec<ChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_p: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
