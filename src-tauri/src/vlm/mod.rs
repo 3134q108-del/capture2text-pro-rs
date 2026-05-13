@@ -691,9 +691,10 @@ fn build_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let output_rule = format!(
-        "Output strict JSON only, matching the schema. No prose, no markdown fences. \
-         The 'translated' field MUST be a {language_name} translation of 'original'. \
-         Even when 'original' is already in {language_name}, output the schema with translated = original.",
+        "Output strict JSON only matching the schema. No prose, no markdown fences. \
+         The 'translated' field MUST express the meaning of 'original' in {language_name}. \
+         If 'original' contains ANY span not in {language_name}, you MUST translate that span. \
+         Do not output 'translated' identical to 'original' unless 'original' is already 100% pure {language_name}.",
         language_name = language_name,
     );
     format!(
@@ -717,12 +718,22 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let annotator = crate::window_state::annotator_mode();
-    let output_rule = format!(
-        "Output strict JSON only, matching the schema. No prose, no markdown fences. \
-         The 'translated' field MUST be a {target_name} version per the rules above. \
-         Never copy 'original' verbatim into 'translated' unless the image text is already entirely in {target_name}.",
-        target_name = target.english_name,
-    );
+    let output_rule = if annotator {
+        format!(
+            "Output strict JSON only matching the schema. No prose, no markdown fences. \
+             The 'translated' field MUST apply the annotation rule above to EVERY non-{target_name} word in 'original'. \
+             Do not output 'translated' identical to 'original'; the schema requires the annotated rewrite.",
+            target_name = target.english_name,
+        )
+    } else {
+        format!(
+            "Output strict JSON only matching the schema. No prose, no markdown fences. \
+             The 'translated' field MUST express the meaning of 'original' in {target_name}. \
+             If 'original' contains ANY span not in {target_name}, you MUST translate that span. \
+             Do not output 'translated' identical to 'original' unless 'original' is already 100% pure {target_name} text with no foreign words, numbers, codes, or technical terms acting as foreign tokens.",
+            target_name = target.english_name,
+        )
+    };
 
     if annotator {
         format!(
