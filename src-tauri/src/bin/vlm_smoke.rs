@@ -13,25 +13,18 @@ fn main() {
 
 fn run() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 4 {
+    if args.len() != 3 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "usage: cargo run --bin vlm_smoke -- <png_path> <native_lang> <target_lang>",
+            "usage: cargo run --bin vlm_smoke -- <png_path> <target_lang>",
         ));
     }
 
     let png_path = &args[1];
-    let native_lang = normalize_lang_arg(&args[2])?;
-    let target_lang = normalize_lang_arg(&args[3])?;
-    if native_lang == target_lang {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "native_lang and target_lang must be different",
-        ));
-    }
+    let target_lang = normalize_lang_arg(&args[2])?;
 
     let png_bytes = fs::read(png_path)?;
-    let output = ocr_and_translate(&png_bytes, &native_lang, &target_lang)
+    let output = ocr_and_translate(&png_bytes, &target_lang)
         .map_err(|err| io::Error::other(err.to_string()))?;
     let output_json = serde_json::to_string_pretty(&output)
         .map_err(|err| io::Error::other(format!("serialize output failed: {err}")))?;

@@ -8,6 +8,6 @@ pub fn retranslate(text: String) -> Result<(), String> {
     }
 
     let state = window_state::get();
-    vlm::try_submit_text(text, state.native_lang, state.target_lang, "Retrans");
+    vlm::try_submit_text(text, state.target_lang, "Retrans");
     Ok(())
 }

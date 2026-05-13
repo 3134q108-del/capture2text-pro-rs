@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { SnackbarProvider } from "@/components/ui";
 import "./styles/tokens.css";
 import App from "./App";
 import "./App.css";
@@ -12,6 +13,8 @@ const Root = label === "result" ? ResultView : label === "settings" ? SettingsVi
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Root />
+    <SnackbarProvider>
+      <Root />
+    </SnackbarProvider>
   </StrictMode>,
 );

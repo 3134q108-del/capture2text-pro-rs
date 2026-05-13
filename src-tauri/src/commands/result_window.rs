@@ -221,6 +221,11 @@ pub fn write_popup_clipboard() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn cancel_active_capture() {
+    crate::vlm::cancel_current();
+}
+
+#[tauri::command]
 pub fn check_llm_health() -> String {
     match crate::vlm::check_health() {
         crate::vlm::HealthStatus::Healthy => "healthy".to_string(),

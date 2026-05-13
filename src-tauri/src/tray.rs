@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use tauri::{
     menu::{CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Listener, Wry,
+    AppHandle, Listener, Wry,
 };
 
 use crate::{
@@ -13,17 +13,16 @@ use crate::{
 };
 
 struct TrayMenuState {
-    show_popup_item: CheckMenuItem<Wry>,
     clip_none_item: CheckMenuItem<Wry>,
     clip_original_item: CheckMenuItem<Wry>,
     clip_translated_item: CheckMenuItem<Wry>,
     clip_both_item: CheckMenuItem<Wry>,
-    mode_smart_item: CheckMenuItem<Wry>,
-    mode_direct_item: CheckMenuItem<Wry>,
+    model_items: Vec<(String, CheckMenuItem<Wry>)>,
+    model_id_to_item_id: HashMap<String, String>,
+    active_model: Option<String>,
     lang_items: Vec<(String, CheckMenuItem<Wry>)>,
     lang_id_to_code: HashMap<String, String>,
     scenario_items: Vec<CheckMenuItem<Wry>>,
-    translation_mode: crate::window_state::TranslationMode,
     enabled_langs: Vec<String>,
 }
 
@@ -43,13 +42,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "show_settings" => {
                 let _ = crate::commands::result_window::show_settings_window(app.clone());
             }
-            "toggle_show_popup" => {
-                let next = match shared_state_for_menu.lock() {
-                    Ok(guard) => !guard.show_popup_item.is_checked().ok().unwrap_or(false),
-                    Err(_) => return,
-                };
-                window_state::set_popup_show_enabled(next);
-            }
             "clip_none" => {
                 window_state::set_clipboard_mode(ClipboardMode::None);
                 sync_clipboard_checks(ClipboardMode::None, &shared_state_for_menu);
@@ -66,20 +58,23 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 window_state::set_clipboard_mode(ClipboardMode::Both);
                 sync_clipboard_checks(ClipboardMode::Both, &shared_state_for_menu);
             }
-            "translation_mode_smart" => {
-                crate::window_state::set_translation_mode(crate::window_state::TranslationMode::Smart);
-                if let Ok(mut guard) = shared_state_for_menu.lock() {
-                    let _ = guard.mode_smart_item.set_checked(true);
-                    let _ = guard.mode_direct_item.set_checked(false);
-                    guard.translation_mode = crate::window_state::TranslationMode::Smart;
-                }
-            }
-            "translation_mode_direct" => {
-                crate::window_state::set_translation_mode(crate::window_state::TranslationMode::Direct);
-                if let Ok(mut guard) = shared_state_for_menu.lock() {
-                    let _ = guard.mode_smart_item.set_checked(false);
-                    let _ = guard.mode_direct_item.set_checked(true);
-                    guard.translation_mode = crate::window_state::TranslationMode::Direct;
+            id if id.starts_with("set_active_model_") => {
+                let model_id = match shared_state_for_menu.lock() {
+                    Ok(guard) => guard.model_id_to_item_id.get(id).cloned(),
+                    Err(_) => None,
+                };
+                if let Some(model_id) = model_id {
+                    if let Ok(guard) = shared_state_for_menu.lock() {
+                        for (item_model_id, item) in &guard.model_items {
+                            let _ = item.set_checked(item_model_id == &model_id);
+                        }
+                    }
+                    let model_id_clone = model_id.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::commands::models::set_active_model(model_id_clone) {
+                            eprintln!("[tray] set_active_model failed: {}", e);
+                        }
+                    });
                 }
             }
             id if id.starts_with("target_lang_") => {
@@ -88,6 +83,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                     Err(_) => None,
                 };
                 if let Some(code) = code {
+                    if let Ok(guard) = shared_state_for_menu.lock() {
+                        for (item_code, item) in &guard.lang_items {
+                            let _ = item.set_checked(item_code == &code);
+                        }
+                    }
                     let _ = output_lang::set(&code);
                 }
             }
@@ -100,11 +100,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                             let _ = item.set_checked(item.id().as_ref() == selected.as_str());
                         }
                     }
-                }
-            }
-            "show_about" => {
-                if crate::commands::result_window::show_settings_window(app.clone()).is_ok() {
-                    let _ = app.emit_to("settings", "settings-navigate", "about");
                 }
             }
             "quit" => {
@@ -149,7 +144,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         };
 
         if let Ok(guard) = shared_state_for_state.lock() {
-            let _ = guard.show_popup_item.set_checked(next_state.popup_show_enabled);
             let _ = guard
                 .clip_none_item
                 .set_checked(next_state.clipboard_mode == ClipboardMode::None);
@@ -162,16 +156,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             let _ = guard
                 .clip_both_item
                 .set_checked(next_state.clipboard_mode == ClipboardMode::Both);
-            let _ = guard
-                .mode_smart_item
-                .set_checked(next_state.translation_mode == crate::window_state::TranslationMode::Smart);
-            let _ = guard
-                .mode_direct_item
-                .set_checked(next_state.translation_mode == crate::window_state::TranslationMode::Direct);
-        }
-
-        if let Ok(mut guard) = shared_state_for_state.lock() {
-            guard.translation_mode = next_state.translation_mode;
         }
 
         if let Ok(guard) = shared_state_for_state.lock() {
@@ -181,32 +165,65 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             }
         }
 
+        let next_active_model = next_state.active_model.map(model_id_to_string);
         let should_rebuild = match shared_state_for_state.lock() {
-            Ok(guard) => guard.enabled_langs != next_state.enabled_langs,
+            Ok(guard) => {
+                guard.enabled_langs != next_state.enabled_langs || guard.active_model != next_active_model
+            }
             Err(_) => true,
         };
-        if !should_rebuild {
-            return;
-        }
-
-        let current_lang = output_lang::current();
-        let Ok((new_menu, new_state)) = build_tray_menu(&app_for_state, &next_state, &current_lang) else {
-            return;
-        };
-
-        let app_for_menu = app_for_state.clone();
-        let _ = app_for_state.run_on_main_thread(move || {
-            if let Some(tray) = app_for_menu.tray_by_id("main") {
-                let _ = tray.set_menu(Some(new_menu));
-            }
-        });
-
-        if let Ok(mut guard) = shared_state_for_state.lock() {
-            *guard = new_state;
+        if should_rebuild {
+            rebuild_menu(&app_for_state, &shared_state_for_state, &next_state);
         }
     });
 
+    let app_for_active_model = app.clone();
+    let shared_state_for_active_model = Arc::clone(&shared_state);
+    app.listen("active-model-changed", move |_event| {
+        let state = window_state::get();
+        rebuild_menu(&app_for_active_model, &shared_state_for_active_model, &state);
+    });
+
+    let app_for_model_deleted = app.clone();
+    let shared_state_for_model_deleted = Arc::clone(&shared_state);
+    app.listen("model-deleted", move |_event| {
+        let state = window_state::get();
+        rebuild_menu(&app_for_model_deleted, &shared_state_for_model_deleted, &state);
+    });
+
+    let app_for_model_download = app.clone();
+    let shared_state_for_model_download = Arc::clone(&shared_state);
+    app.listen("model-download-complete", move |_event| {
+        let state = window_state::get();
+        rebuild_menu(&app_for_model_download, &shared_state_for_model_download, &state);
+    });
+
     Ok(())
+}
+
+fn rebuild_menu(app: &AppHandle, shared_state: &Arc<Mutex<TrayMenuState>>, state: &WindowState) {
+    let current_lang = output_lang::current();
+    let Ok((new_menu, new_state)) = build_tray_menu(app, state, &current_lang) else {
+        return;
+    };
+
+    let app_for_menu = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(tray) = app_for_menu.tray_by_id("main") {
+            let _ = tray.set_menu(Some(new_menu));
+        }
+    });
+
+    if let Ok(mut guard) = shared_state.lock() {
+        *guard = new_state;
+    }
+}
+
+fn model_id_to_string(id: crate::llama_runtime::manifest::ModelId) -> String {
+    serde_json::to_string(&id)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_string()
 }
 
 fn sync_clipboard_checks(mode: ClipboardMode, shared_state: &Arc<Mutex<TrayMenuState>>) {
@@ -226,18 +243,10 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     let show_settings = MenuItem::with_id(app, "show_settings", "開啟設定...", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
 
-    let toggle_show_popup = CheckMenuItem::with_id(
-        app,
-        "toggle_show_popup",
-        "顯示結果視窗",
-        true,
-        state.popup_show_enabled,
-        None::<&str>,
-    )?;
     let clip_none = CheckMenuItem::with_id(
         app,
         "clip_none",
-        "不寫入剪貼簿",
+        "關閉剪貼簿輸出",
         true,
         state.clipboard_mode == ClipboardMode::None,
         None::<&str>,
@@ -245,7 +254,7 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     let clip_original = CheckMenuItem::with_id(
         app,
         "clip_original",
-        "僅原文",
+        "只輸出原文",
         true,
         state.clipboard_mode == ClipboardMode::OriginalOnly,
         None::<&str>,
@@ -253,7 +262,7 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     let clip_translated = CheckMenuItem::with_id(
         app,
         "clip_translated",
-        "僅譯文",
+        "只輸出翻譯",
         true,
         state.clipboard_mode == ClipboardMode::TranslatedOnly,
         None::<&str>,
@@ -261,7 +270,7 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     let clip_both = CheckMenuItem::with_id(
         app,
         "clip_both",
-        "原文 + 譯文",
+        "原文 + 翻譯",
         true,
         state.clipboard_mode == ClipboardMode::Both,
         None::<&str>,
@@ -272,36 +281,22 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
         true,
         &[&clip_none, &clip_original, &clip_translated, &clip_both],
     )?;
-    let sep2 = PredefinedMenuItem::separator(app)?;
 
-    let current_mode = state.translation_mode;
-    let mode_smart = CheckMenuItem::with_id(
+    let models = crate::commands::models::get_models_list();
+    let active_model_id = state.active_model.map(model_id_to_string);
+    let active_supported = models
+        .iter()
+        .find(|m| m.active)
+        .map(|m| m.supported_lang_codes.clone());
+    let (model_submenu, model_items, model_id_to_item_id) =
+        build_model_submenu(app, &models, active_model_id.as_deref())?;
+    let (lang_submenu, lang_items, lang_id_to_code) = build_lang_submenu(
         app,
-        "translation_mode_smart",
-        "智慧對翻",
-        true,
-        current_mode == crate::window_state::TranslationMode::Smart,
-        None::<&str>,
-    )?;
-    let mode_direct = CheckMenuItem::with_id(
-        app,
-        "translation_mode_direct",
-        "直接翻譯",
-        true,
-        current_mode == crate::window_state::TranslationMode::Direct,
-        None::<&str>,
-    )?;
-    let mode_submenu = Submenu::with_items(
-        app,
-        "翻譯模式",
-        true,
-        &[&mode_smart, &mode_direct],
+        &state.enabled_langs,
+        current_lang,
+        active_supported.as_deref(),
     )?;
 
-    let (lang_submenu, lang_items, lang_id_to_code) =
-        build_lang_submenu(app, &state.enabled_langs, current_lang)?;
-
-    let sep_between_submenus = PredefinedMenuItem::separator(app)?;
     let scenarios = crate::scenarios::list_runtime().unwrap_or_else(|_| crate::scenarios::builtin_default());
     let active_scenario_id = crate::scenarios::get_active_scenario_id();
     let scenario_items: Vec<_> = scenarios
@@ -323,24 +318,19 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
         .collect();
     let scenario_submenu = Submenu::with_items(app, "情境", true, &scenario_refs)?;
 
-    let sep3 = PredefinedMenuItem::separator(app)?;
-    let show_about = MenuItem::with_id(app, "show_about", "關於...", true, None::<&str>)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
             &show_settings,
-            &sep1,
-            &toggle_show_popup,
             &clip_submenu,
-            &sep2,
-            &mode_submenu,
+            &sep1,
+            &model_submenu,
             &lang_submenu,
-            &sep_between_submenus,
             &scenario_submenu,
-            &sep3,
-            &show_about,
+            &sep2,
             &quit,
         ],
     )?;
@@ -348,31 +338,89 @@ fn build_tray_menu(app: &AppHandle, state: &WindowState, current_lang: &str) -> 
     Ok((
         menu,
         TrayMenuState {
-            show_popup_item: toggle_show_popup,
             clip_none_item: clip_none,
             clip_original_item: clip_original,
             clip_translated_item: clip_translated,
             clip_both_item: clip_both,
-            mode_smart_item: mode_smart,
-            mode_direct_item: mode_direct,
+            model_items,
+            model_id_to_item_id,
+            active_model: active_model_id,
             lang_items,
             lang_id_to_code,
             scenario_items,
-            translation_mode: current_mode,
             enabled_langs: state.enabled_langs.clone(),
         },
     ))
+}
+
+fn build_model_submenu(
+    app: &AppHandle,
+    models: &[crate::commands::models::ModelInfo],
+    active_model_id: Option<&str>,
+) -> tauri::Result<(
+    Submenu<Wry>,
+    Vec<(String, CheckMenuItem<Wry>)>,
+    HashMap<String, String>,
+)> {
+    let mut items = Vec::new();
+    let mut id_to_item = HashMap::new();
+    let downloaded: Vec<&crate::commands::models::ModelInfo> = models.iter().filter(|m| m.downloaded).collect();
+
+    if downloaded.is_empty() {
+        let placeholder = CheckMenuItem::with_id(
+            app,
+            "model_placeholder",
+            "（尚未下載任何模型）",
+            false,
+            false,
+            None::<&str>,
+        )?;
+        items.push(("__placeholder__".to_string(), placeholder));
+    } else {
+        for m in downloaded {
+            let menu_id = format!("set_active_model_{}", m.id);
+            let item = CheckMenuItem::with_id(
+                app,
+                &menu_id,
+                m.display_name.clone(),
+                true,
+                Some(m.id.as_str()) == active_model_id,
+                None::<&str>,
+            )?;
+            id_to_item.insert(menu_id.clone(), m.id.clone());
+            items.push((m.id.clone(), item));
+        }
+    }
+
+    let refs: Vec<&dyn IsMenuItem<_>> = items
+        .iter()
+        .map(|(_, item)| item as &dyn IsMenuItem<_>)
+        .collect();
+    let submenu = Submenu::with_items(app, "模型", true, &refs)?;
+    Ok((submenu, items, id_to_item))
 }
 
 fn build_lang_submenu(
     app: &AppHandle,
     enabled_langs: &[String],
     current_lang: &str,
+    active_model_supported: Option<&[String]>,
 ) -> tauri::Result<(Submenu<Wry>, Vec<(String, CheckMenuItem<Wry>)>, HashMap<String, String>)> {
     let mut lang_items = Vec::new();
     let mut lang_id_to_code = HashMap::new();
 
-    for code in enabled_langs {
+    let filtered_langs: Vec<String> = if let Some(supported) = active_model_supported {
+        let supported_set: HashSet<&str> = supported.iter().map(|s| s.as_str()).collect();
+        enabled_langs
+            .iter()
+            .filter(|code| supported_set.contains(code.as_str()))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    for code in &filtered_langs {
         let Some(lang) = crate::languages::by_code(code) else {
             continue;
         };
@@ -390,16 +438,15 @@ fn build_lang_submenu(
     }
 
     if lang_items.is_empty() {
-        let fallback = CheckMenuItem::with_id(
+        let placeholder = CheckMenuItem::with_id(
             app,
-            "target_lang_zh_tw",
-            "繁體中文 (zh-TW)",
-            true,
-            current_lang == "zh-TW",
+            "target_lang_placeholder",
+            "（目前無可用語言）",
+            false,
+            false,
             None::<&str>,
         )?;
-        lang_id_to_code.insert("target_lang_zh_tw".to_string(), "zh-TW".to_string());
-        lang_items.push(("zh-TW".to_string(), fallback));
+        lang_items.push(("__placeholder__".to_string(), placeholder));
     }
 
     let refs: Vec<&dyn IsMenuItem<_>> = lang_items

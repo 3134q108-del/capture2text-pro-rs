@@ -68,6 +68,20 @@ pub fn run() {
 
                 crate::vlm::warmup();
             });
+            if !crate::llama_runtime::any_model_downloaded() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    let _ = crate::commands::result_window::show_settings_window(app_handle.clone());
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("vlm-error", serde_json::json!({
+                        "error": "no_model",
+                        "message": "請先下載並選擇 AI 模型"
+                    }));
+                    let _ = app_handle.emit_to("settings", "settings-navigate", "models");
+                });
+            }
             for label in ["result", "settings"] {
                 if let Some(window) = app.get_webview_window(label) {
                     eprintln!("[window] attach_close_handler label={}", label);
@@ -106,6 +120,7 @@ pub fn run() {
             commands::result_window::set_log_file_path,
             commands::result_window::set_speech_enabled,
             commands::result_window::write_popup_clipboard,
+            commands::result_window::cancel_active_capture,
             commands::result_window::check_llm_health,
             commands::result_window::check_vlm_health,
             commands::result_window::open_external_url,
@@ -116,9 +131,14 @@ pub fn run() {
             commands::output_lang::set_output_language,
             commands::languages::get_languages,
             commands::languages::get_enabled_langs,
-            commands::languages::get_translation_mode,
-            commands::languages::set_translation_mode,
             commands::languages::set_language_preferences,
+            commands::models::get_models_list,
+            commands::models::get_active_model,
+            commands::models::get_annotator_mode,
+            commands::models::set_active_model,
+            commands::models::set_annotator_mode,
+            commands::models::delete_model,
+            commands::models::download_model,
             commands::scenarios::list_scenarios,
             commands::scenarios::save_scenario,
             commands::scenarios::delete_scenario,

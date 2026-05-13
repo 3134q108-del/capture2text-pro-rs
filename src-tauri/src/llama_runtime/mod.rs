@@ -22,9 +22,17 @@ pub fn active_model() -> Option<ModelId> {
 pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
     cleanup_legacy_model_files();
     ensure_binary_installed()?;
-    ensure_model_installed(&default_model)?;
-    supervisor::spawn_for(&default_model)?;
-    set_active_model(Some(default_model));
+    let startup_model = crate::window_state::active_model().unwrap_or(default_model);
+    if is_model_downloaded(&startup_model) {
+        supervisor::spawn_for(&startup_model)?;
+        set_active_model(Some(startup_model));
+    } else {
+        eprintln!(
+            "[llama-runtime] startup model {:?} not downloaded, skip spawning",
+            startup_model
+        );
+        set_active_model(None);
+    }
     Ok(())
 }
 
@@ -32,7 +40,12 @@ pub fn switch_model(target: ModelId) -> Result<(), String> {
     if active_model() == Some(target) {
         return Ok(());
     }
-    ensure_model_installed(&target)?;
+    if !is_model_downloaded(&target) {
+        return Err(format!(
+            "model {} not downloaded",
+            target.spec().display_name
+        ));
+    }
     supervisor::stop();
     supervisor::spawn_for(&target)?;
     set_active_model(Some(target));
@@ -40,6 +53,9 @@ pub fn switch_model(target: ModelId) -> Result<(), String> {
 }
 
 pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
+    if !any_model_downloaded() {
+        return Err("no_model: 請先下載並選擇 AI 模型".to_string());
+    }
     let target = manifest::ModelId::for_lang(lang);
     if active_model() == Some(target) {
         return Ok(());
@@ -49,6 +65,10 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
         lang, target
     );
     switch_model(target)
+}
+
+pub fn any_model_downloaded() -> bool {
+    manifest::ALL_MODELS.iter().any(is_model_downloaded)
 }
 
 pub fn app_dir() -> PathBuf {
@@ -107,6 +127,12 @@ fn ensure_model_installed(id: &ModelId) -> Result<(), String> {
         ensure_file_complete(url, &target)?;
     }
     Ok(())
+}
+
+fn is_model_downloaded(id: &ModelId) -> bool {
+    let model_dir = app_dir().join("models");
+    let spec = id.spec();
+    model_dir.join(spec.gguf_filename()).exists() && model_dir.join(spec.mmproj_filename()).exists()
 }
 
 fn ensure_file_complete(url: &str, target: &Path) -> Result<(), String> {

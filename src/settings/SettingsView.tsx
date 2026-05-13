@@ -6,6 +6,7 @@ import AboutTab from "./tabs/AboutTab";
 import HelpTab from "./tabs/HelpTab";
 import HotkeyTab from "./tabs/HotkeyTab";
 import LanguagesTab from "./tabs/LanguagesTab";
+import ModelsTab from "./tabs/ModelsTab";
 import OutputTab from "./tabs/OutputTab";
 import SpeechTab from "./tabs/SpeechTab";
 import TranslateTab from "./tabs/TranslateTab";
@@ -15,11 +16,12 @@ type HealthWarning = {
   message: string;
 };
 
-type TabKey = "hotkey" | "translate" | "languages" | "speech" | "output" | "about" | "help";
+type TabKey = "hotkey" | "translate" | "models" | "languages" | "speech" | "output" | "about" | "help";
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string }> = [
   { key: "hotkey", label: "快捷鍵" },
   { key: "translate", label: "翻譯" },
+  { key: "models", label: "模型" },
   { key: "languages", label: "語言" },
   { key: "speech", label: "語音" },
   { key: "output", label: "輸出" },
@@ -86,7 +88,7 @@ export default function SettingsView() {
       } else {
         setHealthWarning({
           status: code,
-          message: `健康檢查未通過: ${code}`,
+          message: `模型服務異常，健康檢查碼：${code}`,
         });
       }
     } catch (error) {
@@ -104,11 +106,11 @@ export default function SettingsView() {
           <Banner
             tone="warning"
             size="sm"
-            title="服務狀態異常"
+            title="模型服務異常"
             description={healthWarning.message}
             action={(
               <Button type="button" variant="secondary" size="sm" onClick={() => void retryHealthCheck()}>
-                重新檢查
+                重新健康檢查
               </Button>
             )}
           />
@@ -146,6 +148,9 @@ export default function SettingsView() {
           </TabNavContent>
           <TabNavContent value="translate" className="mt-0">
             <TranslateTab />
+          </TabNavContent>
+          <TabNavContent value="models" className="mt-0">
+            <ModelsTab />
           </TabNavContent>
           <TabNavContent value="languages" className="mt-0">
             <LanguagesTab />

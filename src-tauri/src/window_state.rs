@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use crate::llama_runtime::manifest::ModelId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopupFont {
@@ -71,19 +72,6 @@ impl Default for BillingTier {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "PascalCase")]
-pub enum TranslationMode {
-    Smart,
-    Direct,
-}
-
-impl Default for TranslationMode {
-    fn default() -> Self {
-        Self::Smart
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
     pub popup_width: u32,
@@ -134,14 +122,14 @@ pub struct WindowState {
     pub hotkey_w: HotkeyBinding,
     #[serde(default = "default_hotkey_e")]
     pub hotkey_e: HotkeyBinding,
-    #[serde(default = "default_native_lang")]
-    pub native_lang: String,
     #[serde(default = "default_target_lang")]
     pub target_lang: String,
     #[serde(default = "default_enabled_langs")]
     pub enabled_langs: Vec<String>,
     #[serde(default)]
-    pub translation_mode: TranslationMode,
+    pub active_model: Option<ModelId>,
+    #[serde(default)]
+    pub annotator_mode: bool,
 }
 
 impl Default for WindowState {
@@ -177,10 +165,10 @@ impl Default for WindowState {
             hotkey_q: default_hotkey_q(),
             hotkey_w: default_hotkey_w(),
             hotkey_e: default_hotkey_e(),
-            native_lang: default_native_lang(),
             target_lang: default_target_lang(),
             enabled_langs: default_enabled_langs(),
-            translation_mode: TranslationMode::default(),
+            active_model: None,
+            annotator_mode: false,
         }
     }
 }
@@ -252,10 +240,6 @@ fn default_log_file_path() -> String {
         .join("captures.log")
         .to_string_lossy()
         .to_string()
-}
-
-fn default_native_lang() -> String {
-    "zh-TW".to_string()
 }
 
 fn default_target_lang() -> String {
@@ -515,10 +499,6 @@ pub fn set_hotkey_e(binding: HotkeyBinding) {
     });
 }
 
-pub fn native_lang() -> String {
-    get().native_lang
-}
-
 pub fn target_lang() -> String {
     get().target_lang
 }
@@ -527,37 +507,31 @@ pub fn enabled_langs() -> Vec<String> {
     get().enabled_langs
 }
 
-pub fn translation_mode() -> TranslationMode {
-    get().translation_mode
+pub fn active_model() -> Option<ModelId> {
+    get().active_model
 }
 
-pub fn set_translation_mode(mode: TranslationMode) {
+pub fn set_active_model(model: Option<ModelId>) {
     update(|state| {
-        state.translation_mode = mode;
+        state.active_model = model;
     });
 }
 
-pub fn set_native_lang(lang: String) -> Result<(), String> {
-    let state = get();
-    set_language_preferences(lang, state.target_lang, state.enabled_langs)
+pub fn annotator_mode() -> bool {
+    get().annotator_mode
 }
 
-pub fn set_target_lang(lang: String) -> Result<(), String> {
-    let state = get();
-    set_language_preferences(state.native_lang, lang, state.enabled_langs)
-}
-
-pub fn set_enabled_langs(langs: Vec<String>) -> Result<(), String> {
-    let state = get();
-    set_language_preferences(state.native_lang, state.target_lang, langs)
+pub fn set_annotator_mode(value: bool) {
+    update(|state| {
+        state.annotator_mode = value;
+    });
 }
 
 pub fn set_language_preferences(
-    native_lang: String,
     target_lang: String,
     enabled_langs: Vec<String>,
 ) -> Result<(), String> {
-    update_result(|state| apply_language_preferences(state, native_lang, target_lang, enabled_langs))
+    update_result(|state| apply_language_preferences(state, target_lang, enabled_langs))
 }
 
 fn update(mutator: impl FnOnce(&mut WindowState)) {
@@ -604,12 +578,10 @@ fn load_or_default() -> WindowState {
     if state.speech_active_preset.trim().is_empty() {
         state.speech_active_preset = default_active_preset();
     }
-    let native = state.native_lang.clone();
     let target = state.target_lang.clone();
     let enabled = state.enabled_langs.clone();
-    if apply_language_preferences(&mut state, native, target, enabled).is_err() {
+    if apply_language_preferences(&mut state, target, enabled).is_err() {
         let defaults = default_enabled_langs();
-        state.native_lang = default_native_lang();
         state.target_lang = default_target_lang();
         state.enabled_langs = defaults;
     }
@@ -755,12 +727,9 @@ fn dedup_language_codes(codes: Vec<String>) -> Vec<String> {
 
 fn apply_language_preferences(
     state: &mut WindowState,
-    native_lang: String,
     target_lang: String,
     enabled_langs: Vec<String>,
 ) -> Result<(), String> {
-    let native = normalize_language_code(&native_lang)
-        .ok_or_else(|| format!("invalid native_lang: {}", native_lang))?;
     let target = normalize_language_code(&target_lang)
         .ok_or_else(|| format!("invalid target_lang: {}", target_lang))?;
 
@@ -774,14 +743,10 @@ fn apply_language_preferences(
     if enabled.is_empty() {
         return Err("enabled_langs must not be empty".to_string());
     }
-    if !enabled.iter().any(|code| code == &native) {
-        return Err("native_lang must be included in enabled_langs".to_string());
-    }
     if !enabled.iter().any(|code| code == &target) {
         return Err("target_lang must be included in enabled_langs".to_string());
     }
 
-    state.native_lang = native;
     state.target_lang = target;
     state.enabled_langs = enabled;
     Ok(())
@@ -853,7 +818,6 @@ mod tests {
         let mut state = WindowState::default();
         let result = apply_language_preferences(
             &mut state,
-            "zh-TW".to_string(),
             "en-US".to_string(),
             vec![],
         );
@@ -861,11 +825,10 @@ mod tests {
     }
 
     #[test]
-    fn language_preferences_require_native_and_target_in_enabled() {
+    fn language_preferences_require_target_in_enabled() {
         let mut state = WindowState::default();
         let result = apply_language_preferences(
             &mut state,
-            "zh-TW".to_string(),
             "en-US".to_string(),
             vec!["zh-TW".to_string()],
         );
@@ -878,9 +841,34 @@ mod tests {
         let result = apply_language_preferences(
             &mut state,
             "xx-XX".to_string(),
-            "en-US".to_string(),
             vec!["zh-TW".to_string(), "en-US".to_string()],
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn language_preferences_accepts_target_and_enabled_only() {
+        let mut state = WindowState::default();
+        let result = apply_language_preferences(
+            &mut state,
+            "en-US".to_string(),
+            vec!["zh-TW".to_string(), "en-US".to_string()],
+        );
+        assert!(result.is_ok());
+        assert_eq!(state.target_lang, "en-US");
+    }
+
+    #[test]
+    fn deserialize_legacy_window_state_with_extra_field_ignored() {
+        let legacy_key = ["native", "lang"].join("_");
+        let raw = format!(
+            r#"{{"popup_width":800,"popup_height":600,"popup_x":null,"popup_y":null,"popup_topmost":true,"popup_show_enabled":true,"save_to_clipboard":true,"translate_append_to_clipboard":false,"translate_separator":"Space","capture_box_border_rgba":[0,0,0,0],"capture_box_fill_rgba":[0,0,0,0],"{legacy_key}":"zh-TW","target_lang":"en-US","enabled_langs":["zh-TW","en-US"]}}"#
+        );
+        let state: super::WindowState = serde_json::from_str(&raw).expect("legacy state should load");
+        assert_eq!(state.target_lang, "en-US");
+        assert_eq!(
+            state.enabled_langs,
+            vec!["zh-TW".to_string(), "en-US".to_string()]
+        );
     }
 }

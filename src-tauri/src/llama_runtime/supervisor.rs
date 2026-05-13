@@ -1,5 +1,7 @@
 use std::process::{Child, Command};
 use std::os::windows::io::AsRawHandle;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HANDLE;
@@ -13,6 +15,7 @@ use super::manifest::{self, ModelId};
 
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
+static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn get_or_init_job() -> Option<HANDLE> {
     JOB_HANDLE.get_or_init(|| unsafe {
@@ -62,31 +65,108 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
         return Err(format!("missing mmproj file: {}", mmproj.display()));
     }
 
+    let child = spawn_with_paths(&bin, &model, &mmproj, spec)?;
+    store_child(child, id)?;
+    poll_ready()?;
+    start_keepalive();
+    Ok(())
+}
+
+pub fn restart_with_model(model_id: ModelId) -> Result<(), String> {
+    stop_current_server();
+
+    let spec = model_id.spec();
+    let models_dir = crate::app_paths::data_dir().join("models");
+    let gguf = models_dir.join(spec.gguf_filename());
+    let mmproj = models_dir.join(spec.mmproj_filename());
+    let bin = app_dir().join("bin").join("llama-server.exe");
+
+    if !bin.exists() {
+        return Err(format!("missing llama-server binary: {}", bin.display()));
+    }
+    if !gguf.exists() || !mmproj.exists() {
+        return Err(format!(
+            "model files missing: {} or {}",
+            gguf.display(),
+            mmproj.display()
+        ));
+    }
+
+    let child = spawn_with_paths(&bin, &gguf, &mmproj, spec)?;
+    store_child(child, &model_id)?;
+    poll_ready()?;
+    start_keepalive();
+    Ok(())
+}
+
+fn start_keepalive() {
+    if KEEPALIVE_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            send_keepalive_ping().await;
+        }
+    });
+}
+
+async fn send_keepalive_ping() {
+    let body = serde_json::json!({
+        "model": "qwen3-vl",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "max_tokens": 1,
+        "stream": false,
+    });
+    let client = reqwest::Client::new();
+    let _ = client
+        .post("http://127.0.0.1:11434/v1/chat/completions")
+        .json(&body)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+}
+
+fn spawn_with_paths(
+    bin: &Path,
+    model: &Path,
+    mmproj: &Path,
+    spec: &manifest::ModelSpec,
+) -> Result<Child, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let mut command = Command::new(&bin);
+    let mut command = Command::new(bin);
     command
         .arg("--model")
-        .arg(&model)
+        .arg(model)
         .arg("--mmproj")
-        .arg(&mmproj)
+        .arg(mmproj)
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--port")
         .arg("11434")
         .arg("--n-gpu-layers")
-        .arg("20")
+        .arg("999")
         .arg("--ctx-size")
         .arg(spec.ctx_size.to_string())
-        .arg("--chat-template")
-        .arg(spec.chat_template)
+        .arg("--batch-size")
+        .arg("4096")
+        .arg("--ubatch-size")
+        .arg("2048")
+        .arg("--flash-attn")
+        .arg("on")
         .creation_flags(CREATE_NO_WINDOW);
 
-    let child = command
+    command
         .spawn()
-        .map_err(|e| format!("spawn llama-server failed: {e}"))?;
+        .map_err(|e| format!("spawn llama-server failed: {e}"))
+}
 
+fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
     unsafe {
         if let Some(job) = get_or_init_job() {
             let raw = child.as_raw_handle();
@@ -105,9 +185,10 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
     let slot = LLAMA_CHILD.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(child);
+        Ok(())
+    } else {
+        Err("llama child lock poisoned".to_string())
     }
-
-    poll_ready()
 }
 
 fn poll_ready() -> Result<(), String> {
@@ -136,6 +217,10 @@ fn poll_ready() -> Result<(), String> {
 }
 
 pub fn stop() {
+    stop_current_server();
+}
+
+fn stop_current_server() {
     if let Some(slot) = LLAMA_CHILD.get() {
         if let Ok(mut guard) = slot.lock() {
             if let Some(mut child) = guard.take() {

@@ -58,18 +58,6 @@ pub const LANGUAGES: &[Language] = &[
     Language { code: LangCode::new("he-IL"), native_name: "עברית", english_name: "Hebrew", tier: Tier::B, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Rtl },
     Language { code: LangCode::new("tr-TR"), native_name: "Turkce", english_name: "Turkish", tier: Tier::B, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
     Language { code: LangCode::new("pl-PL"), native_name: "Polski", english_name: "Polish", tier: Tier::B, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("nl-NL"), native_name: "Nederlands", english_name: "Dutch", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("uk-UA"), native_name: "Українська", english_name: "Ukrainian", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("cs-CZ"), native_name: "Cestina", english_name: "Czech", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("sv-SE"), native_name: "Svenska", english_name: "Swedish", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("da-DK"), native_name: "Dansk", english_name: "Danish", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("no-NO"), native_name: "Norsk", english_name: "Norwegian", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("fi-FI"), native_name: "Suomi", english_name: "Finnish", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("hu-HU"), native_name: "Magyar", english_name: "Hungarian", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("ro-RO"), native_name: "Romana", english_name: "Romanian", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("bg-BG"), native_name: "Български", english_name: "Bulgarian", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("ms-MY"), native_name: "Bahasa Melayu", english_name: "Malay", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
-    Language { code: LangCode::new("fil-PH"), native_name: "Filipino", english_name: "Tagalog", tier: Tier::C, default_voice_id: FALLBACK_VOICE, script_direction: ScriptDirection::Ltr },
 ];
 
 pub fn all() -> &'static [Language] {

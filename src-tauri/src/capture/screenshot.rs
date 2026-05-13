@@ -80,7 +80,6 @@ fn process_request(request: CaptureRequest) {
 
             vlm::try_submit_ocr(
                 outcome.png_bytes,
-                current_native_lang(),
                 current_target_lang(),
                 pipeline::mode_label(outcome.mode),
                 seq,
@@ -101,10 +100,6 @@ fn request_seq(request: CaptureRequest) -> u64 {
         CaptureRequest::SelectedRect { seq, .. } => seq,
         CaptureRequest::Exit => 0,
     }
-}
-
-fn current_native_lang() -> String {
-    window_state::native_lang()
 }
 
 fn current_target_lang() -> String {

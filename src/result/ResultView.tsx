@@ -60,7 +60,6 @@ type VlmSnapshot = {
 type WindowState = {
   popup_topmost: boolean;
   popup_font: PopupFont;
-  native_lang?: string;
   target_lang?: string;
 };
 
@@ -357,6 +356,23 @@ export default function ResultView() {
       offTtsSynthesized?.();
       offTtsDone?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let unlisten: undefined | (() => void);
+
+    void (async () => {
+      unlisten = await win.onCloseRequested(async () => {
+        try {
+          await invoke("cancel_active_capture");
+        } catch {
+          // ignore
+        }
+      });
+    })();
+
+    return () => unlisten?.();
   }, []);
 
   useEffect(() => () => clearOriginalReadyTimer(), []);
