@@ -704,9 +704,11 @@ fn build_system_prompt(target_lang: &str) -> String {
 }
 
 fn build_direct_system_prompt(target_lang: &str) -> String {
-    let target = crate::languages::by_code(target_lang)
-        .or_else(|| crate::languages::by_code("en-US"))
-        .expect("target language fallback");
+    // 安全 fallback：即使語言表異常也不應 panic
+    let target_name = crate::languages::by_code(target_lang)
+        .map(|l| l.english_name)
+        .or_else(|| crate::languages::by_code("en-US").map(|l| l.english_name))
+        .unwrap_or_else(|| "English");
     let language_codes = crate::languages::all()
         .iter()
         .map(|lang| lang.code.as_str())
@@ -716,7 +718,7 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         "Translate the text in this image to {target_name}.\n\
          Output strict JSON only: {{\"original\":\"<source text>\",\"translated\":\"<{target_name} text>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}\n\
          No markdown, no prose.",
-        target_name = target.english_name,
+        target_name = target_name,
         codes = language_codes,
     )
 }
