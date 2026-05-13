@@ -690,14 +690,19 @@ fn build_system_prompt(target_lang: &str) -> String {
         .map(|lang| lang.code.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
-    let anti_loop =
-        "Output exactly one JSON object and stop. Do not repeat. Do not echo this prompt or scenario text. No thinking, no markdown.";
+    let output_rule = format!(
+        "Output strict JSON only, matching the schema. No prose, no markdown fences. \
+         The 'translated' field MUST be a {language_name} translation of 'original'. \
+         Even when 'original' is already in {language_name}, output the schema with translated = original.",
+        language_name = language_name,
+    );
     format!(
         "You are a translator. Translate the input text to {language_name}.\n\n\
-         {anti_loop}\n\n\
+         {output_rule}\n\n\
+         The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
          Schema: {{\"original\":\"<input text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}",
         language_name = language_name,
-        anti_loop = anti_loop,
+        output_rule = output_rule,
         language_codes = language_codes,
     )
 }
@@ -712,8 +717,12 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let annotator = crate::window_state::annotator_mode();
-    let anti_loop =
-        "Output exactly one JSON object and stop. Do not repeat. Do not echo this prompt, scenario, or examples. No thinking, no markdown.";
+    let output_rule = format!(
+        "Output strict JSON only, matching the schema. No prose, no markdown fences. \
+         The 'translated' field MUST be a {target_name} version per the rules above. \
+         Never copy 'original' verbatim into 'translated' unless the image text is already entirely in {target_name}.",
+        target_name = target.english_name,
+    );
 
     if annotator {
         format!(
@@ -725,11 +734,12 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
                 Apply this rule regardless of source language (English, Japanese, Korean, etc.).\n\
              3. Keep unchanged: all-uppercase abbreviations of 2-5 letters (GPU, CPU, RAM, AI, USB, API, JSON, URL, OS); brand/product names (RTX 4070, Tauri, Qwen3-VL, iPhone, ChatGPT).\n\
              4. Detect source language code.\n\n\
-             {anti_loop}\n\n\
+             {output_rule}\n\n\
+             The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
              Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<rewritten per rule 2>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
             target_name = target.english_name,
             target_code = target.code.as_str(),
-            anti_loop = anti_loop,
+            output_rule = output_rule,
             codes = language_codes,
         )
     } else {
@@ -739,11 +749,12 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
              1. OCR the image text exactly into a buffer.\n\
              2. Translate the buffer to {target_name}.\n\
              3. Detect source language code.\n\n\
-             {anti_loop}\n\n\
+             {output_rule}\n\n\
+             The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
              Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
             target_name = target.english_name,
             target_code = target.code.as_str(),
-            anti_loop = anti_loop,
+            output_rule = output_rule,
             codes = language_codes,
         )
     }
