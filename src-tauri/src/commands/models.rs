@@ -141,7 +141,7 @@ pub async fn download_model(id: String) -> Result<(), String> {
         })?;
 
         let id_clone = id_for_progress.clone();
-        downloader::download_file_with_progress(spec.mmproj_url, &mmproj_path, move |downloaded, total| {
+        let mmproj_result = downloader::download_file_with_progress(spec.mmproj_url, &mmproj_path, move |downloaded, total| {
             if let Some(app) = crate::app_handle::get() {
                 use tauri::Emitter;
                 let _ = app.emit(
@@ -154,7 +154,17 @@ pub async fn download_model(id: String) -> Result<(), String> {
                     }),
                 );
             }
-        })?;
+        });
+
+        if let Err(e) = mmproj_result {
+            // rollback: 刪掉已成功下載的 gguf，避免殘檔
+            let _ = std::fs::remove_file(&gguf_path);
+            eprintln!(
+                "[download_model] mmproj failed for {:?}, rolled back gguf: {}",
+                id_for_progress, e
+            );
+            return Err(format!("mmproj download failed: {}", e));
+        }
 
         if let Some(app) = crate::app_handle::get() {
             use tauri::Emitter;
