@@ -93,21 +93,19 @@ export function SnackbarProvider({ children }: { children: React.ReactNode }) {
       <style>
         {`
         @keyframes snackbar-in {
-          from { opacity: 0; transform: translate(-50%, 20px); }
-          to { opacity: 1; transform: translate(-50%, 0); }
+          from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); }
         }
         @keyframes snackbar-out {
-          from { opacity: 1; transform: translate(-50%, 0); }
-          to { opacity: 0; transform: translate(-50%, 20px); }
+          from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(20px); }
         }
-        .animate-snackbar-in { animation: snackbar-in 200ms ease-out; }
+        .animate-snackbar-in { animation: snackbar-in 200ms ease-out forwards; }
         .animate-snackbar-out { animation: snackbar-out 200ms ease-in forwards; }
         `}
       </style>
       {message ? (
         <div
           className={cn(
-            "pointer-events-auto fixed bottom-6 left-1/2 z-50 flex min-w-72 max-w-xl -translate-x-1/2 items-center gap-3 rounded-md bg-slate-800 px-5 py-3 text-sm text-white shadow-lg",
+            "pointer-events-auto fixed inset-x-0 bottom-6 z-50 mx-auto flex w-fit min-w-72 max-w-xl items-center gap-3 rounded-md bg-slate-800 px-5 py-3 text-sm text-white shadow-lg",
             hiding ? "animate-snackbar-out" : "animate-snackbar-in",
           )}
           role="status"
