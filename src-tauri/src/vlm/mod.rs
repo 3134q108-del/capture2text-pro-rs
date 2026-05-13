@@ -555,6 +555,7 @@ pub fn warmup() {
             top_p: None,
             top_k: None,
             min_p: None,
+            max_tokens: None,
         };
 
         match client.post(LLAMA_CHAT_URL).json(&request).send() {
@@ -822,6 +823,7 @@ fn build_chat_request(
         top_p: Some(0.8),
         top_k: Some(20),
         min_p: Some(0.05),
+        max_tokens: Some(1024),
     }
 }
 
@@ -944,6 +946,8 @@ struct ChatRequest {
     top_k: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     min_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
