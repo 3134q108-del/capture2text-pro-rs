@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useState } from "react";
 import { Lock } from "lucide-react";
-import { Button, Card, CardContent, Checkbox, Section, SectionBody, SectionHeader, StatusText } from "@/components/ui";
+import { Button, Card, CardContent, Checkbox, Section, SectionBody, SectionHeader, useSnackbar } from "@/components/ui";
 
-type Tier = "S" | "A" | "B" | "C";
+type Tier = "S" | "A" | "B";
 
 type LanguageItem = {
   code: string;
@@ -13,34 +14,34 @@ type LanguageItem = {
 };
 
 type WindowStatePayload = {
-  native_lang?: string;
   target_lang?: string;
 };
 
 const DEFAULT_ENABLED = ["zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR"];
-const TIERS: Tier[] = ["S", "A", "B", "C"];
+const TIERS: Tier[] = ["S", "A", "B"];
 const TIER_META: Record<Tier, { label: string; subtitle: string }> = {
   S: { label: "主推語言", subtitle: "OCR + 翻譯品質最佳，預設啟用" },
   A: { label: "常用語言", subtitle: "歐美亞主流語系，品質良好" },
   B: { label: "進階語言", subtitle: "含 RTL 或特殊字元，可運作但建議測試" },
-  C: { label: "實驗語言", subtitle: "支援度有限，TTS 走英文 fallback 音色" },
 };
 
 export default function LanguagesTab() {
+  const snackbar = useSnackbar();
   const [languages, setLanguages] = useState<LanguageItem[]>([]);
   const [enabledSet, setEnabledSet] = useState<Set<string>>(new Set(DEFAULT_ENABLED));
-  const [nativeLang, setNativeLang] = useState("zh-TW");
   const [targetLang, setTargetLang] = useState("en-US");
   const [collapsed, setCollapsed] = useState<Record<Tier, boolean>>({
     S: false,
     A: false,
     B: false,
-    C: false,
   });
   const [saving, setSaving] = useState(false);
-  const [statusMsg, setStatusMsg] = useState("");
 
-  const lockedCodes = useMemo(() => new Set([nativeLang, targetLang]), [nativeLang, targetLang]);
+  const lockedCodes = useMemo(() => new Set([targetLang]), [targetLang]);
+
+  function showError(message: string) {
+    snackbar.show("error", message);
+  }
 
   const grouped = useMemo(() => {
     return TIERS.map((tier) => ({
@@ -53,6 +54,21 @@ export default function LanguagesTab() {
     void refresh();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let off: undefined | (() => void);
+    listen<string>("output-language-changed", (e) => {
+      setTargetLang(e.payload);
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
   async function refresh() {
     try {
       const [allLanguages, enabled, ws] = await Promise.all([
@@ -62,11 +78,9 @@ export default function LanguagesTab() {
       ]);
       setLanguages(allLanguages);
       setEnabledSet(new Set(enabled));
-      setNativeLang(ws.native_lang ?? "zh-TW");
       setTargetLang(ws.target_lang ?? "en-US");
-      setStatusMsg("");
     } catch (error) {
-      setStatusMsg(String(error));
+      showError(String(error));
     }
   }
 
@@ -117,14 +131,13 @@ export default function LanguagesTab() {
     setSaving(true);
     try {
       await invoke("set_language_preferences", {
-        nativeLang,
         targetLang,
         enabledLangs: enabled,
       });
-      setStatusMsg("語言啟用設定已儲存");
+      snackbar.show("success", "語言啟用設定已儲存");
       await refresh();
     } catch (error) {
-      setStatusMsg(String(error));
+      showError(String(error));
     } finally {
       setSaving(false);
     }
@@ -180,8 +193,8 @@ export default function LanguagesTab() {
                             {locked ? <Lock className="h-3.5 w-3.5" aria-hidden="true" /> : null}
                           </span>
                         )}
-                        description={locked ? "目前母語或目標語言，無法取消。" : item.code}
-                        title={locked ? "目前母語或目標語言，無法取消" : undefined}
+                        description={locked ? "目前的目標語言，無法取消。" : item.code}
+                        title={locked ? "目前的目標語言，無法取消" : undefined}
                       />
                     </div>
                   );
@@ -197,7 +210,6 @@ export default function LanguagesTab() {
           儲存語言設定
         </Button>
       </div>
-      {statusMsg ? <StatusText tone="info" size="sm">{statusMsg}</StatusText> : null}
     </div>
   );
 }
