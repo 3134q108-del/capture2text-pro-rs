@@ -3,7 +3,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { Button, Card, CardContent, Section, SectionBody, SectionHeader, StatusText, useSnackbar } from "@/components/ui";
+import {
+  Button,
+  Card,
+  CardContent,
+  Section,
+  SectionBody,
+  SectionHeader,
+  Select,
+  SelectContent as ModelPickerContent,
+  SelectItem,
+  SelectTrigger as ModelPickerTrigger,
+  SelectValue,
+  StatusText,
+  useSnackbar,
+} from "@/components/ui";
 
 const VLM_ENDPOINT = "http://localhost:11434";
 
@@ -52,6 +66,7 @@ export default function AboutTab() {
   const [updateStatus, setUpdateStatus] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsError, setModelsError] = useState("");
+  const [deletingModelId, setDeletingModelId] = useState("");
   const snackbar = useSnackbar();
 
   useEffect(() => {
@@ -154,6 +169,33 @@ export default function AboutTab() {
     }
   }
 
+  const removeSelectedModel = async function deleteSelectedModel() {
+    if (!deletingModelId) {
+      return;
+    }
+    const model = models.find((item) => item.id === deletingModelId);
+    if (!model) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `確定要移除 ${model.display_name}？檔案會從磁碟移除（約 ${model.size_mb} MB）。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await invoke("delete_model", { id: deletingModelId });
+      snackbar.show("success", `已移除 ${model.display_name}`);
+      setDeletingModelId("");
+    } catch (error) {
+      snackbar.show("error", `移除失敗: ${String(error)}`);
+    }
+  };
+
+  const downloadedModels = models.filter((item) => item.downloaded);
+
   return (
     <div className="flex flex-col gap-4">
       <Section>
@@ -207,6 +249,31 @@ export default function AboutTab() {
               檢查 VLM 服務連線
             </Button>
             {vlmStatus ? <StatusText tone="info" size="sm">{vlmStatus}</StatusText> : null}
+            {downloadedModels.length > 0 ? (
+              <div className="ml-auto flex items-center gap-2">
+                <Select value={deletingModelId} onValueChange={setDeletingModelId}>
+                  <ModelPickerTrigger className="w-48">
+                    <SelectValue placeholder="選擇要刪除的模型" />
+                  </ModelPickerTrigger>
+                  <ModelPickerContent>
+                    {downloadedModels.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.display_name} ({item.size_mb} MB)
+                      </SelectItem>
+                    ))}
+                  </ModelPickerContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={!deletingModelId}
+                  onClick={() => void removeSelectedModel()}
+                >
+                  刪除
+                </Button>
+              </div>
+            ) : null}
           </div>
         </SectionBody>
       </Section>
