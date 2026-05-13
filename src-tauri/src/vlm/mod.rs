@@ -692,9 +692,8 @@ fn build_system_prompt(target_lang: &str) -> String {
         .join(" | ");
     let output_rule = format!(
         "Output strict JSON only matching the schema. No prose, no markdown fences. \
-         The 'translated' field MUST express the meaning of 'original' in {language_name}. \
-         If 'original' contains ANY span not in {language_name}, you MUST translate that span. \
-         Do not output 'translated' identical to 'original' unless 'original' is already 100% pure {language_name}.",
+         The 'translated' field MUST contain the full text rewritten in {language_name}. \
+         Translate every word of 'original' into {language_name}, regardless of source language.",
         language_name = language_name,
     );
     format!(
@@ -717,58 +716,27 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .map(|lang| lang.code.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
-    let annotator = crate::window_state::annotator_mode();
-    let output_rule = if annotator {
-        format!(
-            "Output strict JSON only matching the schema. No prose, no markdown fences. \
-             The 'translated' field MUST apply the annotation rule above to EVERY non-{target_name} word in 'original'. \
-             Do not output 'translated' identical to 'original'; the schema requires the annotated rewrite.",
-            target_name = target.english_name,
-        )
-    } else {
-        format!(
-            "Output strict JSON only matching the schema. No prose, no markdown fences. \
-             The 'translated' field MUST express the meaning of 'original' in {target_name}. \
-             If 'original' contains ANY span not in {target_name}, you MUST translate that span. \
-             Do not output 'translated' identical to 'original' unless 'original' is already 100% pure {target_name} text with no foreign words, numbers, codes, or technical terms acting as foreign tokens.",
-            target_name = target.english_name,
-        )
-    };
+    let output_rule = format!(
+        "Output strict JSON only matching the schema. No prose, no markdown fences. \
+         The 'translated' field MUST contain the full text rewritten in {target_name}. \
+         Translate every word of 'original' into {target_name}, regardless of source language.",
+        target_name = target.english_name,
+    );
 
-    if annotator {
-        format!(
-            "You are an OCR multilingual annotator. Output the result in {target_name} ({target_code}).\n\n\
-             Process:\n\
-             1. OCR the image text exactly into a buffer.\n\
-             2. Rewrite the buffer in {target_name}. For ANY word/phrase NOT in {target_name}, translate it and append the ORIGINAL in parentheses immediately after.\n\
-                Format: TRANSLATION (ORIGINAL)\n\
-                Apply this rule regardless of source language (English, Japanese, Korean, etc.).\n\
-             3. Keep unchanged: all-uppercase abbreviations of 2-5 letters (GPU, CPU, RAM, AI, USB, API, JSON, URL, OS); brand/product names (RTX 4070, Tauri, Qwen3-VL, iPhone, ChatGPT).\n\
-             4. Detect source language code.\n\n\
-             {output_rule}\n\n\
-             The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
-             Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<rewritten per rule 2>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
-            target_name = target.english_name,
-            target_code = target.code.as_str(),
-            output_rule = output_rule,
-            codes = language_codes,
-        )
-    } else {
-        format!(
-            "You are an OCR translator. Translate image text to {target_name} ({target_code}) regardless of source language.\n\n\
-             Process:\n\
-             1. OCR the image text exactly into a buffer.\n\
-             2. Translate the buffer to {target_name}.\n\
-             3. Detect source language code.\n\n\
-             {output_rule}\n\n\
-             The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
-             Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
-            target_name = target.english_name,
-            target_code = target.code.as_str(),
-            output_rule = output_rule,
-            codes = language_codes,
-        )
-    }
+    format!(
+        "You are an OCR translator. Translate image text to {target_name} ({target_code}) regardless of source language.\n\n\
+         Process:\n\
+         1. OCR the image text exactly into a buffer.\n\
+         2. Translate the buffer to {target_name}.\n\
+         3. Detect source language code.\n\n\
+         {output_rule}\n\n\
+         The OCR buffer in step 1 goes into 'original'. The translation in step 2 goes into 'translated'.\n\
+         Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
+        target_name = target.english_name,
+        target_code = target.code.as_str(),
+        output_rule = output_rule,
+        codes = language_codes,
+    )
 }
 
 

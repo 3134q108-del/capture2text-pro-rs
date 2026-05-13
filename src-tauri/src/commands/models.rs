@@ -70,17 +70,6 @@ pub fn get_active_model() -> Option<String> {
     })
 }
 
-#[tauri::command]
-pub fn get_annotator_mode() -> bool {
-    crate::window_state::annotator_mode()
-}
-
-#[tauri::command]
-pub fn set_annotator_mode(value: bool) -> Result<(), String> {
-    crate::window_state::set_annotator_mode(value);
-    Ok(())
-}
-
 fn parse_model_id(s: &str) -> Result<ModelId, String> {
     serde_json::from_str::<ModelId>(&format!("\"{}\"", s))
         .map_err(|e| format!("invalid model id: {} ({})", s, e))

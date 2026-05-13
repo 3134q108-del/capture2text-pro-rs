@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   CardContent,
-  Checkbox,
   ProgressBar,
   Section,
   SectionBody,
@@ -44,7 +43,6 @@ const TIER_HINT: Record<string, string> = {
 export default function ModelsTab() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, { pct: number; file: string }>>({});
-  const [annotatorMode, setAnnotatorMode] = useState(false);
   const snackbar = useSnackbar();
 
   useEffect(() => {
@@ -100,12 +98,8 @@ export default function ModelsTab() {
 
   async function refresh() {
     try {
-      const [list, annotator] = await Promise.all([
-        invoke<ModelInfo[]>("get_models_list"),
-        invoke<boolean>("get_annotator_mode"),
-      ]);
+      const list = await invoke<ModelInfo[]>("get_models_list");
       setModels(list);
-      setAnnotatorMode(annotator);
     } catch (error) {
       snackbar.show("error", String(error));
     }
@@ -132,15 +126,6 @@ export default function ModelsTab() {
       void refresh();
     } catch (error) {
       snackbar.show("error", "切換失敗: " + String(error));
-    }
-  }
-
-  async function changeAnnotator(value: boolean) {
-    setAnnotatorMode(value);
-    try {
-      await invoke("set_annotator_mode", { value });
-    } catch (error) {
-      snackbar.show("error", String(error));
     }
   }
 
@@ -177,17 +162,6 @@ export default function ModelsTab() {
                     <div className="text-xs text-muted-foreground">
                       {TIER_HINT[m.id] ?? ""}
                     </div>
-
-                    {m.id === "Qwen3Vl8bInstruct" ? (
-                      <div className="mt-2 flex items-center gap-2">
-                        <Checkbox
-                          checked={annotatorMode}
-                          onCheckedChange={(value) => void changeAnnotator(value === true)}
-                          label="註解英文詞 (將英文翻成中文 + 括號夾原文)"
-                          description="僅 8B 完整支援。輕量模型可能效果不佳。"
-                        />
-                      </div>
-                    ) : null}
 
                     {dl ? (
                       <div className="flex items-center gap-2">

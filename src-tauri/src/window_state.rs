@@ -128,8 +128,6 @@ pub struct WindowState {
     pub enabled_langs: Vec<String>,
     #[serde(default)]
     pub active_model: Option<ModelId>,
-    #[serde(default)]
-    pub annotator_mode: bool,
 }
 
 impl Default for WindowState {
@@ -168,7 +166,6 @@ impl Default for WindowState {
             target_lang: default_target_lang(),
             enabled_langs: default_enabled_langs(),
             active_model: None,
-            annotator_mode: false,
         }
     }
 }
@@ -514,16 +511,6 @@ pub fn active_model() -> Option<ModelId> {
 pub fn set_active_model(model: Option<ModelId>) {
     update(|state| {
         state.active_model = model;
-    });
-}
-
-pub fn annotator_mode() -> bool {
-    get().annotator_mode
-}
-
-pub fn set_annotator_mode(value: bool) {
-    update(|state| {
-        state.annotator_mode = value;
     });
 }
 
