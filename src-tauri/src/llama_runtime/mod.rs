@@ -54,26 +54,33 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
     if !any_model_downloaded() {
         return Err("no_model: 請先下載並選擇 AI 模型".to_string());
     }
-    // 尊重 user 的選擇：若當前 active model 支援該語言，不切換
+    // 尊重 user 選擇：當前 active model 支援該語言就不切換
     if let Some(current) = active_model() {
         if current.supports_lang(lang) {
             return Ok(());
         }
-        // 當前模型不支援，fallback
-        let target = manifest::ModelId::for_lang(lang);
-        eprintln!(
-            "[llama-runtime] active model {:?} does not support lang={}, switching to {:?}",
-            current, lang, target
-        );
-        return switch_model(target);
     }
-    // 沒有 active model（首次啟動或被刪除）用 for_lang fallback
-    let target = manifest::ModelId::for_lang(lang);
-    eprintln!(
-        "[llama-runtime] no active model, switching for lang={} target={:?}",
-        lang, target
-    );
-    switch_model(target)
+
+    // 在已下載模型中找第一個支援該語言者
+    let downloaded_target = manifest::ALL_MODELS
+        .iter()
+        .find(|id| is_model_downloaded(*id) && id.supports_lang(lang))
+        .copied();
+
+    if let Some(target) = downloaded_target {
+        eprintln!(
+            "[llama-runtime] active model does not support lang={}, switching to downloaded {:?}",
+            lang, target
+        );
+        switch_model(target)
+    } else {
+        // 沒有已下載模型支援：保留目前模型，避免回報未下載錯誤
+        eprintln!(
+            "[llama-runtime] no downloaded model supports lang={}, keeping current",
+            lang
+        );
+        Ok(())
+    }
 }
 
 pub fn any_model_downloaded() -> bool {
