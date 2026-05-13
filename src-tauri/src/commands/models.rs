@@ -100,11 +100,13 @@ pub fn delete_model(id: String) -> Result<(), String> {
     let model_id = parse_model_id(&id)?;
     let spec = model_id.spec();
     let (gguf, mmproj) = model_files(spec)?;
-    let _ = fs::remove_file(&gguf);
-    let _ = fs::remove_file(&mmproj);
-    if crate::window_state::active_model() == Some(model_id) {
+    let is_active = crate::window_state::active_model() == Some(model_id);
+    if is_active {
+        crate::llama_runtime::supervisor::stop();
         crate::window_state::set_active_model(None);
     }
+    let _ = fs::remove_file(&gguf);
+    let _ = fs::remove_file(&mmproj);
     if let Some(app) = crate::app_handle::get() {
         use tauri::Emitter;
         let _ = app.emit("model-deleted", &id);

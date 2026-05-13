@@ -4,34 +4,29 @@ pub mod supervisor;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 pub use manifest::ModelId;
 
 pub const LLAMA_CPP_TAG: &str = "b8955";
 
-static ACTIVE_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
-
 pub fn active_model() -> Option<ModelId> {
-    ACTIVE_MODEL
-        .get()
-        .and_then(|slot| slot.lock().ok().and_then(|model| *model))
+    crate::window_state::active_model()
 }
 
 pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
     cleanup_legacy_model_files();
     ensure_binary_installed()?;
-    let startup_model = crate::window_state::active_model().unwrap_or(default_model);
+    let startup_model = active_model().unwrap_or(default_model);
     if is_model_downloaded(&startup_model) {
         supervisor::spawn_for(&startup_model)?;
-        set_active_model(Some(startup_model));
+        crate::window_state::set_active_model(Some(startup_model));
     } else {
         eprintln!(
             "[llama-runtime] startup model {:?} not downloaded, skip spawning",
             startup_model
         );
-        set_active_model(None);
+        crate::window_state::set_active_model(None);
     }
     Ok(())
 }
@@ -48,7 +43,7 @@ pub fn switch_model(target: ModelId) -> Result<(), String> {
     }
     supervisor::stop();
     supervisor::spawn_for(&target)?;
-    set_active_model(Some(target));
+    crate::window_state::set_active_model(Some(target));
     Ok(())
 }
 
@@ -84,13 +79,6 @@ pub fn any_model_downloaded() -> bool {
 
 pub fn app_dir() -> PathBuf {
     crate::app_paths::data_dir()
-}
-
-fn set_active_model(model: Option<ModelId>) {
-    let slot = ACTIVE_MODEL.get_or_init(|| Mutex::new(None));
-    if let Ok(mut guard) = slot.lock() {
-        *guard = model;
-    }
 }
 
 fn ensure_binary_installed() -> Result<(), String> {
