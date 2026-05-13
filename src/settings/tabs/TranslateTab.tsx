@@ -55,8 +55,6 @@ export default function TranslateTab() {
 
   const [targetLang, setTargetLang] = useState("en-US");
   const [enabledLangs, setEnabledLangs] = useState<LanguageItem[]>([]);
-  const [savingLang, setSavingLang] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const selectedScenario = useMemo(
     () => scenarios.find((item) => item.id === selectedId) ?? null,
@@ -76,33 +74,38 @@ export default function TranslateTab() {
 
   useEffect(() => {
     let cancelled = false;
-    let offLang: undefined | (() => void);
+    let cleanup: Array<() => void> = [];
 
-    listen<string>("output-language-changed", (event) => {
-      setTargetLang(event.payload);
-    }).then((unlisten) => {
+    async function setupListeners() {
+      const listeners = await Promise.all([
+        listen<string>("output-language-changed", (event) => {
+          setTargetLang(event.payload);
+        }),
+        listen("scenarios-changed", () => {
+          void refresh();
+        }),
+        listen("window-state-changed", () => {
+          void refresh();
+        }),
+      ]);
+
       if (cancelled) {
-        unlisten();
+        listeners.forEach((off) => off());
         return;
       }
-      offLang = unlisten;
+
+      cleanup = listeners;
+    }
+
+    void setupListeners().catch((error) => {
+      snackbar.show("error", String(error));
     });
 
     return () => {
       cancelled = true;
-      offLang?.();
+      cleanup.forEach((off) => off());
     };
   }, []);
-
-  useEffect(() => {
-    if (!saveSuccess) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      setSaveSuccess(false);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [saveSuccess]);
 
   async function refresh() {
     try {
@@ -139,23 +142,17 @@ export default function TranslateTab() {
     }
   }
 
-  async function saveLanguagePreferences() {
-    setSavingLang(true);
-    setSaveSuccess(false);
+  async function saveTargetLang(next: string) {
+    setTargetLang(next);
     try {
       const currentEnabled = await invoke<string[]>("get_enabled_langs");
-      const enabled = Array.from(new Set([...currentEnabled, targetLang]));
+      const enabled = Array.from(new Set([...currentEnabled, next]));
       await invoke("set_language_preferences", {
-        targetLang,
+        targetLang: next,
         enabledLangs: enabled,
       });
-      snackbar.show("success", "語言設定已儲存");
-      setSaveSuccess(true);
     } catch (error) {
       snackbar.show("error", String(error));
-      setSaveSuccess(false);
-    } finally {
-      setSavingLang(false);
     }
   }
 
@@ -239,7 +236,7 @@ export default function TranslateTab() {
         <SectionBody>
           <div className="grid gap-3">
             <FormField label="目標語言" htmlFor="target-lang-select" required>
-              <Select value={targetLang} onValueChange={(value) => setTargetLang(value)}>
+              <Select value={targetLang} onValueChange={(value) => void saveTargetLang(value)}>
                 <SelectTrigger id="target-lang-select">
                   <SelectValue placeholder="請選擇目標語言" />
                 </SelectTrigger>
@@ -257,18 +254,6 @@ export default function TranslateTab() {
           <StatusText tone="info" size="sm">
             翻譯方向：原文 → 目標語言（不論原文語言，一律翻成目標語言；如果原文已是目標語言，模型可能回原文不變）
           </StatusText>
-
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="primary"
-              onClick={() => void saveLanguagePreferences()}
-              aria-disabled={savingLang}
-              disabled={savingLang}
-            >
-              {savingLang ? "儲存中..." : saveSuccess ? "已儲存" : "儲存語言設定"}
-            </Button>
-          </div>
         </SectionBody>
       </Section>
 
