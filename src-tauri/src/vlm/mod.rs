@@ -173,6 +173,12 @@ pub fn init_worker(app_handle: AppHandle) {
         .name("vlm-worker".to_string())
         .spawn(move || {
             while let Ok(job) = rx.recv() {
+                // 連按時 stale OCR job 秒丟，不進入 loading/model-switch 路徑
+                if let VlmJob::OcrAndTranslate { seq, .. } = &job {
+                    if is_seq_cancelled(Some(*seq)) {
+                        continue;
+                    }
+                }
                 state::set_loading(job_source(&job));
                 let source_label = job_source(&job).to_string();
                 let lang_code = job_model_lang(&job);
