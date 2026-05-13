@@ -568,7 +568,7 @@ export default function ResultView() {
       setTranslated("");
       setErrorMsg("");
       setTranslatedReady(false);
-      await invoke("retranslate", { text });
+      await invoke("retranslate", { text, targetLang });
     } catch (error) {
       setStatus("error");
       setErrorMsg(String(error));

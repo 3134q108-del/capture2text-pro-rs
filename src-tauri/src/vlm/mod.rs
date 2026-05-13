@@ -15,6 +15,12 @@ use crate::{llama_runtime, scenarios};
 
 pub mod state;
 
+fn emit_or_log<T: serde::Serialize>(app: &AppHandle, name: &str, payload: &T) {
+    if let Err(e) = app.emit(name, payload) {
+        eprintln!("[vlm] emit '{}' failed: {}", name, e);
+    }
+}
+
 const LLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/v1/chat/completions";
 const CHAT_MODEL_NAME: &str = "local";
 const VLM_QUEUE_CAPACITY: usize = 4;
@@ -353,7 +359,7 @@ fn try_submit(job: VlmJob) {
         Err(TrySendError::Full(job)) => {
             eprintln!("[vlm] queue full, dropping source={}", job_source(&job));
             if let Some(app) = crate::app_handle::get() {
-                let _ = app.emit("vlm-error", serde_json::json!({
+                emit_or_log(&app, "vlm-error", &serde_json::json!({
                     "code": "queue_full",
                     "message": "VLM 處理佇列已滿，請稍候再試",
                 }));
@@ -362,7 +368,7 @@ fn try_submit(job: VlmJob) {
         Err(TrySendError::Disconnected(job)) => {
             eprintln!("[vlm] worker disconnected, dropping source={}", job_source(&job));
             if let Some(app) = crate::app_handle::get() {
-                let _ = app.emit("vlm-error", serde_json::json!({
+                emit_or_log(&app, "vlm-error", &serde_json::json!({
                     "code": "channel_disconnected",
                     "message": "VLM 處理通道斷線",
                 }));
