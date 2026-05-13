@@ -35,7 +35,6 @@ export default function LanguagesTab() {
     A: false,
     B: false,
   });
-  const [saving, setSaving] = useState(false);
 
   const lockedCodes = useMemo(() => new Set([targetLang]), [targetLang]);
 
@@ -56,16 +55,33 @@ export default function LanguagesTab() {
 
   useEffect(() => {
     let cancelled = false;
-    let off: undefined | (() => void);
-    listen<string>("output-language-changed", (e) => {
-      setTargetLang(e.payload);
-    }).then((unlisten) => {
-      if (cancelled) unlisten();
-      else off = unlisten;
+    let cleanup: Array<() => void> = [];
+
+    async function setupListeners() {
+      const listeners = await Promise.all([
+        listen<string>("output-language-changed", (e) => {
+          setTargetLang(e.payload);
+        }),
+        listen<unknown>("window-state-changed", () => {
+          void refresh();
+        }),
+      ]);
+
+      if (cancelled) {
+        listeners.forEach((off) => off());
+        return;
+      }
+
+      cleanup = listeners;
+    }
+
+    void setupListeners().catch((error) => {
+      showError(String(error));
     });
+
     return () => {
       cancelled = true;
-      off?.();
+      cleanup.forEach((off) => off());
     };
   }, []);
 
@@ -84,9 +100,19 @@ export default function LanguagesTab() {
     }
   }
 
+  async function persistEnabledLangs(nextSet: Set<string>) {
+    const ordered = languages.filter((item) => nextSet.has(item.code)).map((item) => item.code);
+    try {
+      await invoke("set_language_preferences", { targetLang, enabledLangs: ordered });
+    } catch (error) {
+      showError(String(error));
+    }
+  }
+
   function setBatchEnabled(codes: string[]) {
     const next = new Set<string>([...codes, ...lockedCodes]);
     setEnabledSet(next);
+    void persistEnabledLangs(next);
   }
 
   function selectTierS() {
@@ -120,27 +146,11 @@ export default function LanguagesTab() {
       next.delete(code);
     }
     setEnabledSet(next);
+    void persistEnabledLangs(next);
   }
 
   function toggleTierCollapse(tier: Tier) {
     setCollapsed((prev) => ({ ...prev, [tier]: !prev[tier] }));
-  }
-
-  async function savePreferences() {
-    const enabled = languages.filter((item) => enabledSet.has(item.code)).map((item) => item.code);
-    setSaving(true);
-    try {
-      await invoke("set_language_preferences", {
-        targetLang,
-        enabledLangs: enabled,
-      });
-      snackbar.show("success", "語言啟用設定已儲存");
-      await refresh();
-    } catch (error) {
-      showError(String(error));
-    } finally {
-      setSaving(false);
-    }
   }
 
   return (
@@ -205,11 +215,6 @@ export default function LanguagesTab() {
         </Card>
       ))}
 
-      <div className="flex items-center gap-2">
-        <Button type="button" variant="primary" onClick={() => void savePreferences()} disabled={saving}>
-          儲存語言設定
-        </Button>
-      </div>
     </div>
   );
 }
