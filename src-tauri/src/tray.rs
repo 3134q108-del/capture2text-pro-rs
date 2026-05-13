@@ -70,7 +70,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                         }
                     }
                     let model_id_clone = model_id.clone();
-                    tauri::async_runtime::spawn(async move {
+                    std::thread::spawn(move || {
                         if let Err(e) = crate::commands::models::set_active_model(model_id_clone) {
                             eprintln!("[tray] set_active_model failed: {}", e);
                         }
