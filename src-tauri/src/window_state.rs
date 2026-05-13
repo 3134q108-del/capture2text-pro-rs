@@ -579,7 +579,20 @@ fn load_or_default() -> WindowState {
 fn load_from_disk() -> Option<WindowState> {
     let path = storage_path().ok()?;
     let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<WindowState>(&raw).ok()
+    // 容錯：strip UTF-8 BOM（PowerShell Set-Content -Encoding UTF8 會加 EF BB BF）
+    let cleaned = raw.strip_prefix('\u{FEFF}').unwrap_or(&raw);
+    match serde_json::from_str::<WindowState>(cleaned) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!("[window_state] DESERIALIZE FAILED: {}", e);
+            eprintln!(
+                "[window_state] raw len = {}, first 200 chars: {}",
+                raw.len(),
+                &raw.chars().take(200).collect::<String>()
+            );
+            None
+        }
+    }
 }
 
 fn persist_best_effort(state: &WindowState) {
