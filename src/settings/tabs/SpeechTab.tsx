@@ -129,19 +129,36 @@ export default function SpeechTab() {
 
   useEffect(() => {
     let cancelled = false;
-    let unlisten: undefined | (() => void);
-    listen<{ target?: string }>("tts-done", () => {
-      setPreviewingLang(null);
-    }).then((fn) => {
+    let cleanup: Array<() => void> = [];
+
+    async function setupListeners() {
+      const listeners = await Promise.all([
+        listen<{ target?: string }>("tts-done", () => {
+          setPreviewingLang(null);
+        }),
+        listen("output-language-changed", () => {
+          void refreshInitial();
+        }),
+        listen("window-state-changed", () => {
+          void refreshInitial();
+        }),
+      ]);
+
       if (cancelled) {
-        fn();
-      } else {
-        unlisten = fn;
+        listeners.forEach((off) => off());
+        return;
       }
+
+      cleanup = listeners;
+    }
+
+    void setupListeners().catch((error) => {
+      showError(String(error));
     });
+
     return () => {
       cancelled = true;
-      unlisten?.();
+      cleanup.forEach((off) => off());
     };
   }, []);
 
