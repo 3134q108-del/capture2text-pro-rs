@@ -4,11 +4,13 @@ pub mod supervisor;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 
 pub use manifest::ModelId;
 
 pub const LLAMA_CPP_TAG: &str = "b8955";
+static SWITCH_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn active_model() -> Option<ModelId> {
     crate::window_state::active_model()
@@ -32,6 +34,7 @@ pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
 }
 
 pub fn switch_model(target: ModelId) -> Result<(), String> {
+    let _guard = SWITCH_LOCK.lock().map_err(|e| format!("switch_lock poisoned: {e}"))?;
     if active_model() == Some(target) {
         return Ok(());
     }
