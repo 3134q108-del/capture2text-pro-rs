@@ -36,7 +36,6 @@ type LanguageItem = {
 };
 
 type WindowStatePayload = {
-  native_lang?: string;
   target_lang?: string;
 };
 
@@ -54,7 +53,6 @@ export default function TranslateTab() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState<Scenario>(EMPTY_SCENARIO);
 
-  const [nativeLang, setNativeLang] = useState("zh-TW");
   const [targetLang, setTargetLang] = useState("en-US");
   const [enabledLangs, setEnabledLangs] = useState<LanguageItem[]>([]);
   const [savingLang, setSavingLang] = useState(false);
@@ -69,11 +67,8 @@ export default function TranslateTab() {
     if (enabledLangs.length > 0) {
       return enabledLangs;
     }
-    return [
-      { code: nativeLang, native_name: nativeLang, english_name: nativeLang, tier: "" },
-      { code: targetLang, native_name: targetLang, english_name: targetLang, tier: "" },
-    ].filter((item, index, arr) => arr.findIndex((x) => x.code === item.code) === index);
-  }, [enabledLangs, nativeLang, targetLang]);
+    return [{ code: targetLang, native_name: targetLang, english_name: targetLang, tier: "" }];
+  }, [enabledLangs, targetLang]);
 
   useEffect(() => {
     void refresh();
@@ -126,7 +121,6 @@ export default function TranslateTab() {
       setScenarios(list);
       setActiveId(active);
       setEnabledLangs(filtered);
-      setNativeLang(state.native_lang ?? "zh-TW");
       setTargetLang(state.target_lang ?? outputLang ?? "en-US");
 
       const fallback =
@@ -150,9 +144,8 @@ export default function TranslateTab() {
     setSaveSuccess(false);
     try {
       const currentEnabled = await invoke<string[]>("get_enabled_langs");
-      const enabled = Array.from(new Set([...currentEnabled, nativeLang, targetLang]));
+      const enabled = Array.from(new Set([...currentEnabled, targetLang]));
       await invoke("set_language_preferences", {
-        nativeLang,
         targetLang,
         enabledLangs: enabled,
       });
@@ -244,22 +237,7 @@ export default function TranslateTab() {
       <Section>
         <SectionHeader title="語言設定" />
         <SectionBody>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="母語" htmlFor="native-lang-select" required>
-              <Select value={nativeLang} onValueChange={(value) => setNativeLang(value)}>
-                <SelectTrigger id="native-lang-select">
-                  <SelectValue placeholder="請選擇母語" />
-                </SelectTrigger>
-                <SelectContent>
-                  {languageOptions.map((item) => (
-                    <SelectItem key={`native-${item.code}`} value={item.code}>
-                      {`${item.native_name} (${item.english_name})`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
-
+          <div className="grid gap-3">
             <FormField label="目標語言" htmlFor="target-lang-select" required>
               <Select value={targetLang} onValueChange={(value) => setTargetLang(value)}>
                 <SelectTrigger id="target-lang-select">
@@ -288,7 +266,7 @@ export default function TranslateTab() {
               aria-disabled={savingLang}
               disabled={savingLang}
             >
-              {savingLang ? "儲存中..." : saveSuccess ? "✅ 已儲存" : "儲存語言設定"}
+              {savingLang ? "儲存中..." : saveSuccess ? "已儲存" : "儲存語言設定"}
             </Button>
           </div>
         </SectionBody>
