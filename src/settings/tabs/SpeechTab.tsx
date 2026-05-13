@@ -32,9 +32,10 @@ import {
   SelectValue,
   Slider,
   StatusText,
+  useSnackbar,
 } from "@/components/ui";
 
-type Tier = "S" | "A" | "B" | "C";
+type Tier = "S" | "A" | "B";
 type TestStatus = "idle" | "testing" | "ok" | "error";
 
 type LanguageItem = {
@@ -74,12 +75,12 @@ const SA_ALTERNATIVES: Record<string, string[]> = {
 };
 
 export default function SpeechTab() {
+  const snackbar = useSnackbar();
   const [keyInput, setKeyInput] = useState("");
   const [region, setRegion] = useState("eastasia");
   const [credStatus, setCredStatus] = useState<AzureCredentialsStatus>(EMPTY_STATUS);
   const [testStatus, setTestStatus] = useState<TestStatus>("idle");
   const [testError, setTestError] = useState("");
-  const [statusMsg, setStatusMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [previewingLang, setPreviewingLang] = useState<string | null>(null);
   const [speechRate, setSpeechRateState] = useState(1.0);
@@ -94,6 +95,10 @@ export default function SpeechTab() {
   useEffect(() => {
     void refreshInitial();
   }, []);
+
+  function showError(message: string) {
+    snackbar.show("error", message);
+  }
 
   async function refreshInitial() {
     try {
@@ -118,7 +123,7 @@ export default function SpeechTab() {
         await loadVoices(allLanguages.filter((item) => enabledSet.has(item.code)));
       }
     } catch (error) {
-      setStatusMsg(String(error));
+      showError(String(error));
     }
   }
 
@@ -147,13 +152,12 @@ export default function SpeechTab() {
       return;
     }
     if (!key) {
-      setStatusMsg("請輸入 Azure 訂閱金鑰。");
+      snackbar.show("error", "請輸入 Azure 訂閱金鑰。");
       return;
     }
 
     try {
       setSaving(true);
-      setStatusMsg("");
       setTestError("");
       await saveAzureCredentials(key, region);
       setKeyInput("");
@@ -176,9 +180,9 @@ export default function SpeechTab() {
       setRouting({});
       setTestStatus("idle");
       setTestError("");
-      setStatusMsg("Azure 認證已刪除。");
+      snackbar.show("success", "Azure 認證已刪除。");
     } catch (error) {
-      setStatusMsg(String(error));
+      showError(String(error));
     } finally {
       setSaving(false);
     }
@@ -186,6 +190,7 @@ export default function SpeechTab() {
 
   async function testAndLoadVoices() {
     try {
+      snackbar.show("info", "測試中...");
       setTestStatus("testing");
       setTestError("");
       await testAzureConnection();
@@ -193,9 +198,11 @@ export default function SpeechTab() {
       const status = await getAzureCredentialsStatus();
       setCredStatus(status);
       await loadVoices(enabledLanguages);
+      snackbar.show("success", "測試完成。");
     } catch (error) {
       setTestStatus("error");
       setTestError(String(error));
+      snackbar.show("error", `測試失敗：${String(error)}`);
     }
   }
 
@@ -210,18 +217,19 @@ export default function SpeechTab() {
     try {
       await setVoiceRouting(lang, voiceId);
       setRouting((prev) => ({ ...prev, [lang]: voiceId }));
-      setStatusMsg(`${lang} 音色已更新。`);
+      snackbar.show("success", `${lang} 音色已更新。`);
     } catch (error) {
-      setStatusMsg(String(error));
+      showError(String(error));
     }
   }
 
   async function handlePreview(lang: string, voiceId: string) {
     try {
+      snackbar.show("info", "預覽中...");
       setPreviewingLang(lang);
       await previewVoice(lang, voiceId);
     } catch (error) {
-      setStatusMsg(`試聽失敗：${String(error)}`);
+      showError(`試聽失敗：${String(error)}`);
       setPreviewingLang(null);
     }
   }
@@ -230,7 +238,7 @@ export default function SpeechTab() {
     try {
       await stopSpeaking();
     } catch (error) {
-      setStatusMsg(`停止失敗：${String(error)}`);
+      showError(`停止失敗：${String(error)}`);
     } finally {
       setPreviewingLang(null);
     }
@@ -241,7 +249,7 @@ export default function SpeechTab() {
     try {
       await setSpeechRate(value);
     } catch (error) {
-      setStatusMsg(`朗讀速度更新失敗：${String(error)}`);
+      showError(`朗讀速度更新失敗：${String(error)}`);
     }
   }
 
@@ -250,7 +258,7 @@ export default function SpeechTab() {
     try {
       await setSpeechVolume(value);
     } catch (error) {
-      setStatusMsg(`音量更新失敗：${String(error)}`);
+      showError(`音量更新失敗：${String(error)}`);
     }
   }
 
@@ -348,7 +356,7 @@ export default function SpeechTab() {
             {enabledLanguages.map((item) => {
               const options = voiceOptions(item);
               const selected = routing[item.code] ?? defaultVoiceFor(item);
-              const fallbackTier = item.tier === "B" || item.tier === "C";
+              const fallbackTier = item.tier === "B";
               return (
                 <div key={item.code} className="rounded-md border border-border p-3">
                   <div className="mb-2 text-sm font-medium text-foreground">
@@ -398,9 +406,7 @@ export default function SpeechTab() {
                   </FormField>
                   {fallbackTier ? (
                     <StatusText tone="info" size="sm">
-                      {item.tier === "B"
-                        ? "進階語言：fallback 音色品質較低，可能不符合該語言發音"
-                        : "實驗語言：走英文 fallback 音色，僅供測試"}
+                      進階語言：走英文 fallback 音色，請測試後使用
                     </StatusText>
                   ) : null}
                 </div>
@@ -409,8 +415,6 @@ export default function SpeechTab() {
           </div>
         </SectionBody>
       </Section>
-
-      {statusMsg ? <StatusText tone="info" size="sm">{statusMsg}</StatusText> : null}
     </div>
   );
 }
