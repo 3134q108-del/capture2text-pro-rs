@@ -45,6 +45,7 @@ type VlmPartialEventPayload = {
   translated: string;
   src_lang?: string | null;
 };
+type VlmErrorPayload = { code: string; message: string };
 
 type VlmSnapshot = {
   source: string;
@@ -162,6 +163,7 @@ export default function ResultView() {
   const [srcLang, setSrcLang] = useState<string | null>(null);
   const [targetLang, setTargetLang] = useState("zh-TW");
   const [errorMsg, setErrorMsg] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   const [speakingState, dispatchSpeaking] = useReducer(speakReducer, { kind: "idle" } as SpeakingState);
   const [originalReady, setOriginalReady] = useState(false);
   const [translatedReady, setTranslatedReady] = useState(false);
@@ -278,6 +280,7 @@ export default function ResultView() {
     let offPartial: null | (() => void) = null;
     let offTtsSynthesized: null | (() => void) = null;
     let offTtsDone: null | (() => void) = null;
+    let offVlmError: null | (() => void) = null;
 
     const setup = async () => {
       offFinal = await listen<VlmEventPayload>("vlm-result", (event) => {
@@ -344,6 +347,21 @@ export default function ResultView() {
         offPartial = null;
         offFinal?.();
         offFinal = null;
+        return;
+      }
+
+      offVlmError = await listen<VlmErrorPayload>("vlm-error", (event) => { setErrorMessage(event.payload.message); window.setTimeout(() => setErrorMessage(""), 3000); });
+      if (disposed) {
+        offVlmError();
+        offVlmError = null;
+        offTtsDone?.();
+        offTtsDone = null;
+        offTtsSynthesized?.();
+        offTtsSynthesized = null;
+        offPartial?.();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
       }
     };
 
@@ -355,6 +373,7 @@ export default function ResultView() {
       offPartial?.();
       offTtsSynthesized?.();
       offTtsDone?.();
+      offVlmError?.();
     };
   }, []);
 
@@ -713,6 +732,7 @@ export default function ResultView() {
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
+        {errorMessage ? <div className="rounded bg-red-100 px-3 py-2 text-sm text-red-900">{errorMessage}</div> : null}
         {status === "error" ? (
           <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
         ) : (

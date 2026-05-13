@@ -327,6 +327,7 @@ pub fn try_submit_ocr(
     source: &'static str,
     seq: u64,
 ) {
+    cancel_current();
     LATEST_OCR_SEQ.store(seq, Ordering::SeqCst);
     try_submit(VlmJob::OcrAndTranslate {
         png_bytes,
@@ -341,6 +342,7 @@ pub fn try_submit_text(
     target_lang: String,
     source: &'static str,
 ) {
+    cancel_current();
     try_submit(VlmJob::TranslateText {
         text,
         target_lang,
