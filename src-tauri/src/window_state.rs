@@ -307,7 +307,10 @@ pub fn get() -> WindowState {
     let slot = WINDOW_STATE.get_or_init(|| Mutex::new(load_or_default()));
     match slot.lock() {
         Ok(guard) => guard.clone(),
-        Err(_) => WindowState::default(),
+        Err(poisoned) => {
+            eprintln!("[window_state] mutex poisoned in get(), recovering inner");
+            poisoned.into_inner().clone()
+        }
     }
 }
 
@@ -603,7 +606,24 @@ fn update_result(mutator: impl FnOnce(&mut WindowState) -> Result<(), String>) -
 }
 
 fn load_or_default() -> WindowState {
-    let mut state = load_from_disk().unwrap_or_default();
+    let loaded = load_from_disk();
+    let mut state = match loaded {
+        Some(state) => state,
+        None => {
+            // load 失敗時先備份原檔，避免後續 default 覆寫後無法救援
+            if let Ok(path) = storage_path() {
+                if path.exists() {
+                    let bak = path.with_extension("json.bak");
+                    let _ = fs::rename(&path, &bak);
+                    eprintln!(
+                        "[window_state] load failed, original backed up to {:?}",
+                        bak
+                    );
+                }
+            }
+            WindowState::default()
+        }
+    };
     migrate_legacy_output_lang(&mut state);
     sanitize_clipboard_mode(&mut state);
     if state.speech_active_preset.trim().is_empty() {
