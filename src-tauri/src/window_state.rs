@@ -74,23 +74,35 @@ impl Default for BillingTier {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
+    #[serde(default = "default_popup_width")]
     pub popup_width: u32,
+    #[serde(default = "default_popup_height")]
     pub popup_height: u32,
+    #[serde(default)]
     pub popup_x: Option<i32>,
+    #[serde(default)]
     pub popup_y: Option<i32>,
+    #[serde(default = "default_popup_topmost")]
     pub popup_topmost: bool,
+    #[serde(default)]
     pub popup_font: Option<PopupFont>,
+    #[serde(default = "default_popup_show_enabled")]
     pub popup_show_enabled: bool,
     #[serde(default = "default_clipboard_mode")]
     pub clipboard_mode: ClipboardMode,
+    #[serde(default = "default_true")]
     pub save_to_clipboard: bool,
+    #[serde(default)]
     pub translate_append_to_clipboard: bool,
+    #[serde(default = "default_translate_separator")]
     pub translate_separator: String,
     #[serde(default = "default_log_enabled")]
     pub log_enabled: bool,
     #[serde(default = "default_log_file_path")]
     pub log_file_path: String,
+    #[serde(default = "default_capture_border")]
     pub capture_box_border_rgba: [u8; 4],
+    #[serde(default = "default_capture_fill")]
     pub capture_box_fill_rgba: [u8; 4],
     #[serde(default = "default_speech_enabled")]
     pub speech_enabled: bool,
@@ -172,6 +184,38 @@ impl Default for WindowState {
 
 fn default_speech_enabled() -> bool {
     true
+}
+
+fn default_popup_width() -> u32 {
+    661
+}
+
+fn default_popup_height() -> u32 {
+    371
+}
+
+fn default_popup_topmost() -> bool {
+    true
+}
+
+fn default_popup_show_enabled() -> bool {
+    true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_translate_separator() -> String {
+    "Space".to_string()
+}
+
+fn default_capture_border() -> [u8; 4] {
+    [255, 0, 0, 255]
+}
+
+fn default_capture_fill() -> [u8; 4] {
+    [255, 0, 0, 64]
 }
 
 fn default_active_preset() -> String {
