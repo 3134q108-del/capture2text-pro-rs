@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, BufReader};
-use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,6 @@ fn emit_or_log<T: serde::Serialize>(app: &AppHandle, name: &str, payload: &T) {
 
 const LLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/v1/chat/completions";
 const CHAT_MODEL_NAME: &str = "local";
-const VLM_QUEUE_CAPACITY: usize = 4;
 const QWEN3VL_MIN_DIM: u32 = 32;
 const REQUEST_TIMEOUT_MS: u64 = 90_000;
 
@@ -158,8 +157,51 @@ static SHOWN_FOR_SEQ: AtomicU64 = AtomicU64::new(0);
 static LAST_PARTIAL_EMIT_NS: AtomicU64 = AtomicU64::new(0);
 
 struct VlmRuntime {
-    tx: SyncSender<VlmJob>,
+    queue: Arc<VlmQueue>,
     _join: Mutex<Option<JoinHandle<()>>>,
+}
+
+struct VlmQueue {
+    inner: Mutex<VecDeque<VlmJob>>,
+    cvar: Condvar,
+}
+
+impl VlmQueue {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(VecDeque::new()),
+            cvar: Condvar::new(),
+        }
+    }
+
+    fn submit(&self, job: VlmJob) {
+        let mut guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.retain(|queued| match queued {
+            VlmJob::OcrAndTranslate { seq, .. } => !is_seq_cancelled(Some(*seq)),
+            VlmJob::TranslateText { .. } => true,
+        });
+        guard.push_back(job);
+        self.cvar.notify_one();
+    }
+
+    fn recv(&self) -> VlmJob {
+        let mut guard = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        loop {
+            if let Some(job) = guard.pop_front() {
+                return job;
+            }
+            guard = match self.cvar.wait(guard) {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+    }
 }
 
 pub fn init_worker(app_handle: AppHandle) {
@@ -168,11 +210,13 @@ pub fn init_worker(app_handle: AppHandle) {
     }
     state::init();
 
-    let (tx, rx) = sync_channel::<VlmJob>(VLM_QUEUE_CAPACITY);
+    let queue = Arc::new(VlmQueue::new());
+    let worker_queue = Arc::clone(&queue);
     let join = match thread::Builder::new()
         .name("vlm-worker".to_string())
         .spawn(move || {
-            while let Ok(job) = rx.recv() {
+            loop {
+                let job = worker_queue.recv();
                 // 連按時 stale OCR job 秒丟，不進入 loading/model-switch 路徑
                 if let VlmJob::OcrAndTranslate { seq, .. } = &job {
                     if is_seq_cancelled(Some(*seq)) {
@@ -310,7 +354,7 @@ pub fn init_worker(app_handle: AppHandle) {
     };
 
     let _ = VLM_RUNTIME.set(VlmRuntime {
-        tx,
+        queue,
         _join: Mutex::new(Some(join)),
     });
 }
@@ -362,27 +406,7 @@ fn try_submit(job: VlmJob) {
         return;
     };
 
-    match runtime.tx.try_send(job) {
-        Ok(()) => {}
-        Err(TrySendError::Full(job)) => {
-            eprintln!("[vlm] queue full, dropping source={}", job_source(&job));
-            if let Some(app) = crate::app_handle::get() {
-                emit_or_log(&app, "vlm-error", &serde_json::json!({
-                    "code": "queue_full",
-                    "message": "VLM 處理佇列已滿，請稍候再試",
-                }));
-            }
-        }
-        Err(TrySendError::Disconnected(job)) => {
-            eprintln!("[vlm] worker disconnected, dropping source={}", job_source(&job));
-            if let Some(app) = crate::app_handle::get() {
-                emit_or_log(&app, "vlm-error", &serde_json::json!({
-                    "code": "channel_disconnected",
-                    "message": "VLM 處理通道斷線",
-                }));
-            }
-        }
-    }
+    runtime.queue.submit(job);
 }
 
 fn job_source(job: &VlmJob) -> &'static str {
