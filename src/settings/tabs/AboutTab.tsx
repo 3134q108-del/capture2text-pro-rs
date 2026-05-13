@@ -1,11 +1,28 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
-import { Button, Section, SectionBody, SectionHeader, StatusText } from "@/components/ui";
+import { Button, Card, CardContent, Section, SectionBody, SectionHeader, StatusText, useSnackbar } from "@/components/ui";
 
 const VLM_ENDPOINT = "http://localhost:11434";
-const MODEL_NAME = "qwen3-vl:8b-instruct";
+
+type ModelInfo = {
+  id: string;
+  display_name: string;
+  size_mb: number;
+  supported_lang_codes: string[];
+  downloaded: boolean;
+  active: boolean;
+};
+
+type ModelStatusView = {
+  label: string;
+  tone: "info" | "success";
+  className?: string;
+};
+
+const MODEL_EVENTS = ["model-deleted", "model-download-complete", "active-model-changed"] as const;
 
 function formatVlm(code: string): string {
   if (code === "healthy") return "VLM 服務正常";
@@ -19,16 +36,72 @@ function formatVlm(code: string): string {
   return code;
 }
 
+function viewModelStatus(model: ModelInfo): ModelStatusView {
+  if (model.active) {
+    return { label: "使用中", tone: "success" };
+  }
+  if (model.downloaded) {
+    return { label: "已下載", tone: "info", className: "text-primary" };
+  }
+  return { label: "未下載", tone: "info", className: "text-muted-foreground" };
+}
+
 export default function AboutTab() {
   const [version, setVersion] = useState("...");
   const [vlmStatus, setVlmStatus] = useState("");
   const [updateStatus, setUpdateStatus] = useState("");
-  const [statusMsg, setStatusMsg] = useState("");
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsError, setModelsError] = useState("");
+  const snackbar = useSnackbar();
 
   useEffect(() => {
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion("unknown"));
+  }, []);
+
+  useEffect(() => {
+    let cleanup: Array<() => void> = [];
+    let cancelled = false;
+
+    async function refreshModels() {
+      try {
+        const list = await invoke<ModelInfo[]>("get_models_list");
+        setModels(list);
+        setModelsError("");
+      } catch (error) {
+        setModelsError(`模型清單載入失敗: ${String(error)}`);
+        console.error("模型清單載入失敗", error);
+      }
+    }
+
+    async function setupListeners() {
+      const listeners = await Promise.all(
+        MODEL_EVENTS.map((eventName) =>
+          listen<string>(eventName, () => {
+            void refreshModels();
+          }),
+        ),
+      );
+
+      if (cancelled) {
+        listeners.forEach((off) => off());
+        return;
+      }
+
+      cleanup = listeners;
+    }
+
+    void refreshModels();
+    void setupListeners().catch((error) => {
+      setModelsError(`模型事件監聽失敗: ${String(error)}`);
+      console.error("模型事件監聽失敗", error);
+    });
+
+    return () => {
+      cancelled = true;
+      cleanup.forEach((off) => off());
+    };
   }, []);
 
   async function checkVlm() {
@@ -62,9 +135,9 @@ export default function AboutTab() {
         return;
       }
       const result = await invoke<string>("export_settings", { targetDir: selected });
-      setStatusMsg(result);
+      snackbar.show("success", result);
     } catch (error) {
-      setStatusMsg(`匯出失敗: ${String(error)}`);
+      snackbar.show("error", `匯出失敗: ${String(error)}`);
     }
   }
 
@@ -75,9 +148,9 @@ export default function AboutTab() {
         return;
       }
       const result = await invoke<string>("import_settings", { sourceDir: selected });
-      setStatusMsg(result);
+      snackbar.show("success", result);
     } catch (error) {
-      setStatusMsg(`匯入失敗: ${String(error)}`);
+      snackbar.show("error", `匯入失敗: ${String(error)}`);
     }
   }
 
@@ -90,9 +163,42 @@ export default function AboutTab() {
       <Section>
         <SectionHeader title="OCR 與翻譯模型" />
         <SectionBody>
-          <StatusText tone="info" size="sm">
-            模型: {MODEL_NAME}
-          </StatusText>
+          {modelsError ? (
+            <StatusText tone="error" size="sm">
+              {modelsError}
+            </StatusText>
+          ) : null}
+          {models.length > 0 ? (
+            <div className="grid gap-3">
+              {models.map((model) => {
+                const status = viewModelStatus(model);
+
+                return (
+                  <Card key={model.id}>
+                    <CardContent className="flex flex-col gap-2 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-foreground">{model.display_name}</div>
+                        <StatusText
+                          tone={status.tone}
+                          size="sm"
+                          className={`shrink-0 rounded-md border border-border bg-muted/30 px-2 py-1 font-medium ${status.className ?? ""}`}
+                        >
+                          {status.label}
+                        </StatusText>
+                      </div>
+                      <StatusText tone="info" size="sm">
+                        {model.size_mb} MB
+                      </StatusText>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : modelsError ? null : (
+            <StatusText tone="info" size="sm">
+              模型清單載入中...
+            </StatusText>
+          )}
           <StatusText tone="info" size="sm">
             服務: {VLM_ENDPOINT}（llama.cpp）
           </StatusText>
@@ -130,12 +236,6 @@ export default function AboutTab() {
           </div>
         </SectionBody>
       </Section>
-
-      {statusMsg ? (
-        <StatusText tone="info" size="sm">
-          {statusMsg}
-        </StatusText>
-      ) : null}
     </div>
   );
 }
