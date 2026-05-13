@@ -127,6 +127,22 @@ export default function ModelsTab() {
     }
   }
 
+  async function deleteModel(model: ModelInfo) {
+    const confirmed = window.confirm(
+      `確定要移除 ${model.display_name}？檔案會從磁碟移除（約 ${model.size_mb} MB）。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await invoke("delete_model", { id: model.id });
+      snackbar.show("success", `已移除 ${model.display_name}`);
+    } catch (error) {
+      snackbar.show("error", `移除失敗: ${String(error)}`);
+    }
+  }
+
   async function changeAnnotator(value: boolean) {
     setAnnotatorMode(value);
     try {
@@ -139,7 +155,7 @@ export default function ModelsTab() {
   return (
     <div className="flex flex-col gap-4">
       <Section>
-        <SectionHeader title="模型" description="選擇要使用的本機 AI 模型。已下載的可隨時切換，刪除請至設定關於。" />
+        <SectionHeader title="模型" description="選擇要使用的本機 AI 模型。已下載的可隨時切換或刪除。" />
         <SectionBody>
           <div className="mb-3 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
             <div>三個檔位由小到大，品質與所需資源成正比。可隨時切換，已下載的不重複下載。</div>
@@ -194,13 +210,18 @@ export default function ModelsTab() {
                           下載
                         </Button>
                       </div>
-                    ) : !m.active ? (
-                      <div>
-                        <Button type="button" variant="primary" size="sm" onClick={() => void setActive(m.id)}>
-                          設為使用中
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {!m.active ? (
+                          <Button type="button" variant="primary" size="sm" onClick={() => void setActive(m.id)}>
+                            設為使用中
+                          </Button>
+                        ) : null}
+                        <Button type="button" variant="destructive" size="sm" onClick={() => void deleteModel(m)}>
+                          刪除
                         </Button>
                       </div>
-                    ) : null}
+                    )}
                   </CardContent>
                 </Card>
               );
