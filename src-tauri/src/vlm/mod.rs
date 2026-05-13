@@ -181,7 +181,7 @@ pub fn init_worker(app_handle: AppHandle) {
                         VlmEventPayload {
                             source: source_label,
                             status: "error".to_string(),
-                            original: String::new(),
+                            original: String::default(),
                             translated: String::new(),
                             src_lang: None,
                             duration_ms: 0,
@@ -279,7 +279,7 @@ pub fn init_worker(app_handle: AppHandle) {
                             VlmEventPayload {
                                 source,
                                 status: "error".to_string(),
-                                original: String::new(),
+                                original: String::default(),
                                 translated: String::new(),
                                 src_lang: None,
                                 duration_ms: 0,
@@ -794,15 +794,9 @@ fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
     }
 
     let Some(json_body) = extract_first_json_object(content) else {
-        let translated = content.trim().to_string();
-        eprintln!(
-            "[vlm] lenient parse used: model returned non-JSON, raw len={}",
-            content.len()
-        );
-        return Ok(ModelOutput {
-            original: String::new(),
-            translated,
-            src_lang: None,
+        return Err(VlmError::ResponseDecode {
+            raw: content.to_string(),
+            source_error: "model returned non-JSON content (no JSON object found)".to_string(),
         });
     };
 
