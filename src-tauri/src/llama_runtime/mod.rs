@@ -56,12 +56,23 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
     if !any_model_downloaded() {
         return Err("no_model: 請先下載並選擇 AI 模型".to_string());
     }
-    let target = manifest::ModelId::for_lang(lang);
-    if active_model() == Some(target) {
-        return Ok(());
+    // 尊重 user 的選擇：若當前 active model 支援該語言，不切換
+    if let Some(current) = active_model() {
+        if current.supports_lang(lang) {
+            return Ok(());
+        }
+        // 當前模型不支援，fallback
+        let target = manifest::ModelId::for_lang(lang);
+        eprintln!(
+            "[llama-runtime] active model {:?} does not support lang={}, switching to {:?}",
+            current, lang, target
+        );
+        return switch_model(target);
     }
+    // 沒有 active model（首次啟動或被刪除）用 for_lang fallback
+    let target = manifest::ModelId::for_lang(lang);
     eprintln!(
-        "[llama-runtime] switching model for lang={} target={:?}",
+        "[llama-runtime] no active model, switching for lang={} target={:?}",
         lang, target
     );
     switch_model(target)
