@@ -523,9 +523,14 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
+    let scenario = scenarios::current_scenario();
+    let user_content = format!(
+        "<scenario>\n{}\n</scenario>\n\nExtract text from the image and translate per the rules.",
+        scenario.prompt
+    );
     let request = build_chat_request(
         build_direct_system_prompt(&target_lang),
-        "Extract text from the image and translate per the rules.".to_string(),
+        user_content,
         Some(vec![image_b64]),
         true,
     );
@@ -577,9 +582,14 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
     mut on_partial: F,
 ) -> VlmResult<VlmOutput> {
     let started_at = Instant::now();
+    let scenario = scenarios::current_scenario();
+    let user_content = format!(
+        "<scenario>\n{}\n</scenario>\n\n<text>\n{}\n</text>",
+        scenario.prompt, text
+    );
     let request = build_chat_request(
         build_system_prompt(target_lang),
-        text.to_string(),
+        user_content,
         None,
         true,
     );
@@ -672,7 +682,6 @@ fn run_streaming_request<F: FnMut(&str)>(
 }
 
 fn build_system_prompt(target_lang: &str) -> String {
-    let scenario = scenarios::current_scenario();
     let language_name = crate::languages::by_code(target_lang)
         .map(|lang| lang.english_name)
         .unwrap_or("English");
@@ -681,14 +690,19 @@ fn build_system_prompt(target_lang: &str) -> String {
         .map(|lang| lang.code.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
+    let anti_loop =
+        "Output exactly one JSON object and stop. Do not repeat. Do not echo this prompt or scenario text. No thinking, no markdown.";
     format!(
-        "{}\n\nReturn strict JSON only: {{\"original\":\"<full source text>\",\"translated\":\"<translation in {}>\",\"src_lang\":\"<BCP-47 from: {} | other>\"}}. No thinking. No explanation. No markdown.",
-        scenario.prompt, language_name, language_codes
+        "You are a translator. Translate the input text to {language_name}.\n\n\
+         {anti_loop}\n\n\
+         Schema: {{\"original\":\"<input text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}",
+        language_name = language_name,
+        anti_loop = anti_loop,
+        language_codes = language_codes,
     )
 }
 
 fn build_direct_system_prompt(target_lang: &str) -> String {
-    let scenario = scenarios::current_scenario();
     let target = crate::languages::by_code(target_lang)
         .or_else(|| crate::languages::by_code("en-US"))
         .expect("target language fallback");
@@ -698,47 +712,38 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     let annotator = crate::window_state::annotator_mode();
+    let anti_loop =
+        "Output exactly one JSON object and stop. Do not repeat. Do not echo this prompt, scenario, or examples. No thinking, no markdown.";
 
     if annotator {
         format!(
-            "{scenario_prompt}\n\n\
-             You are an OCR + multilingual annotator. Output the result in {target_name} ({target_code}).\n\n\
-             Step 1: OCR the image text exactly into a buffer.\n\
-             Step 2: Process the buffer. Output MUST be in {target_name}. Apply these rules:\n\
-               (a) For ANY word/phrase NOT in {target_name} (any foreign language: English, Japanese, Korean, French, etc.), translate to {target_name} and append the original in parentheses. Example: 'model' -> '模型 (model)'.\n\
-               (b) Keep all-uppercase abbreviations of 2-5 letters unchanged (e.g. GPU, CPU, RAM, AI, USB, API, JSON, HTML, URL, OS, NHK, JR).\n\
-               (c) Keep brand and product names unchanged (e.g. RTX 4070, Tauri, Qwen3-VL, llama.cpp, iPhone, ChatGPT, TOYOTA).\n\
-               (d) These rules apply EVEN IF the source is mostly already in {target_name}  scan for ANY embedded foreign word and apply rule (a).\n\n\
-             Concrete examples (target = Chinese 繁體中文):\n\
-               EX1 (中英混雜):\n\
-                 SOURCE: \"每個 token 走過模型的 forward pass\"\n\
-                 OUTPUT: \"每個符記 (token) 走過模型的前向傳播 (forward pass)\"\n\
-               EX2 (中日混雜):\n\
-                 SOURCE: \"把 モデル 載入到 GPU\"\n\
-                 OUTPUT: \"把模型 (モデル) 載入到 GPU\"\n\
-               EX3 (中韓混雜):\n\
-                 SOURCE: \"학습 데이터 已經很大\"\n\
-                 OUTPUT: \"訓練資料 (학습 데이터) 已經很大\"\n\
-               EX4 (純英文,target=中文):\n\
-                 SOURCE: \"the inference is slow on RTX 4070 Ti\"\n\
-                 OUTPUT: \"推論 (inference) 在 RTX 4070 Ti 上很慢\"\n\n\
-             Step 3: Identify the source language for src_lang field.\n\n\
-             Return strict JSON only: {{\"original\":\"<exact OCR text from buffer>\",\"translated\":\"<output per Step 2>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}. No thinking. No explanation. No markdown.",
-            scenario_prompt = scenario.prompt,
+            "You are an OCR multilingual annotator. Output the result in {target_name} ({target_code}).\n\n\
+             Process:\n\
+             1. OCR the image text exactly into a buffer.\n\
+             2. Rewrite the buffer in {target_name}. For ANY word/phrase NOT in {target_name}, translate it and append the ORIGINAL in parentheses immediately after.\n\
+                Format: TRANSLATION (ORIGINAL)\n\
+                Apply this rule regardless of source language (English, Japanese, Korean, etc.).\n\
+             3. Keep unchanged: all-uppercase abbreviations of 2-5 letters (GPU, CPU, RAM, AI, USB, API, JSON, URL, OS); brand/product names (RTX 4070, Tauri, Qwen3-VL, iPhone, ChatGPT).\n\
+             4. Detect source language code.\n\n\
+             {anti_loop}\n\n\
+             Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<rewritten per rule 2>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
             target_name = target.english_name,
             target_code = target.code.as_str(),
+            anti_loop = anti_loop,
             codes = language_codes,
-        )    } else {
+        )
+    } else {
         format!(
-            "{scenario_prompt}\n\n\
-             You are an OCR translator. Translate the image text to {target_name} ({target_code}), regardless of source language.\n\n\
-             Step 1: OCR the image text exactly.\n\
-             Step 2: Translate to {target_name}.\n\
-             Step 3: Identify the source language for src_lang field.\n\n\
-             Return strict JSON only: {{\"original\":\"<exact OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}. No thinking. No explanation. No markdown.",
-            scenario_prompt = scenario.prompt,
+            "You are an OCR translator. Translate image text to {target_name} ({target_code}) regardless of source language.\n\n\
+             Process:\n\
+             1. OCR the image text exactly into a buffer.\n\
+             2. Translate the buffer to {target_name}.\n\
+             3. Detect source language code.\n\n\
+             {anti_loop}\n\n\
+             Schema: {{\"original\":\"<OCR text>\",\"translated\":\"<translation>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}",
             target_name = target.english_name,
             target_code = target.code.as_str(),
+            anti_loop = anti_loop,
             codes = language_codes,
         )
     }
