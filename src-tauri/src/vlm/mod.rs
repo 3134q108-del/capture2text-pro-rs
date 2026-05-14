@@ -239,11 +239,20 @@ pub fn init_worker(app_handle: AppHandle) {
         .spawn(move || {
             loop {
                 let job = worker_queue.recv();
+                let current_seq = job_seq(&job);
+                eprintln!(
+                    "[vlm worker] seq={} pulled source={}",
+                    current_seq
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    job_source(&job)
+                );
                 // 連按時 stale OCR job 秒丟，不進入 loading/model-switch 路徑
                 if let VlmJob::OcrAndTranslate { seq, .. } = &job {
                     if is_seq_cancelled(Some(*seq)) {
                         continue;
                     }
+                    eprintln!("[vlm worker] seq={} processing source={}", seq, job_source(&job));
                 }
                 state::set_loading(job_source(&job));
                 let source_label = job_source(&job).to_string();
@@ -268,6 +277,9 @@ pub fn init_worker(app_handle: AppHandle) {
                     );
                     continue;
                 }
+                if let Some(seq) = job_seq(&job) {
+                    eprintln!("[vlm worker] seq={} model ready", seq);
+                }
 
                 let (source, result) = match job {
                     VlmJob::OcrAndTranslate {
@@ -281,7 +293,7 @@ pub fn init_worker(app_handle: AppHandle) {
                         }
                         let source_label = source.to_string();
                         let target_lang_for_log = target_lang.clone();
-                        let saved = save_capture(&png_bytes, source, &target_lang);
+                        eprintln!("[vlm worker] seq={} submitting to llama", seq);
                         let source_for_partial = source_label.clone();
                         let result = ocr_and_translate_streaming(
                             &png_bytes,
@@ -300,43 +312,50 @@ pub fn init_worker(app_handle: AppHandle) {
                                 );
                             },
                         );
-                        if let Some(saved) = saved {
-                            match &result {
-                                Ok(out) => append_capture_log(CaptureLogEntry {
-                                    file: saved.file,
-                                    timestamp: saved.timestamp,
-                                    source: source_label.clone(),
-                                    target_lang: target_lang_for_log.clone(),
-                                    status: "ok".to_string(),
-                                    duration_ms: out.duration_ms,
-                                    error: None,
-                                    original_len: Some(out.original.chars().count() as u32),
-                                    translated_len: Some(out.translated.chars().count() as u32),
-                                }),
-                                Err(VlmError::Cancelled) => append_capture_log(CaptureLogEntry {
-                                    file: saved.file,
-                                    timestamp: saved.timestamp,
-                                    source: source_label.clone(),
-                                    target_lang: target_lang_for_log.clone(),
-                                    status: "cancelled".to_string(),
-                                    duration_ms: 0,
-                                    error: Some("cancelled by newer request".to_string()),
-                                    original_len: None,
-                                    translated_len: None,
-                                }),
-                                Err(err) => append_capture_log(CaptureLogEntry {
-                                    file: saved.file,
-                                    timestamp: saved.timestamp,
-                                    source: source_label.clone(),
-                                    target_lang: target_lang_for_log.clone(),
-                                    status: "error".to_string(),
-                                    duration_ms: 0,
-                                    error: Some(err.to_string()),
-                                    original_len: None,
-                                    translated_len: None,
-                                }),
-                            }
-                        }
+                        eprintln!("[vlm worker] seq={} stream complete", seq);
+                        let log_source = source_label.clone();
+                        let log_png_bytes = png_bytes.clone();
+                        let log_status = match &result {
+                            Ok(_) => "ok".to_string(),
+                            Err(VlmError::Cancelled) => "cancelled".to_string(),
+                            Err(_) => "error".to_string(),
+                        };
+                        let log_duration_ms = match &result {
+                            Ok(out) => out.duration_ms,
+                            Err(_) => 0,
+                        };
+                        let log_error = match &result {
+                            Ok(_) => None,
+                            Err(VlmError::Cancelled) => Some("cancelled by newer request".to_string()),
+                            Err(err) => Some(err.to_string()),
+                        };
+                        let log_original_len = match &result {
+                            Ok(out) => Some(out.original.chars().count() as u32),
+                            Err(_) => None,
+                        };
+                        let log_translated_len = match &result {
+                            Ok(out) => Some(out.translated.chars().count() as u32),
+                            Err(_) => None,
+                        };
+                        let _ = thread::Builder::new()
+                            .name("capture-save".to_string())
+                            .spawn(move || {
+                                if let Some(saved) =
+                                    save_capture(&log_png_bytes, source, &target_lang_for_log)
+                                {
+                                    append_capture_log(CaptureLogEntry {
+                                        file: saved.file,
+                                        timestamp: saved.timestamp,
+                                        source: log_source,
+                                        target_lang: target_lang_for_log,
+                                        status: log_status,
+                                        duration_ms: log_duration_ms,
+                                        error: log_error,
+                                        original_len: log_original_len,
+                                        translated_len: log_translated_len,
+                                    });
+                                }
+                            });
                         (source_label, result)
                     }
                     VlmJob::TranslateText {
@@ -384,6 +403,9 @@ pub fn init_worker(app_handle: AppHandle) {
                                 error: None,
                             },
                         );
+                        if let Some(seq) = out.seq {
+                            eprintln!("[vlm worker] seq={} emit done status=success", seq);
+                        }
                     }
                     Err(err) => {
                         if matches!(err, VlmError::Cancelled) {
@@ -403,6 +425,9 @@ pub fn init_worker(app_handle: AppHandle) {
                                 error: Some(err.to_string()),
                             },
                         );
+                        if let Some(seq) = current_seq {
+                            eprintln!("[vlm worker] seq={} emit done status=error", seq);
+                        }
                     }
                 }
             }
@@ -474,6 +499,13 @@ fn job_source(job: &VlmJob) -> &'static str {
     match job {
         VlmJob::OcrAndTranslate { source, .. } => source,
         VlmJob::TranslateText { source, .. } => source,
+    }
+}
+
+fn job_seq(job: &VlmJob) -> Option<u64> {
+    match job {
+        VlmJob::OcrAndTranslate { seq, .. } => Some(*seq),
+        VlmJob::TranslateText { .. } => None,
     }
 }
 

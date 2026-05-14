@@ -77,6 +77,12 @@ fn process_request(request: CaptureRequest) {
                 outcome.rect.h
             );
             overlay::show(outcome.rect);
+            eprintln!(
+                "[capture] seq={} submit source={} bytes={}",
+                seq,
+                pipeline::mode_label(outcome.mode),
+                outcome.png_bytes.len()
+            );
 
             vlm::try_submit_ocr(
                 outcome.png_bytes,
