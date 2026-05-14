@@ -27,6 +27,14 @@ pub fn data_dir() -> PathBuf {
     new
 }
 
+pub fn captures_dir() -> PathBuf {
+    let dir = data_dir().join("captures");
+    if let Err(e) = fs::create_dir_all(&dir) {
+        eprintln!("[app_paths] create captures dir failed: {}", e);
+    }
+    dir
+}
+
 pub fn ensure_migration() {
     let Some(local) = dirs::data_local_dir() else {
         eprintln!("[migration] no data_local_dir, skip");

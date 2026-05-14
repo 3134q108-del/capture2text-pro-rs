@@ -1,5 +1,8 @@
 use std::io::{self, BufRead, BufReader};
 use std::collections::VecDeque;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -7,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
@@ -150,6 +154,24 @@ pub struct VlmOutput {
     pub seq: Option<u64>,
 }
 
+struct CaptureSaved {
+    file: String,
+    timestamp: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CaptureLogEntry {
+    file: String,
+    timestamp: String,
+    source: String,
+    target_lang: String,
+    status: String,
+    duration_ms: u64,
+    error: Option<String>,
+    original_len: Option<u32>,
+    translated_len: Option<u32>,
+}
+
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
 static ACTIVE_VLM_SRC_LANG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static LATEST_OCR_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -258,6 +280,8 @@ pub fn init_worker(app_handle: AppHandle) {
                             continue;
                         }
                         let source_label = source.to_string();
+                        let target_lang_for_log = target_lang.clone();
+                        let saved = save_capture(&png_bytes, source, &target_lang);
                         let source_for_partial = source_label.clone();
                         let result = ocr_and_translate_streaming(
                             &png_bytes,
@@ -276,6 +300,43 @@ pub fn init_worker(app_handle: AppHandle) {
                                 );
                             },
                         );
+                        if let Some(saved) = saved {
+                            match &result {
+                                Ok(out) => append_capture_log(CaptureLogEntry {
+                                    file: saved.file,
+                                    timestamp: saved.timestamp,
+                                    source: source_label.clone(),
+                                    target_lang: target_lang_for_log.clone(),
+                                    status: "ok".to_string(),
+                                    duration_ms: out.duration_ms,
+                                    error: None,
+                                    original_len: Some(out.original.chars().count() as u32),
+                                    translated_len: Some(out.translated.chars().count() as u32),
+                                }),
+                                Err(VlmError::Cancelled) => append_capture_log(CaptureLogEntry {
+                                    file: saved.file,
+                                    timestamp: saved.timestamp,
+                                    source: source_label.clone(),
+                                    target_lang: target_lang_for_log.clone(),
+                                    status: "cancelled".to_string(),
+                                    duration_ms: 0,
+                                    error: Some("cancelled by newer request".to_string()),
+                                    original_len: None,
+                                    translated_len: None,
+                                }),
+                                Err(err) => append_capture_log(CaptureLogEntry {
+                                    file: saved.file,
+                                    timestamp: saved.timestamp,
+                                    source: source_label.clone(),
+                                    target_lang: target_lang_for_log.clone(),
+                                    status: "error".to_string(),
+                                    duration_ms: 0,
+                                    error: Some(err.to_string()),
+                                    original_len: None,
+                                    translated_len: None,
+                                }),
+                            }
+                        }
                         (source_label, result)
                     }
                     VlmJob::TranslateText {
@@ -886,6 +947,42 @@ fn is_seq_cancelled(seq: Option<u64>) -> bool {
     match seq {
         Some(current) => current < LATEST_OCR_SEQ.load(Ordering::SeqCst),
         None => false,
+    }
+}
+
+fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<CaptureSaved> {
+    let now = Local::now();
+    let file = format!("{}_{}.png", now.format("%Y-%m-%d_%H-%M-%S-%3f"), source);
+    let dir = crate::app_paths::captures_dir();
+    let path = dir.join(&file);
+    if let Err(err) = fs::write(&path, png_bytes) {
+        eprintln!("[capture-save] write {} failed: {}", path.display(), err);
+        return None;
+    }
+    Some(CaptureSaved {
+        file,
+        timestamp: now.to_rfc3339(),
+    })
+}
+
+fn append_capture_log(entry: CaptureLogEntry) {
+    let log_path: PathBuf = crate::app_paths::captures_dir().join("captures.jsonl");
+    let line = match serde_json::to_string(&entry) {
+        Ok(line) => line,
+        Err(err) => {
+            eprintln!("[capture-save] serialize log failed: {}", err);
+            return;
+        }
+    };
+    let mut file = match OpenOptions::new().create(true).append(true).open(&log_path) {
+        Ok(file) => file,
+        Err(err) => {
+            eprintln!("[capture-save] open {} failed: {}", log_path.display(), err);
+            return;
+        }
+    };
+    if let Err(err) = writeln!(file, "{}", line) {
+        eprintln!("[capture-save] append {} failed: {}", log_path.display(), err);
     }
 }
 
