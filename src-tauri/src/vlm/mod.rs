@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, BufReader};
+use std::io::{self};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -14,6 +14,7 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
+use tokio::sync::Notify;
 
 use crate::{llama_runtime, scenarios};
 
@@ -177,6 +178,11 @@ static ACTIVE_VLM_SRC_LANG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static LATEST_OCR_SEQ: AtomicU64 = AtomicU64::new(0);
 static SHOWN_FOR_SEQ: AtomicU64 = AtomicU64::new(0);
 static LAST_PARTIAL_EMIT_NS: AtomicU64 = AtomicU64::new(0);
+static CANCEL_NOTIFY: OnceLock<Arc<Notify>> = OnceLock::new();
+
+fn cancel_notify() -> Arc<Notify> {
+    Arc::clone(CANCEL_NOTIFY.get_or_init(|| Arc::new(Notify::new())))
+}
 
 struct VlmRuntime {
     queue: Arc<VlmQueue>,
@@ -586,6 +592,7 @@ fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayloa
 
 pub fn cancel_current() {
     LATEST_OCR_SEQ.fetch_add(1, Ordering::SeqCst);
+    cancel_notify().notify_waiters();
 }
 
 fn ensure_result_window_visible(app_handle: &AppHandle) {
@@ -628,7 +635,7 @@ pub fn warmup() {
     thread::spawn(|| {
         eprintln!("[vlm-warmup] start");
         let t0 = Instant::now();
-        let client = match reqwest::blocking::Client::builder()
+        let client = match reqwest::Client::builder()
             .timeout(Duration::from_millis(180_000))
             .build()
         {
@@ -651,7 +658,7 @@ pub fn warmup() {
             max_tokens: None,
         };
 
-        match client.post(LLAMA_CHAT_URL).json(&request).send() {
+        match tauri::async_runtime::block_on(async { client.post(LLAMA_CHAT_URL).json(&request).send().await }) {
             Ok(resp) => {
                 let ok = resp.status().is_success();
                 eprintln!(
@@ -770,64 +777,76 @@ fn run_streaming_request<F: FnMut(&str)>(
     seq: Option<u64>,
     mut on_partial_raw: F,
 ) -> VlmResult<(String, Option<u64>)> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
         .build()
         .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+    let cancel = cancel_notify();
+    tauri::async_runtime::block_on(async move {
+        let mut response = client
+            .post(LLAMA_CHAT_URL)
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_send_error)?;
 
-    let response = client
-        .post(LLAMA_CHAT_URL)
-        .json(&request)
-        .send()
-        .map_err(map_reqwest_send_error)?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let raw = response.text().map_err(map_reqwest_send_error)?;
-        return Err(VlmError::VlmRuntimeHttpError {
-            status: status.as_u16(),
-            body: raw,
-        });
-    }
-
-    let mut raw_accumulated = String::new();
-    let final_duration_ns: Option<u64> = None;
-    let reader = BufReader::new(response);
-    for line in reader.lines() {
-        if is_seq_cancelled(seq) {
-            return Err(VlmError::Cancelled);
-        }
-        let line = line.map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+        let status = response.status();
+        if !status.is_success() {
+            let raw = response.text().await.map_err(map_reqwest_send_error)?;
+            return Err(VlmError::VlmRuntimeHttpError {
+                status: status.as_u16(),
+                body: raw,
+            });
         }
 
-        if let Some(payload) = trimmed.strip_prefix("data:") {
-            let payload = payload.trim();
-            if payload == "[DONE]" {
-                break;
+        let mut raw_accumulated = String::new();
+        let final_duration_ns: Option<u64> = None;
+        let mut pending = String::new();
+        loop {
+            if is_seq_cancelled(seq) {
+                return Err(VlmError::Cancelled);
             }
-
-            let chunk = serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
-                VlmError::ResponseDecode {
-                    raw: payload.to_string(),
-                    source_error: format!("stream chunk parse failed: {err}"),
+            let chunk_result = tokio::select! {
+                _ = cancel.notified() => return Err(VlmError::Cancelled),
+                chunk = response.chunk() => chunk,
+            };
+            let maybe_chunk = chunk_result
+                .map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
+            let Some(chunk) = maybe_chunk else {
+                break;
+            };
+            pending.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(idx) = pending.find('\n') {
+                let line = pending[..idx].to_string();
+                pending.drain(..=idx);
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
                 }
-            })?;
-
-            if let Some(choice) = chunk.choices.first() {
-                if let Some(content) = choice.delta.content.as_deref() {
-                    if !content.is_empty() {
-                        raw_accumulated.push_str(content);
-                        on_partial_raw(&raw_accumulated);
+                if let Some(payload) = line.strip_prefix("data:") {
+                    let payload = payload.trim();
+                    if payload == "[DONE]" {
+                        return Ok((raw_accumulated, final_duration_ns));
+                    }
+                    let chunk = serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
+                        VlmError::ResponseDecode {
+                            raw: payload.to_string(),
+                            source_error: format!("stream chunk parse failed: {err}"),
+                        }
+                    })?;
+                    if let Some(choice) = chunk.choices.first() {
+                        if let Some(content) = choice.delta.content.as_deref() {
+                            if !content.is_empty() {
+                                raw_accumulated.push_str(content);
+                                on_partial_raw(&raw_accumulated);
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-
-    Ok((raw_accumulated, final_duration_ns))
+        Ok((raw_accumulated, final_duration_ns))
+    })
 }
 
 fn build_system_prompt(target_lang: &str) -> String {
