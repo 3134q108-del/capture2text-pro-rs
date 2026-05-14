@@ -160,6 +160,8 @@ fn spawn_with_paths(
         .arg("--flash-attn")
         .arg("off")
         .arg("--jinja")
+        .arg("--cache-reuse")
+        .arg("0")
         .creation_flags(CREATE_NO_WINDOW);
 
     command
