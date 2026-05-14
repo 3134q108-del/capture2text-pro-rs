@@ -162,6 +162,9 @@ fn spawn_with_paths(
         .arg("--jinja")
         .arg("--cache-reuse")
         .arg("0")
+        .arg("--cache-ram")
+        .arg("0")
+        .arg("--no-cache-idle-slots")
         .creation_flags(CREATE_NO_WINDOW);
 
     command
