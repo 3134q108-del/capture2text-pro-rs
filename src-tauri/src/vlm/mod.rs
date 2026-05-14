@@ -927,10 +927,37 @@ fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
         });
     };
 
-    serde_json::from_str::<ModelOutput>(json_body).map_err(|err| VlmError::ResponseDecode {
+    if let Ok(parsed) = serde_json::from_str::<ModelOutput>(json_body) {
+        return Ok(parsed);
+    }
+
+    let sanitized = sanitize_json_escapes(json_body);
+    serde_json::from_str::<ModelOutput>(&sanitized).map_err(|err| VlmError::ResponseDecode {
         raw: content.to_string(),
-        source_error: format!("model JSON parse failed: {err}"),
+        source_error: format!("model JSON parse failed even after escape sanitize: {err}"),
     })
+}
+
+fn sanitize_json_escapes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        match chars.peek().copied() {
+            Some('\\' | '/' | '"' | 'b' | 'f' | 'n' | 'r' | 't' | 'u') => {
+                out.push('\\');
+            }
+            Some(_) | None => {
+                out.push('\\');
+                out.push('\\');
+            }
+        }
+    }
+    out
 }
 
 fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
