@@ -75,24 +75,6 @@ fn parse_model_id(s: &str) -> Result<ModelId, String> {
         .map_err(|e| format!("invalid model id: {} ({})", s, e))
 }
 
-fn model_id_to_wire(id: ModelId) -> String {
-    serde_json::to_string(&id)
-        .unwrap_or_default()
-        .trim_matches('"')
-        .to_string()
-}
-
-fn switch_active_model(model_id: ModelId) -> Result<(), String> {
-    crate::llama_runtime::supervisor::restart_with_model(model_id)
-        .map_err(|e| format!("failed to restart llama-server: {}", e))?;
-    crate::window_state::set_active_model(Some(model_id));
-    if let Some(app) = crate::app_handle::get() {
-        use tauri::Emitter;
-        let _ = app.emit("active-model-changed", model_id_to_wire(model_id));
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub fn set_active_model(id: String) -> Result<(), String> {
     let model_id = parse_model_id(&id)?;
@@ -100,49 +82,17 @@ pub fn set_active_model(id: String) -> Result<(), String> {
     if !is_downloaded(spec) {
         return Err(format!("model {} not downloaded", spec.display_name));
     }
-    // auto downgrade/fallback: 8B fail -> try 4B -> try 2B
-    let candidates: Vec<ModelId> = if model_id == ModelId::Qwen3Vl8bInstruct {
-        vec![
-            ModelId::Qwen3Vl8bInstruct,
-            ModelId::Qwen3Vl4bInstruct,
-            ModelId::Qwen3Vl2bInstruct,
-        ]
-    } else {
-        vec![model_id]
-    };
-    let mut errors = Vec::new();
-    for candidate in candidates {
-        if !is_downloaded(candidate.spec()) {
-            errors.push(format!(
-                "{} not downloaded",
-                candidate.spec().display_name
-            ));
-            continue;
-        }
-        match switch_active_model(candidate) {
-            Ok(()) => {
-                if candidate != model_id {
-                    if let Some(app) = crate::app_handle::get() {
-                        use tauri::Emitter;
-                        let _ = app.emit(
-                            "vlm-vram-downgrade",
-                            serde_json::json!({
-                                "requested_model": model_id_to_wire(model_id),
-                                "fallback_model": model_id_to_wire(candidate),
-                                "reason": "insufficient_vram",
-                            }),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-            Err(err) => errors.push(format!("{}: {}", candidate.spec().display_name, err)),
-        }
+
+    crate::window_state::set_active_model(Some(model_id));
+    if let Some(app) = crate::app_handle::get() {
+        use tauri::Emitter;
+        let _ = app.emit("active-model-changed", &id);
     }
-    Err(format!(
-        "failed to set active model with fallback: {}",
-        errors.join(" | ")
-    ))
+
+    crate::llama_runtime::supervisor::restart_with_model(model_id)
+        .map_err(|e| format!("failed to restart llama-server: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]

@@ -51,20 +51,6 @@ fn get_or_init_job() -> Option<HANDLE> {
 
 pub fn spawn_for(id: &ModelId) -> Result<(), String> {
     let spec = manifest::lookup(id).ok_or_else(|| "unknown model".to_string())?;
-    const VRAM_SAFETY_BUFFER_MIB: u64 = 512;
-    if let Some(free_mib) = crate::gpu_monitor::available_vram_mib() {
-        let required_mib = u64::from(spec.vram_mib) + VRAM_SAFETY_BUFFER_MIB;
-        if free_mib < required_mib {
-            return Err(format!(
-                "insufficient VRAM for {}: free={} MiB, required={} MiB (model {} + safety buffer {} MiB)",
-                spec.display_name,
-                free_mib,
-                required_mib,
-                spec.vram_mib,
-                VRAM_SAFETY_BUFFER_MIB
-            ));
-        }
-    }
     let bin = app_dir().join("bin").join("llama-server.exe");
     let model = app_dir().join("models").join(spec.gguf_filename());
     let mmproj = app_dir().join("models").join(spec.mmproj_filename());

@@ -39,7 +39,6 @@ pub struct ModelSpec {
     pub chat_template: &'static str,
     pub ctx_size: u32,
     pub size_mb: u32,
-    pub vram_mib: u32,
     pub supported_lang_codes: &'static [&'static str],
 }
 
@@ -71,7 +70,6 @@ const QWEN3_VL_2B: ModelSpec = ModelSpec {
     chat_template: "chatml",
     ctx_size: 8192,
     size_mb: 1500,
-    vram_mib: 5632,
     supported_lang_codes: &[
         "zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES",
     ],
@@ -85,7 +83,6 @@ const QWEN3_VL_4B: ModelSpec = ModelSpec {
     chat_template: "chatml",
     ctx_size: 8192,
     size_mb: 2500,
-    vram_mib: 6912,
     supported_lang_codes: &[
         "zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-PT", "it-IT",
         "ru-RU", "id-ID", "tr-TR", "pl-PL",
@@ -100,7 +97,6 @@ const QWEN3_VL_8B: ModelSpec = ModelSpec {
     chat_template: "chatml",
     ctx_size: 8192,
     size_mb: 5000,
-    vram_mib: 8192,
     supported_lang_codes: &[
         "zh-CN", "zh-TW", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES", "pt-PT", "it-IT",
         "ru-RU", "id-ID", "tr-TR", "pl-PL", "vi-VN", "ar-SA", "th-TH", "hi-IN", "el-GR", "he-IL",
