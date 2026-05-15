@@ -8,6 +8,7 @@ mod error;
 mod hotkey;
 mod languages;
 mod llama_runtime;
+mod gpu_monitor;
 mod overlay;
 mod output_lang;
 mod app_paths;
@@ -47,6 +48,7 @@ pub fn run() {
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
             window_state::init_runtime();
+            gpu_monitor::spawn_monitor(app.handle().clone());
             let app_handle_for_bootstrap = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(err) = crate::llama_runtime::bootstrap(
@@ -189,4 +191,3 @@ pub fn run() {
         }
     });
 }
-
