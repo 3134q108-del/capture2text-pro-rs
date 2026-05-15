@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Lock files from non-canonical package managers (repo uses npm)
+pnpm-lock.yaml
+yarn.lock
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

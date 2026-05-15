@@ -65,6 +65,7 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
+        "template": "./windows/installer.nsi",
         "languages": [
           "TradChinese",
           "English"
