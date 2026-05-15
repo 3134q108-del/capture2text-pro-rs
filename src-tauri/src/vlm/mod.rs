@@ -1037,6 +1037,7 @@ fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<Ca
         eprintln!("[capture-save] write {} failed: {}", path.display(), err);
         return None;
     }
+    crate::inventory::reconcile_one("captures");
     Some(CaptureSaved {
         file,
         timestamp: now.to_rfc3339(),

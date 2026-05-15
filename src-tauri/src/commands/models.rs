@@ -170,6 +170,10 @@ pub async fn download_model(id: String) -> Result<(), String> {
             use tauri::Emitter;
             let _ = app.emit("model-download-complete", &id_for_progress);
         }
+        if let Some((gguf_item, mmproj_item)) = crate::inventory::model_items_for_id(model_id) {
+            crate::inventory::upsert(gguf_item);
+            crate::inventory::upsert(mmproj_item);
+        }
         Ok(())
     })
     .await

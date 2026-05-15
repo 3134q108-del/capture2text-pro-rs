@@ -6,6 +6,7 @@ mod commands;
 mod drag_overlay;
 mod error;
 mod hotkey;
+mod inventory;
 mod languages;
 mod llama_runtime;
 mod overlay;
@@ -42,8 +43,9 @@ pub fn run() {
 
     let app = builder
         .setup(|app| {
-            app.manage(crate::azure_tts::runtime::TtsRuntime::new(&app.handle()));
+            app.manage(crate::azure_tts::runtime::TtsRuntime::new(app.handle()));
             crate::app_handle::set(app.handle().clone());
+            crate::inventory::reconcile();
             scenarios::init_runtime()?;
             output_lang::init_runtime()?;
             window_state::init_runtime();
