@@ -128,6 +128,22 @@ llama-server 在程式啟動時就把 model 載入並常駐，熱鍵響應只等
 
 設好就 Win+Q 開始用。
 
+## 卸載
+
+v0.5.0 起 uninstaller 提供三種模式，**預設選最保守的「僅刪除程式」**：
+
+| 模式 | 行為 | 適用場景 |
+|---|---|---|
+| **僅刪除程式**（預設） | 移除程式檔、捷徑、登錄機碼、Edge WebView2 殘留 cache。**保留**設定、OCR 紀錄、下載的 AI 模型 | 想之後重裝、保留設定與資料 |
+| **部分刪除** | 下一頁可勾選要清的項目（從本機實際裝過的內容讀出：模型 / OCR captures / 設定 / TTS 快取等）| 想清掉幾 GB 的模型但保留設定 |
+| **完全刪除** | `%APPDATA%\com.capture2text.pro\` + `%LOCALAPPDATA%\com.capture2text.pro\` 全部刪除，含 Windows Credential Manager 內的 Azure TTS key | 想徹底還原成未安裝狀態 |
+
+從 **設定 → 應用程式 → Capture2Text Pro → 解除安裝** 進入。
+
+「部分刪除」清單會在 runtime 從 app 自己維護的 `%LOCALAPPDATA%\com.capture2text.pro\inventory.json` 讀取，所以未來下載新模型或新增資料類別會自動出現在清單裡。
+
+> **完全刪除模式仍可能殘留**：若 `WebView2 (msedgewebview2.exe)` 卸載時還在背景跑，少量 `EBWebView/` cache 可能 lock 住無法刪。手動清 `%LOCALAPPDATA%\com.capture2text.pro\` 即可。
+
 ## 開發
 
 ```bash
@@ -146,7 +162,9 @@ npm run tauri build           # release
 npm run tauri build -- --debug # debug（編譯較快，適合測 installer）
 ```
 
-產出在 `src-tauri/target/{release,debug}/bundle/{nsis,msi}/`。
+產出在 `src-tauri/target/{release,debug}/bundle/nsis/`。
+
+v0.5.0 起只產 NSIS installer（移除 MSI）；NSIS 才能掛三模式 uninstaller 自訂頁面。
 
 實作細節見 `docs/capture-spec.md`（Q/W/E 行為移植自 upstream C++ 版）。
 
@@ -168,6 +186,30 @@ npm run tauri build -- --debug # debug（編譯較快，適合測 installer）
 Apache License 2.0（`LICENSE`）。
 
 ---
+
+## v0.5.0 改動
+
+### 三模式 uninstaller（installer 規範對齊）
+依 [installer.md](https://github.com/3134q108-del/capture2text-pro-rs) 規範，NSIS uninstaller 提供：
+- **模式選擇頁**：三 radio button（保守 / 部分 / 完全），預設保守
+- **部分模式 checkbox 頁**：runtime 讀 `inventory.json` 動態列出可清項目，每項含當前大小
+- **三模式對應清理**：minimal 只清 WebView/Cache 殘留；partial 依勾選清；full 全清 + cmdkey 刪 Azure TTS keyring entry
+- **必要依賴受保護**：`bin/` (llama-server) 在部分模式不顯示在 checkbox，只有「完全刪除」會清
+
+詳見「卸載」章節。
+
+### App inventory 維護
+- 新增 `src-tauri/src/inventory.rs`：app 啟動時 + 下載模型 + 寫 OCR captures 時自動 reconcile `inventory.json`，供 uninstaller 讀取
+- inventory 條目分類：ai-model / user-data / settings / cache / dependency；後者標 `removable: false`，部分模式不會顯示
+
+### Bundle 改動
+- **移除 MSI target**：WiX/MSI 無法掛 NSIS 三模式自訂頁面，bundle 只保留 `nsis`
+- **NSIS template fork**：`src-tauri/windows/installer.nsi` fork 自 tauri-bundler 預設，加入兩個 `UninstPage custom`
+- **nsJSON plugin 整合**：`src-tauri/windows/plugins/nsJSON/Plugins/x86-unicode/nsJSON.dll`，uninstaller 讀 inventory.json 用
+
+### 內部變更（無 UX 影響）
+- 移除舊 MessageBox-based「Delete app data」勾選（被三模式 wizard 取代）
+- 多了 `%LOCALAPPDATA%\com.capture2text.pro\inventory.json` 檔（容量極小）
 
 ## v0.4.4 改動
 
