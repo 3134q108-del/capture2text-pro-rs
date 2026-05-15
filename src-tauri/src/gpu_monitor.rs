@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::os::windows::process::CommandExt;
 use std::thread;
 use std::time::Duration;
 
@@ -7,8 +6,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::llama_runtime::manifest::ModelId;
-
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct VramStatus {
@@ -28,11 +25,7 @@ fn parse_u64_line(raw: &str) -> Option<u64> {
 }
 
 fn query_vram_values(args: &[&str]) -> Option<Vec<u64>> {
-    let output = Command::new("nvidia-smi")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(args)
-        .output()
-        .ok()?;
+    let output = Command::new("nvidia-smi").args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -52,11 +45,7 @@ pub fn available_vram_mib() -> Option<u64> {
     query_vram_values(&args)
         .and_then(|mut values| values.pop())
         .or_else(|| {
-            let output = Command::new("nvidia-smi")
-                .creation_flags(CREATE_NO_WINDOW)
-                .args(args)
-                .output()
-                .ok()?;
+            let output = Command::new("nvidia-smi").args(args).output().ok()?;
             if !output.status.success() {
                 return None;
             }
