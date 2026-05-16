@@ -1,5 +1,4 @@
 ; Capture2Text Pro NSIS installer hooks
-!define NSJSON_PLUGIN_DIR "${__FILEDIR__}\plugins\nsJSON\Plugins\x86-unicode"
 !define ROAMING_DIR "$APPDATA\com.capture2text.pro"
 !define LOCAL_DIR "$LOCALAPPDATA\com.capture2text.pro"
 !define WEBVIEW_DIR "${LOCAL_DIR}\EBWebView"
@@ -32,14 +31,9 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   SetShellVarContext current
   DetailPrint "[uninstall-mode] $UninstallMode"
-  DetailPrint "[partial-items] $ItemChecked"
-  DetailPrint "[partial-webview] $DeleteWebView"
+  DetailPrint "[partial-flags] models=$DeleteModels captures=$DeleteCaptures settings=$DeleteSettings tts_cache=$DeleteTtsCache logs=$DeleteLogs webview=$DeleteWebView"
 
   ${If} $UninstallMode == "minimal"
-    DetailPrint "[debug] minimal branch entered"
-    DetailPrint "[debug] WEBVIEW_DIR literal: ${WEBVIEW_DIR}"
-    StrCpy $0 "${WEBVIEW_DIR}"
-    DetailPrint "[debug] WEBVIEW_DIR runtime: $0"
     IfFileExists "${WEBVIEW_DIR}\*.*" 0 +4
       Sleep 500
       RMDir /r "${WEBVIEW_DIR}"
@@ -49,29 +43,42 @@
       DetailPrint "[cleanup] removed ${CACHE_DIR}"
 
   ${ElseIf} $UninstallMode == "partial"
-    DetailPrint "[debug] partial branch entered"
-    ${If} $ItemChecked != ""
-      ${WordFind} "$ItemChecked" "|" "#" $0
-      ${For} $1 1 $0
-        ${WordFind} "$ItemChecked" "|" "+$1" $2
-        ${WordFind} "$2" ":" "+1" $3
-        ${WordFind} "$2" ":" "+2" $4
-        ${If} $4 != ""
-          StrCpy $5 "$4" 1 -1
-          ${If} $5 == "/"
-          ${OrIf} $5 == "\"
-            IfFileExists "${LOCAL_DIR}\$4\*.*" 0 +3
-              RMDir /r "${LOCAL_DIR}\$4"
-              DetailPrint "[cleanup] partial removed dir id=$3 path=$4"
-          ${Else}
-            IfFileExists "${LOCAL_DIR}\$4" 0 +3
-              Delete "${LOCAL_DIR}\$4"
-              DetailPrint "[cleanup] partial removed file id=$3 path=$4"
-          ${EndIf}
-        ${EndIf}
-      ${Next}
+    ${If} $DeleteModels == "1"
+      IfFileExists "${LOCAL_DIR}\models\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\models"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\models"
     ${EndIf}
-
+    ${If} $DeleteCaptures == "1"
+      IfFileExists "${LOCAL_DIR}\captures\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\captures"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\captures"
+      IfFileExists "${LOCAL_DIR}\captures.log" 0 +2
+        Delete "${LOCAL_DIR}\captures.log"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\captures.log"
+    ${EndIf}
+    ${If} $DeleteSettings == "1"
+      Delete "${LOCAL_DIR}\scenarios.json"
+      Delete "${LOCAL_DIR}\window_state.json"
+      Delete "${LOCAL_DIR}\output_lang.txt"
+      Delete "${LOCAL_DIR}\tts_config.json"
+      DetailPrint "[cleanup] partial removed settings files"
+    ${EndIf}
+    ${If} $DeleteTtsCache == "1"
+      IfFileExists "${LOCAL_DIR}\tts_preview_cache\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\tts_preview_cache"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\tts_preview_cache"
+      IfFileExists "${LOCAL_DIR}\tts_speak_cache\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\tts_speak_cache"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\tts_speak_cache"
+    ${EndIf}
+    ${If} $DeleteLogs == "1"
+      IfFileExists "${LOCAL_DIR}\tts_debug\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\tts_debug"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\tts_debug"
+      IfFileExists "${LOCAL_DIR}\leptonica_check\*.*" 0 +2
+        RMDir /r "${LOCAL_DIR}\leptonica_check"
+        DetailPrint "[cleanup] partial removed ${LOCAL_DIR}\leptonica_check"
+    ${EndIf}
     ${If} $DeleteWebView == "1"
       IfFileExists "${WEBVIEW_DIR}\*.*" 0 +4
         Sleep 500
@@ -79,40 +86,20 @@
         DetailPrint "[cleanup] partial removed ${WEBVIEW_DIR}"
     ${EndIf}
 
-    RMDir "${LOCAL_DIR}\models"
-    RMDir "${LOCAL_DIR}\captures"
-    RMDir "${LOCAL_DIR}\tts_preview_cache"
-    RMDir "${LOCAL_DIR}\tts_speak_cache"
-
   ${Else}
-    DetailPrint "[debug] full branch entered"
-    DetailPrint "[debug] ROAMING_DIR literal: ${ROAMING_DIR}"
-    StrCpy $0 "${ROAMING_DIR}"
-    DetailPrint "[debug] ROAMING_DIR runtime: $0"
-    DetailPrint "[debug] LOCAL_DIR literal: ${LOCAL_DIR}"
-    StrCpy $0 "${LOCAL_DIR}"
-    DetailPrint "[debug] LOCAL_DIR runtime: $0"
-
     IfFileExists "${ROAMING_DIR}\*.*" 0 roaming_miss
-      DetailPrint "[debug] ROAMING_DIR exists, removing..."
       RMDir /r "${ROAMING_DIR}"
       DetailPrint "[cleanup] removed ${ROAMING_DIR}"
       Goto roaming_done
     roaming_miss:
-      DetailPrint "[debug] ROAMING_DIR NOT found via IfFileExists"
     roaming_done:
 
     IfFileExists "${LOCAL_DIR}\*.*" 0 local_miss
-      DetailPrint "[debug] LOCAL_DIR exists, removing..."
       ClearErrors
       RMDir /r "${LOCAL_DIR}"
-      ${If} ${Errors}
-        DetailPrint "[debug] RMDir /r LOCAL_DIR set errors flag"
-      ${EndIf}
       DetailPrint "[cleanup] removed ${LOCAL_DIR}"
       Goto local_done
     local_miss:
-      DetailPrint "[debug] LOCAL_DIR NOT found via IfFileExists"
     local_done:
   ${EndIf}
 !macroend

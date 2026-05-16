@@ -70,71 +70,24 @@ Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
 Var UninstallMode
-Var ItemIds
-Var ItemPaths
-Var ItemChecked
+Var DeleteModels
+Var DeleteCaptures
+Var DeleteSettings
+Var DeleteTtsCache
+Var DeleteLogs
 Var DeleteWebView
-Var InventoryLoadFailed
-Var PartialCount
-Var InventoryPath
+Var CbModels
+Var CbCaptures
+Var CbSettings
+Var CbTtsCache
+Var CbLogs
+Var CbWebView
+Var VisibleCheckboxCount
 Var CheckboxTop
-Var CheckboxCurrentId
-Var CheckboxCurrentPath
-Var CheckboxCurrentLabel
-Var CheckboxCurrentSize
-Var CheckboxCurrentState
-Var CheckboxCurrentHwnd
-Var Cb1
-Var Cb2
-Var Cb3
-Var Cb4
-Var Cb5
-Var Cb6
-Var Cb7
-Var Cb8
-Var Cb9
-Var Cb10
-Var Cb11
-Var Cb12
-Var Cb13
-Var Cb14
-Var Cb15
-Var Cb16
+Var CheckboxProbe
 Var ModeRadioMinimal
 Var ModeRadioPartial
 Var ModeRadioFull
-Var Id1
-Var Id2
-Var Id3
-Var Id4
-Var Id5
-Var Id6
-Var Id7
-Var Id8
-Var Id9
-Var Id10
-Var Id11
-Var Id12
-Var Id13
-Var Id14
-Var Id15
-Var Id16
-Var Path1
-Var Path2
-Var Path3
-Var Path4
-Var Path5
-Var Path6
-Var Path7
-Var Path8
-Var Path9
-Var Path10
-Var Path11
-Var Path12
-Var Path13
-Var Path14
-Var Path15
-Var Path16
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -155,7 +108,6 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 # additional plugins
 !addplugindir "${ADDITIONALPLUGINSPATH}"
-!addplugindir "${NSJSON_PLUGIN_DIR}"
 
 ; Uninstaller signing command
 !if "${UNINSTALLERSIGNCOMMAND}" != ""
@@ -609,126 +561,26 @@ Function un.ModesPage_Leave
   StrCpy $UninstallMode "minimal"
 FunctionEnd
 
-Function un.AppendSelection
-  ${If} $ItemChecked == ""
-    StrCpy $ItemChecked "$CheckboxCurrentId:$CheckboxCurrentPath"
-  ${Else}
-    StrCpy $ItemChecked "$ItemChecked|$CheckboxCurrentId:$CheckboxCurrentPath"
-  ${EndIf}
-FunctionEnd
-
-Function un.AppendCheckboxMeta
-  ${If} $ItemIds == ""
-    StrCpy $ItemIds "$CheckboxCurrentId"
-    StrCpy $ItemPaths "$CheckboxCurrentPath"
-  ${Else}
-    StrCpy $ItemIds "$ItemIds|$CheckboxCurrentId"
-    StrCpy $ItemPaths "$ItemPaths|$CheckboxCurrentPath"
-  ${EndIf}
-FunctionEnd
-
-Function un.FormatSize
-  Exch $0
-  ${If} $0 < 1048576
-    IntOp $1 $0 / 1024
-    StrCpy $2 "$1 KB"
-  ${ElseIf} $0 < 1073741824
-    IntOp $1 $0 / 1048576
-    IntOp $3 $0 % 1048576
-    IntOp $3 $3 / 104857
-    StrCpy $2 "$1.$3 MB"
-  ${Else}
-    IntOp $1 $0 / 107374182
-    IntOp $3 $1 / 10
-    IntOp $4 $1 % 10
-    StrCpy $2 "$3.$4 GB"
-  ${EndIf}
-  Push $2
-FunctionEnd
-
-Function un.StoreCheckbox
-  ${If} $PartialCount == 1
-    StrCpy $Cb1 $CheckboxCurrentHwnd
-    StrCpy $Id1 $CheckboxCurrentId
-    StrCpy $Path1 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 2
-    StrCpy $Cb2 $CheckboxCurrentHwnd
-    StrCpy $Id2 $CheckboxCurrentId
-    StrCpy $Path2 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 3
-    StrCpy $Cb3 $CheckboxCurrentHwnd
-    StrCpy $Id3 $CheckboxCurrentId
-    StrCpy $Path3 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 4
-    StrCpy $Cb4 $CheckboxCurrentHwnd
-    StrCpy $Id4 $CheckboxCurrentId
-    StrCpy $Path4 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 5
-    StrCpy $Cb5 $CheckboxCurrentHwnd
-    StrCpy $Id5 $CheckboxCurrentId
-    StrCpy $Path5 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 6
-    StrCpy $Cb6 $CheckboxCurrentHwnd
-    StrCpy $Id6 $CheckboxCurrentId
-    StrCpy $Path6 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 7
-    StrCpy $Cb7 $CheckboxCurrentHwnd
-    StrCpy $Id7 $CheckboxCurrentId
-    StrCpy $Path7 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 8
-    StrCpy $Cb8 $CheckboxCurrentHwnd
-    StrCpy $Id8 $CheckboxCurrentId
-    StrCpy $Path8 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 9
-    StrCpy $Cb9 $CheckboxCurrentHwnd
-    StrCpy $Id9 $CheckboxCurrentId
-    StrCpy $Path9 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 10
-    StrCpy $Cb10 $CheckboxCurrentHwnd
-    StrCpy $Id10 $CheckboxCurrentId
-    StrCpy $Path10 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 11
-    StrCpy $Cb11 $CheckboxCurrentHwnd
-    StrCpy $Id11 $CheckboxCurrentId
-    StrCpy $Path11 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 12
-    StrCpy $Cb12 $CheckboxCurrentHwnd
-    StrCpy $Id12 $CheckboxCurrentId
-    StrCpy $Path12 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 13
-    StrCpy $Cb13 $CheckboxCurrentHwnd
-    StrCpy $Id13 $CheckboxCurrentId
-    StrCpy $Path13 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 14
-    StrCpy $Cb14 $CheckboxCurrentHwnd
-    StrCpy $Id14 $CheckboxCurrentId
-    StrCpy $Path14 $CheckboxCurrentPath
-  ${ElseIf} $PartialCount == 15
-    StrCpy $Cb15 $CheckboxCurrentHwnd
-    StrCpy $Id15 $CheckboxCurrentId
-    StrCpy $Path15 $CheckboxCurrentPath
-  ${Else}
-    StrCpy $Cb16 $CheckboxCurrentHwnd
-    StrCpy $Id16 $CheckboxCurrentId
-    StrCpy $Path16 $CheckboxCurrentPath
-  ${EndIf}
-FunctionEnd
-
 Function un.CheckboxPage_Show
   SetShellVarContext current
   ${If} $UninstallMode != "partial"
     Abort
   ${EndIf}
 
-  StrCpy $ItemIds ""
-  StrCpy $ItemPaths ""
-  StrCpy $ItemChecked ""
+  StrCpy $DeleteModels "0"
+  StrCpy $DeleteCaptures "0"
+  StrCpy $DeleteSettings "0"
+  StrCpy $DeleteTtsCache "0"
+  StrCpy $DeleteLogs "0"
   StrCpy $DeleteWebView "0"
-  StrCpy $InventoryLoadFailed "0"
-  StrCpy $PartialCount 0
-  StrCpy $CheckboxTop 26
-  StrCpy $InventoryPath "$LOCALAPPDATA\com.capture2text.pro\inventory.json"
-  MessageBox MB_OK "DBG1 InventoryPath=$InventoryPath"
+  StrCpy $CbModels "0"
+  StrCpy $CbCaptures "0"
+  StrCpy $CbSettings "0"
+  StrCpy $CbTtsCache "0"
+  StrCpy $CbLogs "0"
+  StrCpy $CbWebView "0"
+  StrCpy $VisibleCheckboxCount "0"
+  StrCpy $CheckboxTop "14"
 
   nsDialogs::Create 1018
   Pop $0
@@ -737,178 +589,91 @@ Function un.CheckboxPage_Show
   ${EndIf}
 
   !insertmacro MUI_HEADER_TEXT "卸載 Capture2Text Pro" "部分刪除：勾選要刪除的項目"
-  ${NSD_CreateLabel} 0 0 100% 12u "只會顯示目前已存在、可移除的項目（預設不勾選）。"
+  ${NSD_CreateLabel} 0 0 100% 12u "只會顯示目前已存在的項目（預設不勾選）。"
   Pop $0
 
-  DetailPrint "[debug] InventoryPath=$InventoryPath"
-  IfFileExists "$InventoryPath" 0 inv_file_miss
-    DetailPrint "[debug] inventory.json file exists at path"
-    Goto inv_file_check_done
-inv_file_miss:
-  DetailPrint "[debug] inventory.json NOT at path via IfFileExists"
-inv_file_check_done:
+  IfFileExists "${LOCAL_DIR}\models\*.gguf" 0 skip_models_cb
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "AI 模型 (Qwen3-VL 系列)"
+    Pop $CbModels
+    IntOp $CheckboxTop $CheckboxTop + 12
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
+skip_models_cb:
 
-  IfFileExists "$InventoryPath" 0 inventory_load_fail
-  ClearErrors
-  nsJSON::Set /file "$InventoryPath"
-  ${If} ${Errors}
-    MessageBox MB_OK "DBG2 nsJSON::Set FAILED"
-    DetailPrint "[debug] nsJSON::Set /file FAILED with errors flag"
-    Goto inventory_load_fail
-  ${Else}
-    DetailPrint "[debug] nsJSON::Set /file OK"
+  StrCpy $CheckboxProbe "0"
+  IfFileExists "${LOCAL_DIR}\captures\*" 0 captures_probe_file
+    StrCpy $CheckboxProbe "1"
+captures_probe_file:
+  IfFileExists "${LOCAL_DIR}\captures.log" 0 captures_probe_done
+    StrCpy $CheckboxProbe "1"
+captures_probe_done:
+  ${If} $CheckboxProbe == "1"
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "OCR 擷取圖像與記錄"
+    Pop $CbCaptures
+    IntOp $CheckboxTop $CheckboxTop + 12
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
   ${EndIf}
 
-  nsJSON::Get /count items /end
-  Pop $0
-  MessageBox MB_OK "DBG3 items count=$0"
-  ${For} $1 0 $0
-    ${If} $1 <= 2
-      MessageBox MB_OK "DBG4 iter $1 of $0"
-    ${EndIf}
-    ClearErrors
-    nsJSON::Get items /index $1 removable /end
-    ${If} ${Errors}
-      ${If} $1 <= 2
-        MessageBox MB_OK "DBG4a iter=$1 nsJSON err on removable"
-      ${EndIf}
-      ${Continue}
-    ${EndIf}
-    Pop $2
-    ${If} $1 <= 2
-      MessageBox MB_OK "DBG4b iter=$1 removable_raw=[$2]"
-    ${EndIf}
-    ${If} $2 != true
-      ${Continue}
-    ${EndIf}
-
-    nsJSON::Get items /index $1 size /end
-    ${If} ${Errors}
-      ${Continue}
-    ${EndIf}
-    Pop $CheckboxCurrentSize
-    ${If} $CheckboxCurrentSize == 0
-      ${Continue}
-    ${EndIf}
-
-    nsJSON::Get items /index $1 id /end
-    Pop $CheckboxCurrentId
-    nsJSON::Get items /index $1 path /end
-    Pop $CheckboxCurrentPath
-    nsJSON::Get items /index $1 label /end
-    Pop $CheckboxCurrentLabel
-
-    Push $CheckboxCurrentSize
-    Call un.FormatSize
-    Pop $3
-    StrCpy $4 "$CheckboxCurrentLabel  ($3)"
-
-    ${NSD_CreateCheckBox} 0 "$CheckboxTop" 100% 10u "$4"
-    Pop $CheckboxCurrentHwnd
-    SendMessage $CheckboxCurrentHwnd ${BM_SETCHECK} ${BST_UNCHECKED} 0
-
-    IntOp $PartialCount $PartialCount + 1
-    Call un.AppendCheckboxMeta
-    Call un.StoreCheckbox
+  StrCpy $CheckboxProbe "0"
+  IfFileExists "${LOCAL_DIR}\scenarios.json" 0 settings_probe_state
+    StrCpy $CheckboxProbe "1"
+settings_probe_state:
+  IfFileExists "${LOCAL_DIR}\window_state.json" 0 settings_probe_output
+    StrCpy $CheckboxProbe "1"
+settings_probe_output:
+  IfFileExists "${LOCAL_DIR}\output_lang.txt" 0 settings_probe_tts
+    StrCpy $CheckboxProbe "1"
+settings_probe_tts:
+  IfFileExists "${LOCAL_DIR}\tts_config.json" 0 settings_probe_done
+    StrCpy $CheckboxProbe "1"
+settings_probe_done:
+  ${If} $CheckboxProbe == "1"
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "設定 (情境/視窗/輸出語言/TTS)"
+    Pop $CbSettings
     IntOp $CheckboxTop $CheckboxTop + 12
-    ${If} $PartialCount == 15
-      ${Break}
-    ${EndIf}
-  ${Next}
-  MessageBox MB_OK "DBG5 done loop, PartialCount=$PartialCount"
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
+  ${EndIf}
 
-  IfFileExists "$LOCALAPPDATA\com.capture2text.pro\EBWebView\*.*" 0 skip_webview
-    ${NSD_CreateCheckBox} 0 "$CheckboxTop" 100% 10u "Edge WebView2 殘留資料"
-    Pop $Cb16
-    SendMessage $Cb16 ${BM_SETCHECK} ${BST_UNCHECKED} 0
+  StrCpy $CheckboxProbe "0"
+  IfFileExists "${LOCAL_DIR}\tts_preview_cache\*.*" 0 tts_cache_probe_speak
+    StrCpy $CheckboxProbe "1"
+tts_cache_probe_speak:
+  IfFileExists "${LOCAL_DIR}\tts_speak_cache\*.*" 0 tts_cache_probe_done
+    StrCpy $CheckboxProbe "1"
+tts_cache_probe_done:
+  ${If} $CheckboxProbe == "1"
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "TTS 快取 (預覽/朗讀)"
+    Pop $CbTtsCache
     IntOp $CheckboxTop $CheckboxTop + 12
-skip_webview:
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
+  ${EndIf}
 
-  ${If} $PartialCount == 0
-    ${NSD_CreateLabel} 0 "$CheckboxTop" 100% 20u "找不到可部分刪除的項目。可返回上一頁改選『僅刪除程式』或『完全刪除』。"
+  StrCpy $CheckboxProbe "0"
+  IfFileExists "${LOCAL_DIR}\tts_debug\*.*" 0 logs_probe_leptonica
+    StrCpy $CheckboxProbe "1"
+logs_probe_leptonica:
+  IfFileExists "${LOCAL_DIR}\leptonica_check\*.*" 0 logs_probe_done
+    StrCpy $CheckboxProbe "1"
+logs_probe_done:
+  ${If} $CheckboxProbe == "1"
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "偵錯日誌 / 暫存"
+    Pop $CbLogs
+    IntOp $CheckboxTop $CheckboxTop + 12
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
+  ${EndIf}
+
+  IfFileExists "${WEBVIEW_DIR}\*.*" 0 skip_webview_cb
+    ${NSD_CreateCheckBox} 0 "$CheckboxTopu" 100% 10u "Edge WebView2 殘留資料"
+    Pop $CbWebView
+    IntOp $CheckboxTop $CheckboxTop + 12
+    IntOp $VisibleCheckboxCount $VisibleCheckboxCount + 1
+skip_webview_cb:
+
+  ${If} $VisibleCheckboxCount == 0
+    ${NSD_CreateLabel} 0 "$CheckboxTopu" 100% 24u "目前沒有可部分刪除的項目，請改選『僅刪除程式』或『完全刪除』。"
     Pop $0
   ${EndIf}
 
   nsDialogs::Show
-  Return
-
-inventory_load_fail:
-  StrCpy $InventoryLoadFailed "1"
-  ${NSD_CreateLabel} 0 "$CheckboxTop" 100% 24u "無法讀取項目清單。請回上一頁選『僅刪除程式』或『完全刪除』。"
-  Pop $0
-  GetDlgItem $0 $HWNDPARENT 1
-  EnableWindow $0 0
-  nsDialogs::Show
-FunctionEnd
-
-Function un.ReadCheckboxState
-  Exch $0
-  ${If} $0 == 1
-    ${NSD_GetState} $Cb1 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id1
-    StrCpy $CheckboxCurrentPath $Path1
-  ${ElseIf} $0 == 2
-    ${NSD_GetState} $Cb2 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id2
-    StrCpy $CheckboxCurrentPath $Path2
-  ${ElseIf} $0 == 3
-    ${NSD_GetState} $Cb3 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id3
-    StrCpy $CheckboxCurrentPath $Path3
-  ${ElseIf} $0 == 4
-    ${NSD_GetState} $Cb4 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id4
-    StrCpy $CheckboxCurrentPath $Path4
-  ${ElseIf} $0 == 5
-    ${NSD_GetState} $Cb5 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id5
-    StrCpy $CheckboxCurrentPath $Path5
-  ${ElseIf} $0 == 6
-    ${NSD_GetState} $Cb6 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id6
-    StrCpy $CheckboxCurrentPath $Path6
-  ${ElseIf} $0 == 7
-    ${NSD_GetState} $Cb7 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id7
-    StrCpy $CheckboxCurrentPath $Path7
-  ${ElseIf} $0 == 8
-    ${NSD_GetState} $Cb8 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id8
-    StrCpy $CheckboxCurrentPath $Path8
-  ${ElseIf} $0 == 9
-    ${NSD_GetState} $Cb9 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id9
-    StrCpy $CheckboxCurrentPath $Path9
-  ${ElseIf} $0 == 10
-    ${NSD_GetState} $Cb10 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id10
-    StrCpy $CheckboxCurrentPath $Path10
-  ${ElseIf} $0 == 11
-    ${NSD_GetState} $Cb11 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id11
-    StrCpy $CheckboxCurrentPath $Path11
-  ${ElseIf} $0 == 12
-    ${NSD_GetState} $Cb12 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id12
-    StrCpy $CheckboxCurrentPath $Path12
-  ${ElseIf} $0 == 13
-    ${NSD_GetState} $Cb13 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id13
-    StrCpy $CheckboxCurrentPath $Path13
-  ${ElseIf} $0 == 14
-    ${NSD_GetState} $Cb14 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id14
-    StrCpy $CheckboxCurrentPath $Path14
-  ${ElseIf} $0 == 15
-    ${NSD_GetState} $Cb15 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id15
-    StrCpy $CheckboxCurrentPath $Path15
-  ${Else}
-    ${NSD_GetState} $Cb16 $CheckboxCurrentState
-    StrCpy $CheckboxCurrentId $Id16
-    StrCpy $CheckboxCurrentPath $Path16
-  ${EndIf}
-  Push $CheckboxCurrentState
 FunctionEnd
 
 Function un.CheckboxPage_Leave
@@ -916,31 +681,47 @@ Function un.CheckboxPage_Leave
     Return
   ${EndIf}
 
-  ${If} $InventoryLoadFailed == "1"
-    MessageBox MB_ICONEXCLAMATION "無法讀取項目清單，請改選其他卸載模式。"
-    Abort
+  ${If} $CbModels != 0
+    ${NSD_GetState} $CbModels $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $DeleteModels "1"
+    ${EndIf}
   ${EndIf}
 
-  StrCpy $ItemChecked ""
-  StrCpy $0 1
-  ${DoWhile} $0 <= $PartialCount
-    Push $0
-    Call un.ReadCheckboxState
-    Pop $1
-    ${If} $1 == ${BST_CHECKED}
-      Call un.AppendSelection
+  ${If} $CbCaptures != 0
+    ${NSD_GetState} $CbCaptures $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $DeleteCaptures "1"
     ${EndIf}
-    IntOp $0 $0 + 1
-  ${Loop}
+  ${EndIf}
 
-  IfFileExists "$LOCALAPPDATA\com.capture2text.pro\EBWebView\*.*" 0 done_webview
-    ${NSD_GetState} $Cb16 $0
+  ${If} $CbSettings != 0
+    ${NSD_GetState} $CbSettings $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $DeleteSettings "1"
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $CbTtsCache != 0
+    ${NSD_GetState} $CbTtsCache $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $DeleteTtsCache "1"
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $CbLogs != 0
+    ${NSD_GetState} $CbLogs $0
+    ${If} $0 == ${BST_CHECKED}
+      StrCpy $DeleteLogs "1"
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $CbWebView != 0
+    ${NSD_GetState} $CbWebView $0
     ${If} $0 == ${BST_CHECKED}
       StrCpy $DeleteWebView "1"
-    ${Else}
-      StrCpy $DeleteWebView "0"
     ${EndIf}
-done_webview:
+  ${EndIf}
 FunctionEnd
 
 Section WebView2
@@ -1173,11 +954,12 @@ Function un.onInit
   ${EndIf}
 
   StrCpy $UninstallMode "minimal"
-  StrCpy $ItemIds ""
-  StrCpy $ItemPaths ""
-  StrCpy $ItemChecked ""
+  StrCpy $DeleteModels "0"
+  StrCpy $DeleteCaptures "0"
+  StrCpy $DeleteSettings "0"
+  StrCpy $DeleteTtsCache "0"
+  StrCpy $DeleteLogs "0"
   StrCpy $DeleteWebView "0"
-  StrCpy $InventoryLoadFailed "0"
 FunctionEnd
 
 Section Uninstall
