@@ -14,6 +14,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  SetShellVarContext current
   ${If} $UninstallMode == "full"
     DetailPrint "[cleanup] attempting credential cleanup..."
     nsExec::ExecToStack 'cmdkey /delete:Capture2TextPro'
@@ -29,6 +30,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  SetShellVarContext current
   DetailPrint "[uninstall-mode] $UninstallMode"
   DetailPrint "[partial-items] $ItemChecked"
   DetailPrint "[partial-webview] $DeleteWebView"

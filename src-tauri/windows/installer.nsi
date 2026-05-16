@@ -715,6 +715,7 @@ Function un.StoreCheckbox
 FunctionEnd
 
 Function un.CheckboxPage_Show
+  SetShellVarContext current
   ${If} $UninstallMode != "partial"
     Abort
   ${EndIf}
