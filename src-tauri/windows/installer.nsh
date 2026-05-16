@@ -34,6 +34,10 @@
   DetailPrint "[partial-webview] $DeleteWebView"
 
   ${If} $UninstallMode == "minimal"
+    DetailPrint "[debug] minimal branch entered"
+    DetailPrint "[debug] WEBVIEW_DIR literal: ${WEBVIEW_DIR}"
+    StrCpy $0 "${WEBVIEW_DIR}"
+    DetailPrint "[debug] WEBVIEW_DIR runtime: $0"
     IfFileExists "${WEBVIEW_DIR}\*.*" 0 +4
       Sleep 500
       RMDir /r "${WEBVIEW_DIR}"
@@ -43,6 +47,7 @@
       DetailPrint "[cleanup] removed ${CACHE_DIR}"
 
   ${ElseIf} $UninstallMode == "partial"
+    DetailPrint "[debug] partial branch entered"
     ${If} $ItemChecked != ""
       ${WordFind} "$ItemChecked" "|" "#" $0
       ${For} $1 1 $0
@@ -78,11 +83,34 @@
     RMDir "${LOCAL_DIR}\tts_speak_cache"
 
   ${Else}
-    IfFileExists "${ROAMING_DIR}\*.*" 0 +3
+    DetailPrint "[debug] full branch entered"
+    DetailPrint "[debug] ROAMING_DIR literal: ${ROAMING_DIR}"
+    StrCpy $0 "${ROAMING_DIR}"
+    DetailPrint "[debug] ROAMING_DIR runtime: $0"
+    DetailPrint "[debug] LOCAL_DIR literal: ${LOCAL_DIR}"
+    StrCpy $0 "${LOCAL_DIR}"
+    DetailPrint "[debug] LOCAL_DIR runtime: $0"
+
+    IfFileExists "${ROAMING_DIR}\*.*" 0 roaming_miss
+      DetailPrint "[debug] ROAMING_DIR exists, removing..."
       RMDir /r "${ROAMING_DIR}"
       DetailPrint "[cleanup] removed ${ROAMING_DIR}"
-    IfFileExists "${LOCAL_DIR}\*.*" 0 +3
+      Goto roaming_done
+    roaming_miss:
+      DetailPrint "[debug] ROAMING_DIR NOT found via IfFileExists"
+    roaming_done:
+
+    IfFileExists "${LOCAL_DIR}\*.*" 0 local_miss
+      DetailPrint "[debug] LOCAL_DIR exists, removing..."
+      ClearErrors
       RMDir /r "${LOCAL_DIR}"
+      ${If} ${Errors}
+        DetailPrint "[debug] RMDir /r LOCAL_DIR set errors flag"
+      ${EndIf}
       DetailPrint "[cleanup] removed ${LOCAL_DIR}"
+      Goto local_done
+    local_miss:
+      DetailPrint "[debug] LOCAL_DIR NOT found via IfFileExists"
+    local_done:
   ${EndIf}
 !macroend

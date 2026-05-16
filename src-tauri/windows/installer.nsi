@@ -738,11 +738,22 @@ Function un.CheckboxPage_Show
   ${NSD_CreateLabel} 0 0 100% 12u "只會顯示目前已存在、可移除的項目（預設不勾選）。"
   Pop $0
 
+  DetailPrint "[debug] InventoryPath=$InventoryPath"
+  IfFileExists "$InventoryPath" 0 inv_file_miss
+    DetailPrint "[debug] inventory.json file exists at path"
+    Goto inv_file_check_done
+inv_file_miss:
+  DetailPrint "[debug] inventory.json NOT at path via IfFileExists"
+inv_file_check_done:
+
   IfFileExists "$InventoryPath" 0 inventory_load_fail
   ClearErrors
   nsJSON::Set /file "$InventoryPath"
   ${If} ${Errors}
+    DetailPrint "[debug] nsJSON::Set /file FAILED with errors flag"
     Goto inventory_load_fail
+  ${Else}
+    DetailPrint "[debug] nsJSON::Set /file OK"
   ${EndIf}
 
   nsJSON::Get /count items /end
