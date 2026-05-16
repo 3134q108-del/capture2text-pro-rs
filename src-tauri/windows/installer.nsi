@@ -728,6 +728,7 @@ Function un.CheckboxPage_Show
   StrCpy $PartialCount 0
   StrCpy $CheckboxTop 26
   StrCpy $InventoryPath "$LOCALAPPDATA\com.capture2text.pro\inventory.json"
+  MessageBox MB_OK "DBG1 InventoryPath=$InventoryPath"
 
   nsDialogs::Create 1018
   Pop $0
@@ -751,6 +752,7 @@ inv_file_check_done:
   ClearErrors
   nsJSON::Set /file "$InventoryPath"
   ${If} ${Errors}
+    MessageBox MB_OK "DBG2 nsJSON::Set FAILED"
     DetailPrint "[debug] nsJSON::Set /file FAILED with errors flag"
     Goto inventory_load_fail
   ${Else}
@@ -759,13 +761,23 @@ inv_file_check_done:
 
   nsJSON::Get /count items /end
   Pop $0
+  MessageBox MB_OK "DBG3 items count=$0"
   ${For} $1 0 $0
+    ${If} $1 <= 2
+      MessageBox MB_OK "DBG4 iter $1 of $0"
+    ${EndIf}
     ClearErrors
     nsJSON::Get items /index $1 removable /end
     ${If} ${Errors}
+      ${If} $1 <= 2
+        MessageBox MB_OK "DBG4a iter=$1 nsJSON err on removable"
+      ${EndIf}
       ${Continue}
     ${EndIf}
     Pop $2
+    ${If} $1 <= 2
+      MessageBox MB_OK "DBG4b iter=$1 removable_raw=[$2]"
+    ${EndIf}
     ${If} $2 != true
       ${Continue}
     ${EndIf}
@@ -803,6 +815,7 @@ inv_file_check_done:
       ${Break}
     ${EndIf}
   ${Next}
+  MessageBox MB_OK "DBG5 done loop, PartialCount=$PartialCount"
 
   IfFileExists "$LOCALAPPDATA\com.capture2text.pro\EBWebView\*.*" 0 skip_webview
     ${NSD_CreateCheckBox} 0 "$CheckboxTop" 100% 10u "Edge WebView2 殘留資料"
