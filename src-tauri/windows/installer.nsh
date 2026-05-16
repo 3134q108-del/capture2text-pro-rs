@@ -1,5 +1,6 @@
 ; Capture2Text Pro NSIS installer hooks
-!define NSJSON_PLUGIN_DIR "${__FILEDIR__}\plugins\nsJSON\Plugins\x86-unicode"
+; installer.nsi is generated under src-tauri/target/*/nsis/x64 before makensis runs.
+!define NSJSON_PLUGIN_DIR "..\..\..\..\windows\plugins\nsJSON\Plugins\x86-unicode"
 !define ROAMING_DIR "$APPDATA\${BUNDLEID}"
 !define LOCAL_DIR "$LOCALAPPDATA\${BUNDLEID}"
 !define WEBVIEW_DIR "${LOCAL_DIR}\EBWebView"

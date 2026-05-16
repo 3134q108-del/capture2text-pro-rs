@@ -100,6 +100,9 @@ Var Cb13
 Var Cb14
 Var Cb15
 Var Cb16
+Var ModeRadioMinimal
+Var ModeRadioPartial
+Var ModeRadioFull
 Var Id1
 Var Id2
 Var Id3
@@ -562,43 +565,48 @@ Function un.ModesPage_Show
   Pop $0
 
   ${NSD_CreateRadioButton} 0 18u 100% 10u "僅刪除程式（推薦，保留設定與資料）"
-  Pop $1
+  Pop $ModeRadioMinimal
   ${NSD_CreateLabel} 12u 30u 100% 10u "程式檔、捷徑、登錄機碼會被移除"
   Pop $0
 
   ${NSD_CreateRadioButton} 0 46u 100% 10u "部分刪除（自選保留項目）"
-  Pop $2
+  Pop $ModeRadioPartial
   ${NSD_CreateLabel} 12u 58u 100% 10u "下一頁可勾選要清的項目"
   Pop $0
 
   ${NSD_CreateRadioButton} 0 74u 100% 10u "完全刪除（含所有資料與下載資源）"
-  Pop $3
+  Pop $ModeRadioFull
   ${NSD_CreateLabel} 12u 86u 100% 10u "設定、AI 模型、快取全部移除，無法復原"
   Pop $0
 
   ${If} $UninstallMode == "partial"
-    SendMessage $2 ${BM_SETCHECK} ${BST_CHECKED} 0
+    SendMessage $ModeRadioPartial ${BM_SETCHECK} ${BST_CHECKED} 0
   ${ElseIf} $UninstallMode == "full"
-    SendMessage $3 ${BM_SETCHECK} ${BST_CHECKED} 0
+    SendMessage $ModeRadioFull ${BM_SETCHECK} ${BST_CHECKED} 0
   ${Else}
-    SendMessage $1 ${BM_SETCHECK} ${BST_CHECKED} 0
+    SendMessage $ModeRadioMinimal ${BM_SETCHECK} ${BST_CHECKED} 0
   ${EndIf}
 
   nsDialogs::Show
 FunctionEnd
 
 Function un.ModesPage_Leave
-  ${NSD_GetState} $1 $0
+  ${NSD_GetState} $ModeRadioMinimal $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $UninstallMode "minimal"
     Return
   ${EndIf}
-  ${NSD_GetState} $2 $0
+  ${NSD_GetState} $ModeRadioPartial $0
   ${If} $0 == ${BST_CHECKED}
     StrCpy $UninstallMode "partial"
     Return
   ${EndIf}
-  StrCpy $UninstallMode "full"
+  ${NSD_GetState} $ModeRadioFull $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $UninstallMode "full"
+    Return
+  ${EndIf}
+  StrCpy $UninstallMode "minimal"
 FunctionEnd
 
 Function un.AppendSelection
