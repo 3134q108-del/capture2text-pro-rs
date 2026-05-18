@@ -174,6 +174,9 @@ v0.5.0 起只產 NSIS installer（移除 MSI）；NSIS 才能掛三模式 uninst
 - 純 CPU 推論一張約 5–10 秒，GPU 1–3 秒
 - Azure TTS 要自備 key，F0 免費 tier 每月 50 萬字符
 - Installer 沒簽名，第一次裝會看到 SmartScreen 警告，點「仍要執行」；如機器有 `ValidateAdminCodeSignatures=1`（見「安裝」段）需先關閉
+- ⚠️ **截圖範圍太小會 OCR 失準**：用 **Qwen3-VL-2B / 4B** 時，若截圖**小於 3 個中文字**（約 80×40 像素以下）vision tower spatial detail 不足，model 容易 hallucinate（編造與圖片無關的「中華民國」「營業時間」「台中市公有圖書館」這類常見路牌字眼）
+  - **建議**：框選時多帶一點空白 / 多框幾個字一起抓
+  - **或切到 Qwen3-VL-8B-Instruct**（設定 → 模型）— 對小圖較 robust，但推論慢約 3 倍、吃 RAM 多
 
 ## 致謝
 
