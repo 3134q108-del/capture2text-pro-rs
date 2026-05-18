@@ -119,6 +119,8 @@ pub fn run() {
             commands::result_window::set_translate_append_to_clipboard,
             commands::result_window::set_translate_separator,
             commands::result_window::set_log_enabled,
+            window_state::set_save_capture_image,
+            window_state::set_save_capture_text,
             commands::result_window::set_log_file_path,
             commands::result_window::set_speech_enabled,
             commands::result_window::write_popup_clipboard,

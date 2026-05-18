@@ -27,6 +27,8 @@ type WindowState = {
   translate_separator?: string;
   popup_show_enabled: boolean;
   log_enabled: boolean;
+  save_capture_image?: boolean;
+  save_capture_text?: boolean;
   log_file_path: string;
 };
 
@@ -67,6 +69,8 @@ export default function OutputTab() {
   const [separator, setSeparator] = useState<Separator>("Space");
   const [showPopup, setShowPopup] = useState<boolean>(true);
   const [logEnabled, setLogEnabled] = useState<boolean>(false);
+  const [saveCaptureImage, setSaveCaptureImage] = useState<boolean>(false);
+  const [saveCaptureText, setSaveCaptureText] = useState<boolean>(false);
   const [logPath, setLogPath] = useState<string>("");
   const [defaultLogPath, setDefaultLogPath] = useState<string>("");
   const [statusMsg, setStatusMsg] = useState<string>("");
@@ -85,6 +89,8 @@ export default function OutputTab() {
       setSeparator(normalizeSeparator(event.payload.translate_separator));
       setShowPopup(event.payload.popup_show_enabled);
       setLogEnabled(event.payload.log_enabled);
+      setSaveCaptureImage(event.payload.save_capture_image === true);
+      setSaveCaptureText(event.payload.save_capture_text === true);
       setLogPath(event.payload.log_file_path);
     }).then((unlisten) => {
       if (cancelled) {
@@ -116,6 +122,8 @@ export default function OutputTab() {
       setSeparator(normalizeSeparator(ws.translate_separator));
       setShowPopup(ws.popup_show_enabled);
       setLogEnabled(ws.log_enabled);
+      setSaveCaptureImage(ws.save_capture_image === true);
+      setSaveCaptureText(ws.save_capture_text === true);
       setLogPath(ws.log_file_path);
       setStatusMsg("");
     } catch (error) {
@@ -154,6 +162,24 @@ export default function OutputTab() {
     setLogEnabled(value);
     try {
       await invoke("set_log_enabled", { value });
+    } catch (error) {
+      setStatusMsg(String(error));
+    }
+  }
+
+  async function updateSaveCaptureImage(value: boolean) {
+    setSaveCaptureImage(value);
+    try {
+      await invoke("set_save_capture_image", { value });
+    } catch (error) {
+      setStatusMsg(String(error));
+    }
+  }
+
+  async function updateSaveCaptureText(value: boolean) {
+    setSaveCaptureText(value);
+    try {
+      await invoke("set_save_capture_text", { value });
     } catch (error) {
       setStatusMsg(String(error));
     }
@@ -229,6 +255,20 @@ export default function OutputTab() {
             onCheckedChange={(checked) => void updateLogEnabled(checked === true)}
             label="啟用記錄檔"
             description="將 OCR 結果寫入本機記錄檔。"
+          />
+
+          <Checkbox
+            checked={saveCaptureImage}
+            onCheckedChange={(checked) => void updateSaveCaptureImage(checked === true)}
+            label="同時保存原始圖片 (PNG)"
+            description="每次 OCR 的原始截圖會存到 %LOCALAPPDATA%\\com.capture2text.pro\\captures\\，適合 debug，但會累積磁碟用量。"
+          />
+
+          <Checkbox
+            checked={saveCaptureText}
+            onCheckedChange={(checked) => void updateSaveCaptureText(checked === true)}
+            label="同時保存原文+譯文 (JSONL)"
+            description="每次 OCR 的原文/翻譯/耗時記錄會存到 captures/captures.jsonl，適合分析模型品質。"
           />
 
           <PathPicker

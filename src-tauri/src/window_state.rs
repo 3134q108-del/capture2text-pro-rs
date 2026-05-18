@@ -98,6 +98,10 @@ pub struct WindowState {
     pub translate_separator: String,
     #[serde(default = "default_log_enabled")]
     pub log_enabled: bool,
+    #[serde(default = "default_save_capture_image")]
+    pub save_capture_image: bool,
+    #[serde(default = "default_save_capture_text")]
+    pub save_capture_text: bool,
     #[serde(default = "default_log_file_path")]
     pub log_file_path: String,
     #[serde(default = "default_capture_border")]
@@ -157,6 +161,8 @@ impl Default for WindowState {
             translate_append_to_clipboard: false,
             translate_separator: "Space".to_string(),
             log_enabled: default_log_enabled(),
+            save_capture_image: default_save_capture_image(),
+            save_capture_text: default_save_capture_text(),
             log_file_path: default_log_file_path(),
             capture_box_border_rgba: [255, 0, 0, 255],
             capture_box_fill_rgba: [255, 0, 0, 64],
@@ -272,6 +278,14 @@ fn default_log_enabled() -> bool {
     false
 }
 
+fn default_save_capture_image() -> bool {
+    false
+}
+
+fn default_save_capture_text() -> bool {
+    false
+}
+
 fn default_clipboard_mode() -> ClipboardMode {
     ClipboardMode::OriginalOnly
 }
@@ -372,6 +386,30 @@ pub fn set_log_enabled(v: bool) {
     update(|state| {
         state.log_enabled = v;
     });
+}
+
+#[tauri::command]
+pub fn set_save_capture_image(value: bool) -> Result<(), String> {
+    update(|state| {
+        state.save_capture_image = value;
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_save_capture_text(value: bool) -> Result<(), String> {
+    update(|state| {
+        state.save_capture_text = value;
+    });
+    Ok(())
+}
+
+pub fn save_capture_image() -> bool {
+    get().save_capture_image
+}
+
+pub fn save_capture_text() -> bool {
+    get().save_capture_text
 }
 
 pub fn set_log_file_path(v: String) {

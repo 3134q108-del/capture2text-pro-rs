@@ -346,21 +346,22 @@ pub fn init_worker(app_handle: AppHandle) {
                         let _ = thread::Builder::new()
                             .name("capture-save".to_string())
                             .spawn(move || {
-                                if let Some(saved) =
-                                    save_capture(&log_png_bytes, source, &target_lang_for_log)
-                                {
-                                    append_capture_log(CaptureLogEntry {
-                                        file: saved.file,
-                                        timestamp: saved.timestamp,
+                                persist_capture(
+                                    &log_png_bytes,
+                                    source,
+                                    &target_lang_for_log,
+                                    CaptureLogEntry {
+                                        file: String::new(),
+                                        timestamp: String::new(),
                                         source: log_source,
-                                        target_lang: target_lang_for_log,
+                                        target_lang: target_lang_for_log.clone(),
                                         status: log_status,
                                         duration_ms: log_duration_ms,
                                         error: log_error,
                                         original_len: log_original_len,
                                         translated_len: log_translated_len,
-                                    });
-                                }
+                                    },
+                                );
                             });
                         (source_label, result)
                     }
@@ -1042,6 +1043,39 @@ fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<Ca
         file,
         timestamp: now.to_rfc3339(),
     })
+}
+
+fn persist_capture(
+    png_bytes: &[u8],
+    source: &str,
+    target_lang: &str,
+    mut entry: CaptureLogEntry,
+) -> Option<()> {
+    let save_capture_image = crate::window_state::save_capture_image();
+    let save_capture_text = crate::window_state::save_capture_text();
+    if !save_capture_image && !save_capture_text {
+        return None;
+    }
+
+    let saved = if save_capture_image {
+        save_capture(png_bytes, source, target_lang)
+    } else {
+        None
+    };
+
+    if save_capture_text {
+        if let Some(saved) = saved {
+            entry.file = saved.file;
+            entry.timestamp = saved.timestamp;
+        } else {
+            let now = Local::now();
+            entry.file = String::new();
+            entry.timestamp = now.to_rfc3339();
+        }
+        append_capture_log(entry);
+    }
+
+    Some(())
 }
 
 fn append_capture_log(entry: CaptureLogEntry) {
