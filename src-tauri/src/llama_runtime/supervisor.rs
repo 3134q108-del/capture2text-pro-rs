@@ -1,7 +1,7 @@
 use std::process::{Child, Command};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HANDLE;
@@ -17,6 +17,9 @@ use super::manifest::{self, ModelId};
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
+static INFERENCE_COUNT: AtomicU64 = AtomicU64::new(0);
+static CURRENT_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
+static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const VISION_OFFLOAD_VRAM_THRESHOLD_GB: u64 = 16;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 
@@ -131,6 +134,62 @@ pub fn shared_blocking_client() -> &'static reqwest::blocking::Client {
             .build()
             .expect("shared reqwest blocking client build failed")
     })
+}
+
+pub fn record_inference_done() {
+    let count = INFERENCE_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    if should_trigger_restart(count) {
+        spawn_restart_task();
+    }
+}
+
+fn decide_should_restart(count: u64, threshold: u64, in_progress: bool) -> bool {
+    threshold > 0 && count >= threshold && !in_progress
+}
+
+fn restart_threshold() -> u64 {
+    std::env::var("C2T_LLAMA_RESTART_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(500)
+}
+
+fn should_trigger_restart(count: u64) -> bool {
+    let threshold = restart_threshold();
+    let in_progress = RESTART_IN_PROGRESS.load(Ordering::SeqCst);
+    decide_should_restart(count, threshold, in_progress)
+}
+
+fn spawn_restart_task() {
+    if RESTART_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    std::thread::spawn(|| {
+        eprintln!(
+            "[llama-restart] threshold reached ({} inferences), restarting llama-server",
+            INFERENCE_COUNT.load(Ordering::SeqCst)
+        );
+
+        let model_id = CURRENT_MODEL
+            .get()
+            .and_then(|slot| slot.lock().ok())
+            .and_then(|guard| *guard);
+
+        if let Some(id) = model_id {
+            match restart_with_model(id) {
+                Ok(()) => {
+                    INFERENCE_COUNT.store(0, Ordering::SeqCst);
+                    eprintln!("[llama-restart] complete, counter reset");
+                }
+                Err(e) => eprintln!("[llama-restart] failed: {e}"),
+            }
+        } else {
+            eprintln!("[llama-restart] skipped: no current model tracked");
+        }
+
+        RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+    });
 }
 
 fn get_or_init_job() -> Option<HANDLE> {
@@ -314,9 +373,22 @@ fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
     let slot = LLAMA_CHILD.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(child);
+        set_current_model(Some(*id));
         Ok(())
     } else {
         Err("llama child lock poisoned".to_string())
+    }
+}
+
+fn set_current_model(id: Option<ModelId>) {
+    let slot = CURRENT_MODEL.get_or_init(|| Mutex::new(None));
+    match slot.lock() {
+        Ok(mut guard) => {
+            *guard = id;
+        }
+        Err(_) => {
+            eprintln!("[llama-runtime] current model lock poisoned");
+        }
     }
 }
 
@@ -350,6 +422,7 @@ pub fn stop() {
 }
 
 fn stop_current_server() {
+    set_current_model(None);
     if let Some(slot) = LLAMA_CHILD.get() {
         if let Ok(mut guard) = slot.lock() {
             if let Some(mut child) = guard.take() {
@@ -400,7 +473,7 @@ fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::decide_disable_offload;
+    use super::{decide_disable_offload, decide_should_restart};
 
     #[test]
     fn decide_disable_offload_on_forces_gpu() {
@@ -418,5 +491,25 @@ mod tests {
     #[test]
     fn decide_disable_offload_none_none_defaults_safe_cpu() {
         assert!(decide_disable_offload(None, None));
+    }
+
+    #[test]
+    fn decide_should_restart_threshold_zero_disables_restart() {
+        assert!(!decide_should_restart(500, 0, false));
+    }
+
+    #[test]
+    fn decide_should_restart_count_below_threshold_does_not_restart() {
+        assert!(!decide_should_restart(499, 500, false));
+    }
+
+    #[test]
+    fn decide_should_restart_count_at_threshold_restarts() {
+        assert!(decide_should_restart(500, 500, false));
+    }
+
+    #[test]
+    fn decide_should_restart_in_progress_does_not_restart() {
+        assert!(!decide_should_restart(500, 500, true));
     }
 }

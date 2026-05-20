@@ -780,7 +780,7 @@ fn run_streaming_request<F: FnMut(&str)>(
 ) -> VlmResult<(String, Option<u64>)> {
     let client = crate::llama_runtime::supervisor::shared_async_client();
     let cancel = cancel_notify();
-    tauri::async_runtime::block_on(async move {
+    let result = tauri::async_runtime::block_on(async move {
         let mut response = client
             .post(LLAMA_CHAT_URL)
             .json(&request)
@@ -845,7 +845,11 @@ fn run_streaming_request<F: FnMut(&str)>(
             }
         }
         Ok((raw_accumulated, final_duration_ns))
-    })
+    });
+    if result.is_ok() {
+        crate::llama_runtime::supervisor::record_inference_done();
+    }
+    result
 }
 
 fn build_system_prompt(target_lang: &str) -> String {
