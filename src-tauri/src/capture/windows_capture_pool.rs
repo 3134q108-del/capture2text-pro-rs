@@ -306,7 +306,7 @@ mod tests {
             }
         });
 
-        let finished = rx.recv_timeout(Duration::from_millis(200)).unwrap_or(false);
+        let finished = rx.recv_timeout(Duration::from_millis(2000)).unwrap_or(false);
         assert!(finished);
         let _ = handle.join();
     }

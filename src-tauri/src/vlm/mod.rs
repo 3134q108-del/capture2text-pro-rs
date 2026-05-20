@@ -778,15 +778,13 @@ fn run_streaming_request<F: FnMut(&str)>(
     seq: Option<u64>,
     mut on_partial_raw: F,
 ) -> VlmResult<(String, Option<u64>)> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-        .build()
-        .map_err(|err| VlmError::Internal(format!("reqwest client build failed: {err}")))?;
+    let client = crate::llama_runtime::supervisor::shared_async_client();
     let cancel = cancel_notify();
     tauri::async_runtime::block_on(async move {
         let mut response = client
             .post(LLAMA_CHAT_URL)
             .json(&request)
+            .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
             .send()
             .await
             .map_err(map_reqwest_send_error)?;

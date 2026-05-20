@@ -17,6 +17,26 @@ static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
 
+pub fn shared_async_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::ClientBuilder::new()
+            .pool_idle_timeout(Some(Duration::from_secs(90)))
+            .build()
+            .expect("shared reqwest async client build failed")
+    })
+}
+
+pub fn shared_blocking_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::ClientBuilder::new()
+            .pool_idle_timeout(Some(Duration::from_secs(90)))
+            .build()
+            .expect("shared reqwest blocking client build failed")
+    })
+}
+
 fn get_or_init_job() -> Option<HANDLE> {
     JOB_HANDLE.get_or_init(|| unsafe {
         let h = match CreateJobObjectW(None, None) {
@@ -121,7 +141,7 @@ async fn send_keepalive_ping() {
         "max_tokens": 1,
         "stream": false,
     });
-    let client = reqwest::Client::new();
+    let client = shared_async_client();
     let _ = client
         .post("http://127.0.0.1:11434/v1/chat/completions")
         .json(&body)
@@ -176,7 +196,7 @@ fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
     unsafe {
         if let Some(job) = get_or_init_job() {
             let raw = child.as_raw_handle();
-            let proc_handle = HANDLE(raw as *mut std::ffi::c_void);
+            let proc_handle = HANDLE(raw);
             if let Err(e) = AssignProcessToJobObject(job, proc_handle) {
                 eprintln!(
                     "[llama-runtime] AssignProcessToJobObject failed (continuing without auto-cleanup): {e:?}"
@@ -239,14 +259,8 @@ fn stop_current_server() {
 }
 
 pub fn is_healthy() -> bool {
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => return false,
-    };
-    check_runtime_ready(&client)
+    let client = shared_blocking_client();
+    check_runtime_ready(client)
 }
 
 fn check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
@@ -262,12 +276,20 @@ fn check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
 }
 
 fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
-    if let Ok(response) = client.get("http://127.0.0.1:11434/v1/models").send() {
+    if let Ok(response) = client
+        .get("http://127.0.0.1:11434/v1/models")
+        .timeout(Duration::from_secs(5))
+        .send()
+    {
         if response.status().is_success() {
             return true;
         }
     }
-    if let Ok(response) = client.get("http://127.0.0.1:11434/health").send() {
+    if let Ok(response) = client
+        .get("http://127.0.0.1:11434/health")
+        .timeout(Duration::from_secs(5))
+        .send()
+    {
         return response.status().is_success();
     }
     false
