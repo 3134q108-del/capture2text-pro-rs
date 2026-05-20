@@ -975,9 +975,11 @@ fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
     }
 
     let Some(json_body) = extract_first_json_object(content) else {
-        return Err(VlmError::ResponseDecode {
-            raw: content.to_string(),
-            source_error: "model returned non-JSON content (no JSON object found)".to_string(),
+        let trimmed = content.trim();
+        return Ok(ModelOutput {
+            original: String::new(),
+            translated: trimmed.to_string(),
+            src_lang: None,
         });
     };
 
