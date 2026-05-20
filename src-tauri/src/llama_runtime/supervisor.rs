@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -16,6 +17,101 @@ use super::manifest::{self, ModelId};
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
+const VISION_OFFLOAD_VRAM_THRESHOLD_GB: u64 = 16;
+const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OffloadMode {
+    On,
+    Off,
+    Auto,
+}
+
+fn parse_offload_mode(env_val: Option<&str>) -> OffloadMode {
+    match env_val.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("on") => OffloadMode::On,
+        Some("off") => OffloadMode::Off,
+        Some("auto") | None | Some("") => OffloadMode::Auto,
+        Some(other) => {
+            eprintln!(
+                "[llama-runtime] invalid C2T_VISION_GPU_OFFLOAD={other:?}; fallback to auto"
+            );
+            OffloadMode::Auto
+        }
+    }
+}
+
+fn detect_max_vram_bytes() -> Option<u64> {
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        let mut max_vram = 0u64;
+        let mut i = 0u32;
+        loop {
+            match factory.EnumAdapters(i) {
+                Ok(adapter) => {
+                    if let Ok(desc) = adapter.GetDesc() {
+                        max_vram = max_vram.max(desc.DedicatedVideoMemory as u64);
+                    }
+                    i += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        if max_vram > 0 {
+            Some(max_vram)
+        } else {
+            None
+        }
+    }
+}
+
+fn decide_disable_offload(env_val: Option<&str>, vram_bytes: Option<u64>) -> bool {
+    match parse_offload_mode(env_val) {
+        OffloadMode::On => false,
+        OffloadMode::Off => true,
+        OffloadMode::Auto => match vram_bytes {
+            Some(bytes) => bytes < (VISION_OFFLOAD_VRAM_THRESHOLD_GB * BYTES_PER_GIB),
+            None => true,
+        },
+    }
+}
+
+fn should_disable_gpu_offload() -> bool {
+    let env_val = std::env::var("C2T_VISION_GPU_OFFLOAD").ok();
+    let vram_bytes = detect_max_vram_bytes();
+    let mode = parse_offload_mode(env_val.as_deref());
+    let disable_offload = decide_disable_offload(env_val.as_deref(), vram_bytes);
+
+    match mode {
+        OffloadMode::On => {
+            eprintln!("[llama-runtime] vision offload = GPU (env override)");
+        }
+        OffloadMode::Off => {
+            eprintln!("[llama-runtime] vision offload = CPU (env override)");
+        }
+        OffloadMode::Auto => match vram_bytes {
+            Some(bytes) => {
+                let vram_gb = bytes / BYTES_PER_GIB;
+                if disable_offload {
+                    eprintln!(
+                        "[llama-runtime] vision offload = CPU (auto: {vram_gb} GB VRAM < {VISION_OFFLOAD_VRAM_THRESHOLD_GB})"
+                    );
+                } else {
+                    eprintln!(
+                        "[llama-runtime] vision offload = GPU (auto: {vram_gb} GB VRAM >= {VISION_OFFLOAD_VRAM_THRESHOLD_GB})"
+                    );
+                }
+            }
+            None => {
+                eprintln!(
+                    "[llama-runtime] vision offload = CPU (auto: VRAM detect failed)"
+                );
+            }
+        },
+    }
+
+    disable_offload
+}
 
 pub fn shared_async_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -170,8 +266,13 @@ fn spawn_with_paths(
         .arg("--port")
         .arg("11434")
         .arg("--n-gpu-layers")
-        .arg("999")
-        .arg("--no-mmproj-offload")
+        .arg("999");
+
+    if should_disable_gpu_offload() {
+        command.arg("--no-mmproj-offload");
+    }
+
+    command
         .arg("--ctx-size")
         .arg(spec.ctx_size.to_string())
         .arg("--batch-size")
@@ -295,4 +396,27 @@ fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
         return response.status().is_success();
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decide_disable_offload;
+
+    #[test]
+    fn decide_disable_offload_on_forces_gpu() {
+        assert!(!decide_disable_offload(Some("on"), Some(8 * 1024 * 1024 * 1024)));
+    }
+
+    #[test]
+    fn decide_disable_offload_off_forces_cpu() {
+        assert!(decide_disable_offload(
+            Some("off"),
+            Some(24 * 1024 * 1024 * 1024)
+        ));
+    }
+
+    #[test]
+    fn decide_disable_offload_none_none_defaults_safe_cpu() {
+        assert!(decide_disable_offload(None, None));
+    }
 }
