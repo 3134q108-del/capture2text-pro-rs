@@ -171,6 +171,7 @@ fn spawn_with_paths(
         .arg("11434")
         .arg("--n-gpu-layers")
         .arg("999")
+        .arg("--no-mmproj-offload")
         .arg("--ctx-size")
         .arg(spec.ctx_size.to_string())
         .arg("--batch-size")
@@ -184,7 +185,8 @@ fn spawn_with_paths(
         .arg("0")
         .arg("--cache-ram")
         .arg("0")
-        .arg("--no-cache-idle-slots")
+        .arg("--parallel")
+        .arg("1")
         .creation_flags(CREATE_NO_WINDOW);
 
     command
