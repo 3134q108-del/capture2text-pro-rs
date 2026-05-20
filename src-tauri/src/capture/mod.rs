@@ -5,6 +5,8 @@ pub mod log;
 pub mod params;
 pub mod pipeline;
 pub mod screen_capture;
+#[allow(dead_code)]
+pub mod windows_capture_pool;
 
 use std::io;
 use std::sync::mpsc::{sync_channel, SyncSender};
