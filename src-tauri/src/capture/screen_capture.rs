@@ -1,8 +1,11 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+use std::thread;
+use std::time::Duration;
 
 use chrono::Local;
+use image::imageops::crop_imm;
 use image::RgbaImage;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
@@ -12,9 +15,11 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
-use xcap::Monitor;
 
 use crate::capture::{CursorPoint, HotkeyKind, ScreenRect};
+
+const SNAPSHOT_RETRY_COUNT: usize = 5;
+const SNAPSHOT_RETRY_DELAY: Duration = Duration::from_millis(30);
 
 #[derive(Debug, Clone, Copy)]
 pub struct CropRequest {
@@ -43,25 +48,32 @@ pub fn capture_at_cursor(
     cursor: CursorPoint,
     request: CropRequest,
 ) -> io::Result<Option<CaptureOutput>> {
-    let monitor = match Monitor::from_point(cursor.x, cursor.y) {
-        Ok(monitor) => monitor,
-        Err(_) => return Ok(None),
+    let pool = crate::CAPTURE_POOL
+        .get()
+        .ok_or_else(|| io::Error::other("capture pool is not initialized"))?;
+
+    let mut attempts = 0usize;
+    let snapshot = loop {
+        match pool.snapshot_at_point(cursor.x, cursor.y) {
+            Ok(Some(snapshot)) => break snapshot,
+            Ok(None) => {
+                attempts += 1;
+                if attempts >= SNAPSHOT_RETRY_COUNT {
+                    return Err(io::Error::other("capture pool snapshot timeout"));
+                }
+                thread::sleep(SNAPSHOT_RETRY_DELAY);
+            }
+            Err(err) => {
+                return Err(io::Error::other(format!("{err}")));
+            }
+        }
     };
 
-    let monitor_x = monitor
-        .x()
-        .map_err(|err| io::Error::other(format!("monitor.x() failed: {err}")))?;
-    let monitor_y = monitor
-        .y()
-        .map_err(|err| io::Error::other(format!("monitor.y() failed: {err}")))?;
-    let monitor_w = monitor
-        .width()
-        .map_err(|err| io::Error::other(format!("monitor.width() failed: {err}")))?
-        as i32;
-    let monitor_h = monitor
-        .height()
-        .map_err(|err| io::Error::other(format!("monitor.height() failed: {err}")))?
-        as i32;
+    let monitor_x = snapshot.monitor_x;
+    let monitor_y = snapshot.monitor_y;
+    let monitor_w = snapshot.width as i32;
+    let monitor_h = snapshot.height as i32;
+    let _captured_at = snapshot.captured_at;
 
     let local_x = cursor.x - monitor_x;
     let local_y = cursor.y - monitor_y;
@@ -74,9 +86,20 @@ pub fn capture_at_cursor(
         return Ok(None);
     };
 
-    let image = monitor
-        .capture_region(crop.crop_x as u32, crop.crop_y as u32, crop.crop_w as u32, crop.crop_h as u32)
-        .map_err(|err| io::Error::other(format!("capture_region failed: {err}")))?;
+    let mut rgba = snapshot.bgra_buffer;
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    let full_image = RgbaImage::from_raw(snapshot.width, snapshot.height, rgba)
+        .ok_or_else(|| io::Error::other("RgbaImage::from_raw failed"))?;
+    let image = crop_imm(
+        &full_image,
+        crop.crop_x as u32,
+        crop.crop_y as u32,
+        crop.crop_w as u32,
+        crop.crop_h as u32,
+    )
+    .to_image();
 
     Ok(Some(CaptureOutput {
         monitor_x,

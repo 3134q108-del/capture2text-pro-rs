@@ -1,4 +1,5 @@
 use tauri::Manager;
+use std::sync::{Arc, OnceLock};
 
 mod capture;
 mod clipboard;
@@ -22,6 +23,9 @@ pub mod leptonica;
 pub mod mouse_hook;
 pub mod vlm;
 pub use crate::capture::preprocess;
+use crate::capture::windows_capture_pool::CapturePool;
+
+pub(crate) static CAPTURE_POOL: OnceLock<Arc<CapturePool>> = OnceLock::new();
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -95,6 +99,17 @@ pub fn run() {
             tray::install(&app.handle().clone())?;
             overlay::init()?;
             drag_overlay::init()?;
+            match CapturePool::start() {
+                Ok(pool) => {
+                    let _ = pool.snapshot_for_monitor(0);
+                    if CAPTURE_POOL.set(pool).is_err() {
+                        tracing::error!("capture pool already initialized");
+                    }
+                }
+                Err(err) => {
+                    tracing::error!("capture pool start failed: {}", err);
+                }
+            }
             capture::start_worker()?;
             hotkey::install()?;
             Ok(())
@@ -184,6 +199,9 @@ pub fn run() {
             eprintln!("[shutdown] hotkey");
             hotkey::shutdown();
             eprintln!("[shutdown] capture");
+            if let Some(capture_pool) = CAPTURE_POOL.get() {
+                capture_pool.shutdown();
+            }
             capture::shutdown_worker();
             eprintln!("[shutdown] drag_overlay");
             drag_overlay::shutdown();

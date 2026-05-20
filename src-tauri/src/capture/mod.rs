@@ -4,8 +4,8 @@ pub mod preprocess;
 pub mod log;
 pub mod params;
 pub mod pipeline;
+#[allow(clippy::field_reassign_with_default)]
 pub mod screen_capture;
-#[allow(dead_code)]
 pub mod windows_capture_pool;
 
 use std::io;
