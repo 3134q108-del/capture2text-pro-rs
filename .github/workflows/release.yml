@@ -1,6 +1,6 @@
 name: Release
 
-# Trigger:push semver tag (例 v0.1.0) → 跑 Windows release build → 上傳 NSIS + MSI 到 GitHub Release
+# Trigger:push semver tag (例 v0.1.0) → 跑 Windows release build → 上傳 NSIS 到 GitHub Release
 # 用法:本機改 src-tauri/tauri.conf.json + Cargo.toml 的 version → commit → git tag v0.1.1 && git push origin v0.1.1
 on:
   push:
@@ -12,6 +12,13 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write  # 必須:tauri-action 上傳 release asset
+
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      # Self-managed vcpkg pinned to a known-good main HEAD; libjpeg-turbo 3.1.4 on
+      # current vcpkg main triggers MSVC 17.14+ internal compiler error in jchuff.c.
+      # We override via --overlay-ports to libjpeg-turbo 3.0.4 (see vcpkg-overlay/).
+      VCPKG_ROOT_DIR: ${{ github.workspace }}\local-vcpkg
 
     steps:
       - name: Checkout
@@ -31,26 +38,49 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # Leptonica 是 W/E mode (游標單行抓字) 的 bounding rect 依賴
-      # Windows runner 預裝 vcpkg 在 C:\vcpkg (環境變數 VCPKG_INSTALLATION_ROOT)
-      - name: Cache vcpkg packages
+      # Self-managed vcpkg avoids reliance on the runner-preinstalled vcpkg version,
+      # which tracks main HEAD and breaks when ports introduce MSVC-incompatible code.
+      - name: Cache vcpkg directory
+        id: vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_ROOT_DIR }}
+          key: vcpkg-self-managed-2026.04.27-v1
+
+      - name: Setup self-managed vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 2026.04.27 https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT_DIR"
+          & "$env:VCPKG_ROOT_DIR\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Set VCPKG_ROOT for later steps
+        shell: pwsh
+        run: echo "VCPKG_ROOT=$env:VCPKG_ROOT_DIR" >> $env:GITHUB_ENV
+
+      # Cache the built leptonica + transitive deps separately so port changes
+      # invalidate only the install cache, not the vcpkg tool cache above.
+      - name: Cache vcpkg installed packages
         uses: actions/cache@v4
         with:
           path: |
-            C:/vcpkg/installed
-            C:/vcpkg/packages
-          key: vcpkg-leptonica-x64-windows-static-md-v1
+            ${{ env.VCPKG_ROOT_DIR }}\installed
+            ${{ env.VCPKG_ROOT_DIR }}\packages
+          key: vcpkg-installed-leptonica-${{ env.VCPKG_DEFAULT_TRIPLET }}-overlay-libjpeg-3.0.4-v2
 
-      - name: Install Leptonica via vcpkg
+      # Leptonica is the OCR preprocessing dependency (used for bounding-rect mode
+      # under W/E hotkeys). We pin libjpeg-turbo via --overlay-ports to dodge the
+      # 3.1.4 + MSVC 17.14 internal compiler error.
+      - name: Install Leptonica via vcpkg (with libjpeg-turbo 3.0.4 overlay)
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install leptonica:x64-windows-static-md
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          & "$env:VCPKG_ROOT_DIR\vcpkg.exe" install leptonica:$env:VCPKG_DEFAULT_TRIPLET `
+            --overlay-ports="${{ github.workspace }}\vcpkg-overlay"
 
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Build & Release (NSIS + MSI)
+      - name: Build & Release (NSIS)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -60,8 +90,15 @@ jobs:
           releaseBody: |
             Windows desktop OCR + 翻譯 + Azure TTS。詳細功能與系統需求見 [README](https://github.com/3134q108-del/capture2text-pro-rs#readme)。
 
-            **下載:** 下面 Assets 的 `*.exe`(NSIS,推薦)或 `*.msi`(企業 / MDM)。
+            **下載：** 下方 Assets 的 `*.exe` (NSIS installer)。
 
-            **首次啟動:** 程式會自動下載 Qwen3-VL-8B 模型(~6 GB)到 `%LOCALAPPDATA%\Capture2TextPro\`,看網速 5–30 分鐘。
+            **系統需求：**
+            - Windows 10 1903+ 或 Windows 11
+            - 8 GB+ RAM
+            - NVIDIA / AMD / Intel GPU；16 GB+ VRAM 可開 GPU offload（env `C2T_VISION_GPU_OFFLOAD=on`），8-12 GB VRAM 預設 CPU offload 避 #22582 leak
+
+            **首次啟動：** 程式會引導下載 Qwen3-VL-8B 模型 (~6 GB) 和 llama-server runtime 到 `%LOCALAPPDATA%\com.capture2text.pro\`，視網速 5–30 分鐘。
+
+            **GPU 資源累積保險絲：** 預設累積 500 次推論後自動 restart llama-server，env `C2T_LLAMA_RESTART_THRESHOLD=N` 可調，`=0` 關閉。
           releaseDraft: true
           prerelease: false
