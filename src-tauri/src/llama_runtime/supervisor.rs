@@ -18,6 +18,7 @@ static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
 static INFERENCE_COUNT: AtomicU64 = AtomicU64::new(0);
+static RESTART_COUNT: AtomicU64 = AtomicU64::new(0);
 static CURRENT_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
 static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const VISION_OFFLOAD_VRAM_THRESHOLD_GB: u64 = 16;
@@ -143,6 +144,14 @@ pub fn record_inference_done() {
     }
 }
 
+pub fn inference_count() -> u64 {
+    INFERENCE_COUNT.load(Ordering::SeqCst)
+}
+
+pub fn restart_count() -> u64 {
+    RESTART_COUNT.load(Ordering::SeqCst)
+}
+
 fn decide_should_restart(count: u64, threshold: u64, in_progress: bool) -> bool {
     threshold > 0 && count >= threshold && !in_progress
 }
@@ -164,6 +173,7 @@ fn spawn_restart_task() {
     if RESTART_IN_PROGRESS.swap(true, Ordering::SeqCst) {
         return;
     }
+    RESTART_COUNT.fetch_add(1, Ordering::SeqCst);
 
     std::thread::spawn(|| {
         eprintln!(

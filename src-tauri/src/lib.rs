@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 mod capture;
 mod clipboard;
 mod commands;
+mod diagnostic;
 mod drag_overlay;
 mod error;
 mod hotkey;
@@ -96,6 +97,7 @@ pub fn run() {
             }
             let app_handle = app.handle().clone();
             vlm::init_worker(app_handle);
+            diagnostic::start_worker(app.handle().clone());
             tray::install(&app.handle().clone())?;
             overlay::init()?;
             drag_overlay::init()?;
