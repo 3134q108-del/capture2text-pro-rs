@@ -279,6 +279,10 @@ mod tests {
     use super::CapturePool;
     use std::sync::mpsc;
     use std::time::Duration;
+    use windows::core::Interface;
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, IDXGIAdapter3, IDXGIFactory1, DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+    };
 
     #[test]
     fn test_start_does_not_panic() {
@@ -317,6 +321,76 @@ mod tests {
         if let Ok(pool) = result {
             pool.shutdown();
             pool.shutdown();
+        }
+    }
+
+    #[test]
+    #[ignore = "stress test; run with: cargo test --ignored gpu_leak_capture_pool"]
+    fn gpu_leak_capture_pool() {
+        let baseline = match read_process_vram_local_bytes() {
+            Some(vram) => vram,
+            None => {
+                eprintln!("[stress] DXGI VRAM query unavailable; skipping stress test");
+                return;
+            }
+        };
+
+        let pool = match CapturePool::start() {
+            Ok(pool) => pool,
+            Err(error) => {
+                eprintln!(
+                    "[stress] CapturePool::start failed ({error}); likely no GPU on CI runner; skipping"
+                );
+                return;
+            }
+        };
+
+        eprintln!("[stress] baseline VRAM = {} MB", baseline / 1024 / 1024);
+
+        let iterations = 1000u32;
+        let sample_every = 100u32;
+        let mut samples = vec![(0u32, baseline)];
+
+        for i in 1..=iterations {
+            let _ = pool.snapshot_at_point(500, 500);
+            if i % sample_every == 0 {
+                std::thread::sleep(Duration::from_millis(50));
+                if let Some(vram) = read_process_vram_local_bytes() {
+                    samples.push((i, vram));
+                    eprintln!("[stress] iter {i}: VRAM = {} MB", vram / 1024 / 1024);
+                }
+            }
+        }
+
+        pool.shutdown();
+        std::thread::sleep(Duration::from_millis(500));
+
+        let final_vram = read_process_vram_local_bytes().unwrap_or(baseline);
+        let growth_bytes = final_vram.saturating_sub(baseline);
+        let growth_pct = (growth_bytes as f64 / baseline.max(1) as f64) * 100.0;
+
+        eprintln!("[stress] final VRAM = {} MB", final_vram / 1024 / 1024);
+        eprintln!(
+            "[stress] growth = {} MB ({growth_pct:.2}%)",
+            growth_bytes / 1024 / 1024
+        );
+
+        assert!(
+            growth_pct < 5.0,
+            "GPU VRAM grew {growth_pct:.2}% over {iterations} snapshots (expected < 5%); samples: {samples:?}"
+        );
+    }
+
+    fn read_process_vram_local_bytes() -> Option<u64> {
+        unsafe {
+            let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+            let adapter = factory.EnumAdapters(0).ok()?;
+            let adapter3: IDXGIAdapter3 = adapter.cast().ok()?;
+            let mut info = Default::default();
+            adapter3
+                .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info)
+                .ok()?;
+            Some(info.CurrentUsage as u64)
         }
     }
 }
