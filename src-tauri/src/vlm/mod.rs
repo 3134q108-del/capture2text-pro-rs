@@ -1,8 +1,6 @@
 use std::io::{self};
 use std::collections::VecDeque;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
+use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -155,24 +153,6 @@ pub struct VlmOutput {
     pub seq: Option<u64>,
 }
 
-struct CaptureSaved {
-    file: String,
-    timestamp: String,
-}
-
-#[derive(Debug, Serialize)]
-struct CaptureLogEntry {
-    file: String,
-    timestamp: String,
-    source: String,
-    target_lang: String,
-    status: String,
-    duration_ms: u64,
-    error: Option<String>,
-    original_len: Option<u32>,
-    translated_len: Option<u32>,
-}
-
 static VLM_RUNTIME: OnceLock<VlmRuntime> = OnceLock::new();
 static ACTIVE_VLM_SRC_LANG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static LATEST_OCR_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -319,49 +299,11 @@ pub fn init_worker(app_handle: AppHandle) {
                             },
                         );
                         eprintln!("[vlm worker] seq={} stream complete", seq);
-                        let log_source = source_label.clone();
                         let log_png_bytes = png_bytes.clone();
-                        let log_status = match &result {
-                            Ok(_) => "ok".to_string(),
-                            Err(VlmError::Cancelled) => "cancelled".to_string(),
-                            Err(_) => "error".to_string(),
-                        };
-                        let log_duration_ms = match &result {
-                            Ok(out) => out.duration_ms,
-                            Err(_) => 0,
-                        };
-                        let log_error = match &result {
-                            Ok(_) => None,
-                            Err(VlmError::Cancelled) => Some("cancelled by newer request".to_string()),
-                            Err(err) => Some(err.to_string()),
-                        };
-                        let log_original_len = match &result {
-                            Ok(out) => Some(out.original.chars().count() as u32),
-                            Err(_) => None,
-                        };
-                        let log_translated_len = match &result {
-                            Ok(out) => Some(out.translated.chars().count() as u32),
-                            Err(_) => None,
-                        };
                         let _ = thread::Builder::new()
                             .name("capture-save".to_string())
                             .spawn(move || {
-                                persist_capture(
-                                    &log_png_bytes,
-                                    source,
-                                    &target_lang_for_log,
-                                    CaptureLogEntry {
-                                        file: String::new(),
-                                        timestamp: String::new(),
-                                        source: log_source,
-                                        target_lang: target_lang_for_log.clone(),
-                                        status: log_status,
-                                        duration_ms: log_duration_ms,
-                                        error: log_error,
-                                        original_len: log_original_len,
-                                        translated_len: log_translated_len,
-                                    },
-                                );
+                                persist_capture(&log_png_bytes, source, &target_lang_for_log);
                             });
                         (source_label, result)
                     }
@@ -1033,7 +975,7 @@ fn is_seq_cancelled(seq: Option<u64>) -> bool {
     }
 }
 
-fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<CaptureSaved> {
+fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<()> {
     let now = Local::now();
     let file = format!("{}_{}.png", now.format("%Y-%m-%d_%H-%M-%S-%3f"), source);
     let dir = crate::app_paths::captures_dir();
@@ -1043,64 +985,21 @@ fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<Ca
         return None;
     }
     crate::inventory::reconcile_one("captures");
-    Some(CaptureSaved {
-        file,
-        timestamp: now.to_rfc3339(),
-    })
+    Some(())
 }
 
 fn persist_capture(
     png_bytes: &[u8],
     source: &str,
     target_lang: &str,
-    mut entry: CaptureLogEntry,
 ) -> Option<()> {
-    let save_capture_image = crate::window_state::save_capture_image();
-    let save_capture_text = crate::window_state::save_capture_text();
-    if !save_capture_image && !save_capture_text {
+    let state = crate::window_state::get();
+    if !state.log_enabled || !state.save_capture_image {
         return None;
     }
 
-    let saved = if save_capture_image {
-        save_capture(png_bytes, source, target_lang)
-    } else {
-        None
-    };
-
-    if save_capture_text {
-        if let Some(saved) = saved {
-            entry.file = saved.file;
-            entry.timestamp = saved.timestamp;
-        } else {
-            let now = Local::now();
-            entry.file = String::new();
-            entry.timestamp = now.to_rfc3339();
-        }
-        append_capture_log(entry);
-    }
-
+    save_capture(png_bytes, source, target_lang)?;
     Some(())
-}
-
-fn append_capture_log(entry: CaptureLogEntry) {
-    let log_path: PathBuf = crate::app_paths::captures_dir().join("captures.jsonl");
-    let line = match serde_json::to_string(&entry) {
-        Ok(line) => line,
-        Err(err) => {
-            eprintln!("[capture-save] serialize log failed: {}", err);
-            return;
-        }
-    };
-    let mut file = match OpenOptions::new().create(true).append(true).open(&log_path) {
-        Ok(file) => file,
-        Err(err) => {
-            eprintln!("[capture-save] open {} failed: {}", log_path.display(), err);
-            return;
-        }
-    };
-    if let Err(err) = writeln!(file, "{}", line) {
-        eprintln!("[capture-save] append {} failed: {}", log_path.display(), err);
-    }
 }
 
 fn extract_first_json_object(content: &str) -> Option<&str> {

@@ -100,8 +100,10 @@ pub struct WindowState {
     pub log_enabled: bool,
     #[serde(default = "default_save_capture_image")]
     pub save_capture_image: bool,
-    #[serde(default = "default_save_capture_text")]
-    pub save_capture_text: bool,
+    #[serde(default = "default_save_capture_original")]
+    pub save_capture_original: bool,
+    #[serde(default = "default_save_capture_translated")]
+    pub save_capture_translated: bool,
     #[serde(default = "default_log_file_path")]
     pub log_file_path: String,
     #[serde(default = "default_capture_border")]
@@ -162,7 +164,8 @@ impl Default for WindowState {
             translate_separator: "Space".to_string(),
             log_enabled: default_log_enabled(),
             save_capture_image: default_save_capture_image(),
-            save_capture_text: default_save_capture_text(),
+            save_capture_original: default_save_capture_original(),
+            save_capture_translated: default_save_capture_translated(),
             log_file_path: default_log_file_path(),
             capture_box_border_rgba: [255, 0, 0, 255],
             capture_box_fill_rgba: [255, 0, 0, 64],
@@ -282,8 +285,12 @@ fn default_save_capture_image() -> bool {
     false
 }
 
-fn default_save_capture_text() -> bool {
-    false
+fn default_save_capture_original() -> bool {
+    true
+}
+
+fn default_save_capture_translated() -> bool {
+    true
 }
 
 fn default_clipboard_mode() -> ClipboardMode {
@@ -397,19 +404,19 @@ pub fn set_save_capture_image(value: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_save_capture_text(value: bool) -> Result<(), String> {
+pub fn set_save_capture_original(value: bool) -> Result<(), String> {
     update(|state| {
-        state.save_capture_text = value;
+        state.save_capture_original = value;
     });
     Ok(())
 }
 
-pub fn save_capture_image() -> bool {
-    get().save_capture_image
-}
-
-pub fn save_capture_text() -> bool {
-    get().save_capture_text
+#[tauri::command]
+pub fn set_save_capture_translated(value: bool) -> Result<(), String> {
+    update(|state| {
+        state.save_capture_translated = value;
+    });
+    Ok(())
 }
 
 pub fn set_log_file_path(v: String) {
