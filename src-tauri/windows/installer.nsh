@@ -102,4 +102,9 @@
     local_miss:
     local_done:
   ${EndIf}
+
+  ; NSIS auto-created manufacturer/product registry shell cleanup (any mode)
+  ; Removes empty subkeys that the NSIS installer scaffolding creates by default.
+  DeleteRegKey HKCU "Software\${PRODUCTNAME}"
+  DeleteRegKey HKLM "SOFTWARE\${PRODUCTNAME}"
 !macroend
