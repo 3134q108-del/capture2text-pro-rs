@@ -296,6 +296,19 @@ export default function SpeechTab() {
       <Section>
         <SectionHeader title="Azure 語音合成" />
         <SectionBody>
+          <p className="text-sm text-muted-foreground">
+            還沒有 Azure Speech 訂閱金鑰？
+            <a
+              href="https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices"
+              target="_blank"
+              rel="noreferrer"
+              className="ml-1 text-primary hover:underline"
+            >
+              前往 Azure Portal 建立
+            </a>
+            完整 7 步申請流程見「使用說明」分頁。
+          </p>
+
           <FormField label="訂閱金鑰" htmlFor="azure-subscription-key">
             <Input
               id="azure-subscription-key"
