@@ -1,6 +1,7 @@
-use std::process::{Child, Command};
+use std::fs::{self, OpenOptions};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -8,11 +9,12 @@ use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
-use super::app_dir;
 use super::manifest::{self, ModelId};
+use super::{app_dir, SWITCH_LOCK};
 
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
@@ -23,6 +25,24 @@ static CURRENT_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
 static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 const VISION_OFFLOAD_VRAM_THRESHOLD_GB: u64 = 16;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+const LLAMA_SERVER_LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
+const LLAMA_SERVER_LOG_WAIT_TIMEOUT: Duration = Duration::from_secs(330);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnsureRunningDecision {
+    Healthy,
+    WaitForRestart,
+    NoCurrentModel,
+    Restart(ModelId),
+}
+
+struct RestartInProgressGuard;
+
+impl Drop for RestartInProgressGuard {
+    fn drop(&mut self) {
+        RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OffloadMode {
@@ -32,14 +52,16 @@ enum OffloadMode {
 }
 
 fn parse_offload_mode(env_val: Option<&str>) -> OffloadMode {
-    match env_val.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+    match env_val
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("on") => OffloadMode::On,
         Some("off") => OffloadMode::Off,
         Some("auto") | None | Some("") => OffloadMode::Auto,
         Some(other) => {
-            eprintln!(
-                "[llama-runtime] invalid C2T_VISION_GPU_OFFLOAD={other:?}; fallback to auto"
-            );
+            eprintln!("[llama-runtime] invalid C2T_VISION_GPU_OFFLOAD={other:?}; fallback to auto");
             OffloadMode::Auto
         }
     }
@@ -50,16 +72,11 @@ fn detect_max_vram_bytes() -> Option<u64> {
         let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
         let mut max_vram = 0u64;
         let mut i = 0u32;
-        loop {
-            match factory.EnumAdapters(i) {
-                Ok(adapter) => {
-                    if let Ok(desc) = adapter.GetDesc() {
-                        max_vram = max_vram.max(desc.DedicatedVideoMemory as u64);
-                    }
-                    i += 1;
-                }
-                Err(_) => break,
+        while let Ok(adapter) = factory.EnumAdapters(i) {
+            if let Ok(desc) = adapter.GetDesc() {
+                max_vram = max_vram.max(desc.DedicatedVideoMemory as u64);
             }
+            i += 1;
         }
         if max_vram > 0 {
             Some(max_vram)
@@ -107,9 +124,7 @@ fn should_disable_gpu_offload() -> bool {
                 }
             }
             None => {
-                eprintln!(
-                    "[llama-runtime] vision offload = CPU (auto: VRAM detect failed)"
-                );
+                eprintln!("[llama-runtime] vision offload = CPU (auto: VRAM detect failed)");
             }
         },
     }
@@ -167,6 +182,58 @@ fn should_trigger_restart(count: u64) -> bool {
     let threshold = restart_threshold();
     let in_progress = RESTART_IN_PROGRESS.load(Ordering::SeqCst);
     decide_should_restart(count, threshold, in_progress)
+}
+
+fn decide_ensure_running_action(
+    healthy: bool,
+    restart_in_progress: bool,
+    current_model: Option<ModelId>,
+) -> EnsureRunningDecision {
+    if healthy {
+        EnsureRunningDecision::Healthy
+    } else if restart_in_progress {
+        EnsureRunningDecision::WaitForRestart
+    } else if let Some(model_id) = current_model {
+        EnsureRunningDecision::Restart(model_id)
+    } else {
+        EnsureRunningDecision::NoCurrentModel
+    }
+}
+
+pub fn ensure_running() -> Result<(), String> {
+    let healthy = is_healthy();
+    let restart_in_progress = RESTART_IN_PROGRESS.load(Ordering::SeqCst);
+    let tracked_model = current_model();
+
+    match decide_ensure_running_action(healthy, restart_in_progress, tracked_model) {
+        EnsureRunningDecision::Healthy | EnsureRunningDecision::NoCurrentModel => Ok(()),
+        EnsureRunningDecision::WaitForRestart => {
+            wait_for_runtime_healthy(LLAMA_SERVER_LOG_WAIT_TIMEOUT)
+        }
+        EnsureRunningDecision::Restart(_) => {
+            if RESTART_IN_PROGRESS
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return wait_for_runtime_healthy(LLAMA_SERVER_LOG_WAIT_TIMEOUT);
+            }
+
+            let _restart_guard = RestartInProgressGuard;
+            let _switch_guard = SWITCH_LOCK
+                .lock()
+                .map_err(|e| format!("switch_lock poisoned: {e}"))?;
+
+            if is_healthy() {
+                return Ok(());
+            }
+
+            let Some(model_id) = current_model() else {
+                return Ok(());
+            };
+
+            restart_with_model(model_id)
+        }
+    }
 }
 
 fn spawn_restart_task() {
@@ -284,6 +351,21 @@ pub fn restart_with_model(model_id: ModelId) -> Result<(), String> {
     Ok(())
 }
 
+fn wait_for_runtime_healthy(timeout: Duration) -> Result<(), String> {
+    let started = Instant::now();
+    let timeout_secs = timeout.as_secs();
+    while started.elapsed() < timeout {
+        if is_healthy() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    Err(format!(
+        "llama-server did not become healthy within {timeout_secs}s"
+    ))
+}
+
 fn start_keepalive() {
     if KEEPALIVE_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -359,9 +441,58 @@ fn spawn_with_paths(
         .arg("1")
         .creation_flags(CREATE_NO_WINDOW);
 
+    if let Some((stdout, stderr)) = llama_server_stdio() {
+        command.stdout(stdout).stderr(stderr);
+    }
+
     command
         .spawn()
         .map_err(|e| format!("spawn llama-server failed: {e}"))
+}
+
+fn llama_server_stdio() -> Option<(Stdio, Stdio)> {
+    let log_dir = app_dir().join("logs");
+    if let Err(err) = fs::create_dir_all(&log_dir) {
+        eprintln!(
+            "[llama-runtime] create log dir {} failed: {err}",
+            log_dir.display()
+        );
+        return None;
+    }
+
+    let log_path = log_dir.join("llama-server.log");
+    if let Ok(metadata) = fs::metadata(&log_path) {
+        if metadata.len() > LLAMA_SERVER_LOG_ROTATE_BYTES {
+            let rotated_path = log_dir.join("llama-server.log.1");
+            if let Err(err) = fs::rename(&log_path, &rotated_path) {
+                eprintln!(
+                    "[llama-runtime] rotate log {} -> {} failed: {err}; truncating",
+                    log_path.display(),
+                    rotated_path.display()
+                );
+                if let Err(err) = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&log_path)
+                {
+                    eprintln!(
+                        "[llama-runtime] truncate log {} failed: {err}",
+                        log_path.display()
+                    );
+                    return None;
+                }
+            }
+        }
+    }
+
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok()?;
+    let stderr = file.try_clone().ok()?;
+    Some((Stdio::from(file), Stdio::from(stderr)))
 }
 
 fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
@@ -379,7 +510,11 @@ fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
         }
     }
 
-    eprintln!("[llama-runtime] spawned pid={} for model={:?}", child.id(), id);
+    eprintln!(
+        "[llama-runtime] spawned pid={} for model={:?}",
+        child.id(),
+        id
+    );
     let slot = LLAMA_CHILD.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(child);
@@ -400,6 +535,11 @@ fn set_current_model(id: Option<ModelId>) {
             eprintln!("[llama-runtime] current model lock poisoned");
         }
     }
+}
+
+fn current_model() -> Option<ModelId> {
+    let slot = CURRENT_MODEL.get_or_init(|| Mutex::new(None));
+    slot.lock().ok().and_then(|guard| *guard)
 }
 
 fn poll_ready() -> Result<(), String> {
@@ -483,11 +623,17 @@ fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide_disable_offload, decide_should_restart};
+    use super::{
+        decide_disable_offload, decide_ensure_running_action, decide_should_restart,
+        EnsureRunningDecision, ModelId,
+    };
 
     #[test]
     fn decide_disable_offload_on_forces_gpu() {
-        assert!(!decide_disable_offload(Some("on"), Some(8 * 1024 * 1024 * 1024)));
+        assert!(!decide_disable_offload(
+            Some("on"),
+            Some(8 * 1024 * 1024 * 1024)
+        ));
     }
 
     #[test]
@@ -521,5 +667,37 @@ mod tests {
     #[test]
     fn decide_should_restart_in_progress_does_not_restart() {
         assert!(!decide_should_restart(500, 500, true));
+    }
+
+    #[test]
+    fn decide_ensure_running_healthy_is_noop() {
+        assert_eq!(
+            decide_ensure_running_action(true, false, Some(ModelId::Qwen3Vl2bInstruct)),
+            EnsureRunningDecision::Healthy
+        );
+    }
+
+    #[test]
+    fn decide_ensure_running_no_current_model_is_noop() {
+        assert_eq!(
+            decide_ensure_running_action(false, false, None),
+            EnsureRunningDecision::NoCurrentModel
+        );
+    }
+
+    #[test]
+    fn decide_ensure_running_restart_in_progress_waits() {
+        assert_eq!(
+            decide_ensure_running_action(false, true, None),
+            EnsureRunningDecision::WaitForRestart
+        );
+    }
+
+    #[test]
+    fn decide_ensure_running_unhealthy_with_model_restarts() {
+        assert_eq!(
+            decide_ensure_running_action(false, false, Some(ModelId::Qwen3Vl4bInstruct)),
+            EnsureRunningDecision::Restart(ModelId::Qwen3Vl4bInstruct)
+        );
     }
 }

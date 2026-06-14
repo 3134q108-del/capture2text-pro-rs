@@ -1,6 +1,6 @@
-use std::io::{self};
 use std::collections::VecDeque;
 use std::fs;
+use std::io::{self};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -18,6 +18,7 @@ use crate::{llama_runtime, scenarios};
 
 pub mod state;
 
+#[allow(dead_code)]
 fn emit_or_log<T: serde::Serialize>(app: &AppHandle, name: &str, payload: &T) {
     if let Err(e) = app.emit(name, payload) {
         eprintln!("[vlm] emit '{}' failed: {}", name, e);
@@ -238,15 +239,17 @@ pub fn init_worker(app_handle: AppHandle) {
                     if is_seq_cancelled(Some(*seq)) {
                         continue;
                     }
-                    eprintln!("[vlm worker] seq={} processing source={}", seq, job_source(&job));
+                    eprintln!(
+                        "[vlm worker] seq={} processing source={}",
+                        seq,
+                        job_source(&job)
+                    );
                 }
                 state::set_loading(job_source(&job));
                 let source_label = job_source(&job).to_string();
                 let lang_code = job_model_lang(&job);
                 if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
-                    let message = format!(
-                        "switch model for lang {lang_code} failed: {err}"
-                    );
+                    let message = format!("switch model for lang {lang_code} failed: {err}");
                     eprintln!("[vlm] source={} failed: {}", source_label, message);
                     set_active_src_lang(None);
                     emit_vlm_event(
@@ -406,12 +409,7 @@ fn set_active_src_lang(lang: Option<String>) {
     }
 }
 
-pub fn try_submit_ocr(
-    png_bytes: Vec<u8>,
-    target_lang: String,
-    source: &'static str,
-    seq: u64,
-) {
+pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: String, source: &'static str, seq: u64) {
     cancel_current();
     LATEST_OCR_SEQ.store(seq, Ordering::SeqCst);
     try_submit(VlmJob::OcrAndTranslate {
@@ -422,11 +420,7 @@ pub fn try_submit_ocr(
     });
 }
 
-pub fn try_submit_text(
-    text: String,
-    target_lang: String,
-    source: &'static str,
-) {
+pub fn try_submit_text(text: String, target_lang: String, source: &'static str) {
     cancel_current();
     try_submit(VlmJob::TranslateText {
         text,
@@ -501,7 +495,11 @@ fn emit_vlm_event(app_handle: &AppHandle, payload: VlmEventPayload) {
     let _ = app_handle.emit_to("result", "vlm-result", &payload);
 }
 
-fn emit_vlm_partial_event(app_handle: &AppHandle, payload: VlmPartialEventPayload, seq: Option<u64>) {
+fn emit_vlm_partial_event(
+    app_handle: &AppHandle,
+    payload: VlmPartialEventPayload,
+    seq: Option<u64>,
+) {
     eprintln!(
         "[emit] vlm-result-partial source={} original.len={} translated.len={}",
         payload.source,
@@ -539,16 +537,14 @@ pub fn cancel_current() {
 }
 
 fn ensure_result_window_visible(app_handle: &AppHandle) {
-    let window = match crate::commands::result_window::ensure_webview_window(
-        app_handle.clone(),
-        "result",
-    ) {
-        Ok(window) => window,
-        Err(err) => {
-            eprintln!("[emit] ensure_result_window_visible: window creation failed: {err}");
-            return;
-        }
-    };
+    let window =
+        match crate::commands::result_window::ensure_webview_window(app_handle.clone(), "result") {
+            Ok(window) => window,
+            Err(err) => {
+                eprintln!("[emit] ensure_result_window_visible: window creation failed: {err}");
+                return;
+            }
+        };
 
     if let Err(err) = window.unminimize() {
         eprintln!("[emit] unminimize failed: {err}");
@@ -601,7 +597,9 @@ pub fn warmup() {
             max_tokens: None,
         };
 
-        match tauri::async_runtime::block_on(async { client.post(LLAMA_CHAT_URL).json(&request).send().await }) {
+        match tauri::async_runtime::block_on(async {
+            client.post(LLAMA_CHAT_URL).json(&request).send().await
+        }) {
             Ok(resp) => {
                 let ok = resp.status().is_success();
                 eprintln!(
@@ -628,15 +626,7 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
     let scenario = scenarios::current_scenario();
-    let request = build_chat_request(
-        build_direct_system_prompt(&target_lang),
-        Some(scenario.prompt.clone()),
-        "Extract text from the image and translate per the rules.".to_string(),
-        Some(vec![image_b64]),
-        true,
-    );
-
-    let (raw_accumulated, duration_ns) = run_streaming_request(request, seq, |raw| {
+    let mut emit_partial = |raw: &str| {
         if is_seq_cancelled(seq) {
             return;
         }
@@ -646,7 +636,30 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
             translated: extract_partial_json_string(raw, "translated"),
             src_lang: extract_partial_json_string(raw, "src_lang"),
         });
-    })?;
+    };
+
+    let build_request = || {
+        build_chat_request(
+            build_direct_system_prompt(&target_lang),
+            Some(scenario.prompt.clone()),
+            "Extract text from the image and translate per the rules.".to_string(),
+            Some(vec![image_b64.clone()]),
+            true,
+        )
+    };
+
+    let (raw_accumulated, duration_ns) =
+        match run_streaming_request(build_request(), seq, &mut emit_partial) {
+            Ok(result) => result,
+            Err(VlmError::VlmRuntimeDown) => {
+                eprintln!("[vlm] llama-server down during OCR; attempting restart");
+                crate::llama_runtime::supervisor::ensure_running().map_err(|err| {
+                    VlmError::Internal(format!("llama-server recovery failed: {err}"))
+                })?;
+                run_streaming_request(build_request(), seq, &mut emit_partial)?
+            }
+            Err(err) => return Err(err),
+        };
 
     let parsed = parse_model_output(&raw_accumulated)?;
     let duration_ms = duration_ns
@@ -669,10 +682,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
     translate_text_to_lang_streaming(text, target_lang, None, on_partial)
 }
 
-pub fn ocr_and_translate(
-    png_bytes: &[u8],
-    target_lang: &str,
-) -> VlmResult<VlmOutput> {
+pub fn ocr_and_translate(png_bytes: &[u8], target_lang: &str) -> VlmResult<VlmOutput> {
     ocr_and_translate_streaming(png_bytes, target_lang.to_string(), None, |_| {})
 }
 
@@ -769,12 +779,13 @@ fn run_streaming_request<F: FnMut(&str)>(
                     if payload == "[DONE]" {
                         return Ok((raw_accumulated, final_duration_ns));
                     }
-                    let chunk = serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
-                        VlmError::ResponseDecode {
-                            raw: payload.to_string(),
-                            source_error: format!("stream chunk parse failed: {err}"),
-                        }
-                    })?;
+                    let chunk =
+                        serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
+                            VlmError::ResponseDecode {
+                                raw: payload.to_string(),
+                                source_error: format!("stream chunk parse failed: {err}"),
+                            }
+                        })?;
                     if let Some(choice) = chunk.choices.first() {
                         if let Some(content) = choice.delta.content.as_deref() {
                             if !content.is_empty() {
@@ -817,7 +828,7 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
     let target_name = crate::languages::by_code(target_lang)
         .map(|l| l.english_name)
         .or_else(|| crate::languages::by_code("en-US").map(|l| l.english_name))
-        .unwrap_or_else(|| "English");
+        .unwrap_or("English");
     let language_codes = crate::languages::all()
         .iter()
         .map(|lang| lang.code.as_str())
@@ -831,7 +842,6 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         codes = language_codes,
     )
 }
-
 
 fn build_chat_request(
     system_prompt: String,
@@ -899,7 +909,7 @@ fn ensure_min_dimension(png_bytes: &[u8]) -> VlmResult<Vec<u8>> {
     }
 
     let min_dim = w.min(h);
-    let scale = (QWEN3VL_MIN_DIM + min_dim - 1) / min_dim;
+    let scale = QWEN3VL_MIN_DIM.div_ceil(min_dim);
     let new_w = w * scale;
     let new_h = h * scale;
 
@@ -988,11 +998,7 @@ fn save_capture(png_bytes: &[u8], source: &str, _target_lang: &str) -> Option<()
     Some(())
 }
 
-fn persist_capture(
-    png_bytes: &[u8],
-    source: &str,
-    target_lang: &str,
-) -> Option<()> {
+fn persist_capture(png_bytes: &[u8], source: &str, target_lang: &str) -> Option<()> {
     let state = crate::window_state::get();
     if !state.log_enabled || !state.save_capture_image {
         return None;
@@ -1102,16 +1108,19 @@ struct ImageUrl {
     url: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: Option<AssistantMessage>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct AssistantMessage {
     content: Option<String>,
@@ -1173,8 +1182,8 @@ mod tests {
 
     #[test]
     fn parse_lenient_strips_whitespace() {
-        let parsed = parse_model_output("  hello \n")
-            .expect("lenient fallback should trim whitespace");
+        let parsed =
+            parse_model_output("  hello \n").expect("lenient fallback should trim whitespace");
         assert_eq!(parsed.original, "");
         assert_eq!(parsed.translated, "hello");
         assert_eq!(parsed.src_lang, None);
@@ -1182,11 +1191,11 @@ mod tests {
 
     #[test]
     fn parse_returns_error_for_malformed_json_with_braces() {
-        let err = parse_model_output("{not valid}").expect_err("malformed JSON should remain error");
+        let err =
+            parse_model_output("{not valid}").expect_err("malformed JSON should remain error");
         match err {
             VlmError::ResponseDecode { .. } => {}
             other => panic!("expected ResponseDecode, got {other:?}"),
         }
     }
-
 }
