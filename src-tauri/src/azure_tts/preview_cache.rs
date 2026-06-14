@@ -1,8 +1,8 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
-use std::collections::hash_map::DefaultHasher;
 
 pub fn cache_dir() -> Result<PathBuf, String> {
     Ok(crate::app_paths::data_dir().join("tts_preview_cache"))
@@ -68,7 +68,7 @@ fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Resu
             PCWSTR(to_wide.as_ptr()),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+        .map_err(|err| std::io::Error::other(err.to_string()))
     }
 }
 

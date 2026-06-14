@@ -1,10 +1,10 @@
 use std::io;
-use std::sync::{mpsc, Mutex, OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{mpsc, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 use std::time::Instant;
 use std::{env, fmt};
-use std::time::Duration;
 
 use crate::capture::{self, CursorPoint, HotkeyKind};
 use crate::drag_overlay;
@@ -82,7 +82,9 @@ pub fn install() -> io::Result<()> {
                     }
                 }
             })
-            .map_err(|err| io::Error::other(format!("failed to spawn hotkey trace thread: {err}")))?;
+            .map_err(|err| {
+                io::Error::other(format!("failed to spawn hotkey trace thread: {err}"))
+            })?;
         (Some(tx), Some(join))
     } else {
         (None, None)
@@ -93,30 +95,26 @@ pub fn install() -> io::Result<()> {
     let join = thread::Builder::new()
         .name("keyboard-hook".to_string())
         .spawn(move || {
-            let hook_result = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) };
+            let hook_result =
+                unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) };
 
             match hook_result {
                 Ok(hook) => {
                     let thread_id = unsafe { GetCurrentThreadId() };
-                    println!(
-                        "[hotkey] WH_KEYBOARD_LL installed, thread id={}",
-                        thread_id
-                    );
+                    println!("[hotkey] WH_KEYBOARD_LL installed, thread id={}", thread_id);
                     let _ = ready_tx.send(Ok(thread_id));
                     unsafe { message_loop(hook) };
                 }
                 Err(err) => {
-                    let _ = ready_tx.send(Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("SetWindowsHookExW failed: {err}"),
-                    )));
+                    let _ = ready_tx.send(Err(io::Error::other(format!(
+                        "SetWindowsHookExW failed: {err}"
+                    ))));
                 }
             }
         })?;
 
     let thread_id = ready_rx.recv().unwrap_or_else(|_| {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "keyboard hook thread exited before initialization",
         ))
     })?;
@@ -128,7 +126,12 @@ pub fn install() -> io::Result<()> {
             trace_tx: Mutex::new(trace_tx),
             trace_join: Mutex::new(trace_join),
         })
-        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "hotkey runtime already initialized"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "hotkey runtime already initialized",
+            )
+        })?;
 
     Ok(())
 }
@@ -199,8 +202,16 @@ pub fn shutdown() {
         let _ = done_rx.recv_timeout(HOTKEY_SHUTDOWN_TIMEOUT);
     }
 
-    let _ = runtime.trace_tx.lock().ok().and_then(|mut guard| guard.take());
-    let trace_join = runtime.trace_join.lock().ok().and_then(|mut guard| guard.take());
+    let _ = runtime
+        .trace_tx
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+    let trace_join = runtime
+        .trace_join
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
     if let Some(trace_join) = trace_join {
         let _ = trace_join.join();
     }
@@ -279,10 +290,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
     }
 
-    if message == WM_KEYUP || message == WM_SYSKEYUP {
-        if matched_kind(vk, current_modifiers(), config()).is_some() {
-            return LRESULT(1);
-        }
+    if (message == WM_KEYUP || message == WM_SYSKEYUP)
+        && matched_kind(vk, current_modifiers(), config()).is_some()
+    {
+        return LRESULT(1);
     }
 
     unsafe { CallNextHookEx(None, code, wparam, lparam) }

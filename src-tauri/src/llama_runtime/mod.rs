@@ -34,7 +34,9 @@ pub fn bootstrap(default_model: ModelId) -> Result<(), String> {
 }
 
 pub fn switch_model(target: ModelId) -> Result<(), String> {
-    let _guard = SWITCH_LOCK.lock().map_err(|e| format!("switch_lock poisoned: {e}"))?;
+    let _guard = SWITCH_LOCK
+        .lock()
+        .map_err(|e| format!("switch_lock poisoned: {e}"))?;
     if active_model() == Some(target) {
         return Ok(());
     }
@@ -64,7 +66,7 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
     // 在已下載模型中找第一個支援該語言者
     let downloaded_target = manifest::ALL_MODELS
         .iter()
-        .find(|id| is_model_downloaded(*id) && id.supports_lang(lang))
+        .find(|id| is_model_downloaded(id) && id.supports_lang(lang))
         .copied();
 
     if let Some(target) = downloaded_target {
@@ -99,6 +101,7 @@ fn ensure_binary_installed() -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn ensure_all_models_installed() -> Result<(), String> {
     for model in manifest::ALL_MODELS {
         ensure_model_installed(&model)?;
@@ -124,6 +127,7 @@ fn cleanup_legacy_model_files() {
     }
 }
 
+#[allow(dead_code)]
 fn ensure_model_installed(id: &ModelId) -> Result<(), String> {
     let model_dir = app_dir().join("models");
     let spec = manifest::lookup(id).ok_or_else(|| "unknown model id".to_string())?;
@@ -144,6 +148,7 @@ fn is_model_downloaded(id: &ModelId) -> bool {
     model_dir.join(spec.gguf_filename()).exists() && model_dir.join(spec.mmproj_filename()).exists()
 }
 
+#[allow(dead_code)]
 fn ensure_file_complete(url: &str, target: &Path) -> Result<(), String> {
     if !target.exists() {
         return downloader::download_file(url, target);
@@ -165,6 +170,7 @@ fn ensure_file_complete(url: &str, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn head_content_length(url: &str) -> Result<u64, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))

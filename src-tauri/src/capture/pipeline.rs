@@ -1,16 +1,16 @@
+use std::env;
 use std::io;
 use std::time::Instant;
-use std::env;
 
 use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder, RgbaImage};
 
+use crate::capture::params::profile_for;
 use crate::capture::preprocess::{extract_text_block, ExtractParams, OCR_SCALE_FACTOR_DEFAULT};
 use crate::capture::screen_capture::{
-    capture_at_cursor, capture_screen_rect, clip_screen_rect_to_virtual_desktop, maybe_debug_save_capture,
-    CropRequest,
+    capture_at_cursor, capture_screen_rect, clip_screen_rect_to_virtual_desktop,
+    maybe_debug_save_capture, CropRequest,
 };
-use crate::capture::params::profile_for;
 use crate::capture::{CaptureRequest, CursorPoint, HotkeyKind, ScreenRect};
 use crate::leptonica::Pix;
 
@@ -39,7 +39,11 @@ pub fn run_for_request(request: CaptureRequest) -> io::Result<Option<CaptureOutc
             cursor,
             queued_at,
         } => run_for_hotkey_event(kind, cursor, queued_at),
-        CaptureRequest::SelectedRect { seq: _, rect, queued_at } => run_for_selected_rect(rect, queued_at),
+        CaptureRequest::SelectedRect {
+            seq: _,
+            rect,
+            queued_at,
+        } => run_for_selected_rect(rect, queued_at),
         CaptureRequest::Exit => Ok(None),
     }
 }
@@ -67,7 +71,8 @@ fn run_for_hotkey_event(
             pt_in_crop_x: profile.pt_in_crop_x,
             pt_in_crop_y: profile.pt_in_crop_y,
         },
-    )? else {
+    )?
+    else {
         return Ok(None);
     };
     let t_cap = t_cap_start.elapsed();
@@ -155,7 +160,10 @@ fn run_for_hotkey_event(
     }))
 }
 
-fn run_for_selected_rect(rect: ScreenRect, queued_at: Instant) -> io::Result<Option<CaptureOutcome>> {
+fn run_for_selected_rect(
+    rect: ScreenRect,
+    queued_at: Instant,
+) -> io::Result<Option<CaptureOutcome>> {
     let t0 = Instant::now();
     let perf = perf_enabled();
 
@@ -205,6 +213,7 @@ pub fn mode_label(kind: HotkeyKind) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 pub fn request_label(request: CaptureRequest) -> &'static str {
     match request {
         CaptureRequest::Hotkey { kind, .. } => mode_label(kind),

@@ -52,12 +52,13 @@ impl CapturePool {
                 flags,
             );
 
-            let control = MonitorCaptureHandler::start_free_threaded(settings).map_err(|error| {
-                CaptureError::SessionStartFailed(format!(
-                    "monitor {} failed: {}",
-                    monitor_index, error
-                ))
-            })?;
+            let control =
+                MonitorCaptureHandler::start_free_threaded(settings).map_err(|error| {
+                    CaptureError::SessionStartFailed(format!(
+                        "monitor {} failed: {}",
+                        monitor_index, error
+                    ))
+                })?;
 
             sessions.push(MonitorSession {
                 left: geometry.left,
@@ -88,7 +89,10 @@ impl CapturePool {
     }
 
     /// Returns the newest frame for the monitor index.
-    pub fn snapshot_for_monitor(&self, monitor_index: usize) -> Result<Option<Snapshot>, CaptureError> {
+    pub fn snapshot_for_monitor(
+        &self,
+        monitor_index: usize,
+    ) -> Result<Option<Snapshot>, CaptureError> {
         let session = self
             .monitors
             .get(monitor_index)
@@ -310,7 +314,9 @@ mod tests {
             }
         });
 
-        let finished = rx.recv_timeout(Duration::from_millis(2000)).unwrap_or(false);
+        let finished = rx
+            .recv_timeout(Duration::from_millis(2000))
+            .unwrap_or(false);
         assert!(finished);
         let _ = handle.join();
     }
@@ -390,7 +396,7 @@ mod tests {
             adapter3
                 .QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut info)
                 .ok()?;
-            Some(info.CurrentUsage as u64)
+            Some(info.CurrentUsage)
         }
     }
 }

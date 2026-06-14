@@ -1,10 +1,10 @@
+use crate::llama_runtime::manifest::ModelId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use crate::llama_runtime::manifest::ModelId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PopupFont {
@@ -40,6 +40,7 @@ pub enum ClipboardMode {
 }
 
 impl ClipboardMode {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             ClipboardMode::None => "None",
@@ -60,16 +61,11 @@ impl ClipboardMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum BillingTier {
+    #[default]
     F0,
     S0,
-}
-
-impl Default for BillingTier {
-    fn default() -> Self {
-        Self::F0
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,8 +360,10 @@ pub fn set_popup_font(font: Option<PopupFont>) {
 pub fn set_save_to_clipboard(v: bool) {
     update(|state| {
         state.save_to_clipboard = v;
-        state.clipboard_mode =
-            clipboard_mode_from_legacy(state.save_to_clipboard, state.translate_append_to_clipboard);
+        state.clipboard_mode = clipboard_mode_from_legacy(
+            state.save_to_clipboard,
+            state.translate_append_to_clipboard,
+        );
     });
 }
 
@@ -378,8 +376,10 @@ pub fn set_popup_show_enabled(v: bool) {
 pub fn set_translate_append_to_clipboard(v: bool) {
     update(|state| {
         state.translate_append_to_clipboard = v;
-        state.clipboard_mode =
-            clipboard_mode_from_legacy(state.save_to_clipboard, state.translate_append_to_clipboard);
+        state.clipboard_mode = clipboard_mode_from_legacy(
+            state.save_to_clipboard,
+            state.translate_append_to_clipboard,
+        );
     });
 }
 
@@ -431,6 +431,7 @@ pub fn set_speech_enabled(v: bool) {
     });
 }
 
+#[allow(dead_code)]
 pub fn set_speech_active_preset(v: String) {
     update(|state| {
         state.speech_active_preset = v;
@@ -483,6 +484,7 @@ pub fn set_azure_speech_volume(volume: f32) {
     });
 }
 
+#[allow(dead_code)]
 pub fn record_usage(voice_id: &str, chars: u64) {
     update(|state| {
         record_usage_inner(
@@ -631,7 +633,9 @@ fn update(mutator: impl FnOnce(&mut WindowState)) {
     }
 }
 
-fn update_result(mutator: impl FnOnce(&mut WindowState) -> Result<(), String>) -> Result<(), String> {
+fn update_result(
+    mutator: impl FnOnce(&mut WindowState) -> Result<(), String>,
+) -> Result<(), String> {
     let slot = WINDOW_STATE.get_or_init(|| Mutex::new(load_or_default()));
     let snapshot = if let Ok(mut guard) = slot.lock() {
         mutator(&mut guard)?;
@@ -740,7 +744,7 @@ fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Resu
             PCWSTR(to_wide.as_ptr()),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+        .map_err(|err| std::io::Error::other(err.to_string()))
     }
 }
 
@@ -757,7 +761,10 @@ fn legacy_output_lang_path() -> std::io::Result<PathBuf> {
     Ok(crate::app_paths::data_dir().join("output_lang.txt"))
 }
 
-fn clipboard_mode_from_legacy(save_to_clipboard: bool, translate_append_to_clipboard: bool) -> ClipboardMode {
+fn clipboard_mode_from_legacy(
+    save_to_clipboard: bool,
+    translate_append_to_clipboard: bool,
+) -> ClipboardMode {
     if !save_to_clipboard {
         ClipboardMode::None
     } else if translate_append_to_clipboard {
@@ -792,8 +799,10 @@ fn sanitize_clipboard_mode(state: &mut WindowState) {
     if state.clipboard_mode == default_clipboard_mode()
         && (!state.save_to_clipboard || state.translate_append_to_clipboard)
     {
-        state.clipboard_mode =
-            clipboard_mode_from_legacy(state.save_to_clipboard, state.translate_append_to_clipboard);
+        state.clipboard_mode = clipboard_mode_from_legacy(
+            state.save_to_clipboard,
+            state.translate_append_to_clipboard,
+        );
     }
     sync_legacy_clipboard_fields(state);
 }
@@ -925,22 +934,15 @@ mod tests {
     #[test]
     fn language_preferences_require_non_empty_enabled_langs() {
         let mut state = WindowState::default();
-        let result = apply_language_preferences(
-            &mut state,
-            "en-US".to_string(),
-            vec![],
-        );
+        let result = apply_language_preferences(&mut state, "en-US".to_string(), vec![]);
         assert!(result.is_err());
     }
 
     #[test]
     fn language_preferences_require_target_in_enabled() {
         let mut state = WindowState::default();
-        let result = apply_language_preferences(
-            &mut state,
-            "en-US".to_string(),
-            vec!["zh-TW".to_string()],
-        );
+        let result =
+            apply_language_preferences(&mut state, "en-US".to_string(), vec!["zh-TW".to_string()]);
         assert!(result.is_err());
     }
 
@@ -973,7 +975,8 @@ mod tests {
         let raw = format!(
             r#"{{"popup_width":800,"popup_height":600,"popup_x":null,"popup_y":null,"popup_topmost":true,"popup_show_enabled":true,"save_to_clipboard":true,"translate_append_to_clipboard":false,"translate_separator":"Space","capture_box_border_rgba":[0,0,0,0],"capture_box_fill_rgba":[0,0,0,0],"{legacy_key}":"zh-TW","target_lang":"en-US","enabled_langs":["zh-TW","en-US"]}}"#
         );
-        let state: super::WindowState = serde_json::from_str(&raw).expect("legacy state should load");
+        let state: super::WindowState =
+            serde_json::from_str(&raw).expect("legacy state should load");
         assert_eq!(state.target_lang, "en-US");
         assert_eq!(
             state.enabled_langs,

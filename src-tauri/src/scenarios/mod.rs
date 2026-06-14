@@ -72,6 +72,7 @@ pub fn storage_path() -> io::Result<PathBuf> {
     Ok(crate::app_paths::data_dir().join("scenarios.json"))
 }
 
+#[allow(dead_code)]
 pub fn load_scenarios() -> io::Result<Vec<Scenario>> {
     let path = storage_path()?;
     if !path.exists() {
@@ -84,6 +85,7 @@ pub fn load_scenarios() -> io::Result<Vec<Scenario>> {
     Ok(merge_builtin(store.scenarios))
 }
 
+#[allow(dead_code)]
 pub fn save_scenarios(scenarios: &[Scenario]) -> io::Result<()> {
     let path = storage_path()?;
     write_store(
@@ -129,7 +131,11 @@ pub fn list_runtime() -> io::Result<Vec<Scenario>> {
 pub fn upsert_runtime(scenario: Scenario) -> io::Result<()> {
     {
         let mut runtime = runtime_guard()?;
-        if let Some(existing) = runtime.scenarios.iter_mut().find(|item| item.id == scenario.id) {
+        if let Some(existing) = runtime
+            .scenarios
+            .iter_mut()
+            .find(|item| item.id == scenario.id)
+        {
             existing.name = scenario.name;
             existing.prompt = scenario.prompt;
             if !existing.builtin {
@@ -196,9 +202,9 @@ pub fn current_scenario() -> Scenario {
 }
 
 fn runtime_guard() -> io::Result<std::sync::MutexGuard<'static, ScenarioRuntime>> {
-    let runtime = SCENARIO_RUNTIME
-        .get()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "scenario runtime not initialized"))?;
+    let runtime = SCENARIO_RUNTIME.get().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "scenario runtime not initialized")
+    })?;
     runtime
         .lock()
         .map_err(|_| io::Error::other("scenario runtime lock poisoned"))

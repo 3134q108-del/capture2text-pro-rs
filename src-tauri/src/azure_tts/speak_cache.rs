@@ -9,7 +9,10 @@ pub fn cache_dir() -> Result<PathBuf, String> {
 }
 
 pub fn cache_path(voice_id: &str, text: &str, rate: f32, volume: f32) -> Result<PathBuf, String> {
-    Ok(cache_dir()?.join(format!("{}.mp3", cache_key_hex(voice_id, text, rate, volume))))
+    Ok(cache_dir()?.join(format!(
+        "{}.mp3",
+        cache_key_hex(voice_id, text, rate, volume)
+    )))
 }
 
 pub fn read_cached(voice_id: &str, text: &str, rate: f32, volume: f32) -> Option<Vec<u8>> {
@@ -35,7 +38,13 @@ pub fn read_cached(voice_id: &str, text: &str, rate: f32, volume: f32) -> Option
     }
 }
 
-pub fn write_cache(voice_id: &str, text: &str, rate: f32, volume: f32, bytes: &[u8]) -> Result<(), String> {
+pub fn write_cache(
+    voice_id: &str,
+    text: &str,
+    rate: f32,
+    volume: f32,
+    bytes: &[u8],
+) -> Result<(), String> {
     let path = cache_path(voice_id, text, rate, volume)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
@@ -95,7 +104,7 @@ fn atomic_replace(from: &std::path::Path, to: &std::path::Path) -> std::io::Resu
             PCWSTR(to_wide.as_ptr()),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+        .map_err(|err| std::io::Error::other(err.to_string()))
     }
 }
 

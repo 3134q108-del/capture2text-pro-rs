@@ -1,4 +1,4 @@
-﻿use std::ffi::c_void;
+use std::ffi::c_void;
 use std::io;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
@@ -9,24 +9,24 @@ use std::time::Duration;
 
 use windows::core::w;
 use windows::Win32::Foundation::{
-    COLORREF, GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
+    GetLastError, COLORREF, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
     SIZE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-    CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HBITMAP, HDC,
-    HGDIOBJ, SelectObject,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, AC_SRC_ALPHA,
+    AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP, HDC,
+    HGDIOBJ,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, CS_HREDRAW, CS_VREDRAW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetCursorPos, GetMessageW, GetPhysicalCursorPos, GetWindowLongPtrW, HMENU, HWND_TOPMOST,
-    KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    SET_WINDOW_POS_FLAGS, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    ULW_ALPHA, UPDATE_LAYERED_WINDOW_FLAGS, UpdateLayeredWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_DESTROY, WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, GWLP_USERDATA,
-    SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
+    GetPhysicalCursorPos, GetWindowLongPtrW, KillTimer, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
+    UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HMENU, HWND_TOPMOST, MSG,
+    SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA,
+    UPDATE_LAYERED_WINDOW_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY,
+    WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::capture::pipeline::{MIN_OCR_HEIGHT, MIN_OCR_WIDTH};
@@ -65,7 +65,10 @@ enum DragOverlayCommand {
 
 enum DragMode {
     Idle,
-    Growing { pivot: (i32, i32), current: (i32, i32) },
+    Growing {
+        pivot: (i32, i32),
+        current: (i32, i32),
+    },
     Fixed,
 }
 
@@ -107,7 +110,12 @@ pub fn init() -> io::Result<()> {
 
     let ready_result = ready_rx
         .recv_timeout(DRAG_OVERLAY_INIT_TIMEOUT)
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "drag overlay init handshake timed out"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "drag overlay init handshake timed out",
+            )
+        })?;
 
     if let Err(err) = ready_result {
         let _ = join.join();
@@ -119,7 +127,12 @@ pub fn init() -> io::Result<()> {
             tx: cmd_tx,
             join: Mutex::new(Some(join)),
         })
-        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "drag overlay runtime already initialized"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "drag overlay runtime already initialized",
+            )
+        })?;
 
     Ok(())
 }
@@ -147,7 +160,9 @@ pub fn finalize_and_get_rect() -> Option<CaptureScreenRect> {
         .ok()?;
     wake_drag_overlay_thread();
 
-    rx.recv_timeout(DRAG_OVERLAY_FINALIZE_TIMEOUT).ok().flatten()
+    rx.recv_timeout(DRAG_OVERLAY_FINALIZE_TIMEOUT)
+        .ok()
+        .flatten()
 }
 
 pub fn is_active() -> bool {
@@ -188,7 +203,10 @@ fn send_command(command: DragOverlayCommand) {
     wake_drag_overlay_thread();
 }
 
-fn drag_overlay_thread_main(rx: Receiver<DragOverlayCommand>, ready_tx: SyncSender<io::Result<()>>) {
+fn drag_overlay_thread_main(
+    rx: Receiver<DragOverlayCommand>,
+    ready_tx: SyncSender<io::Result<()>>,
+) {
     if let Err(err) = run_drag_overlay_thread(rx, &ready_tx) {
         let _ = ready_tx.send(Err(err));
     }
@@ -226,7 +244,7 @@ fn run_drag_overlay_thread(
     });
 
     ensure_dib_size(&mut context, 1, 1)?;
-    draw_box(&context, 1, 1)?;
+    draw_box(&mut context, 1, 1)?;
     update_layered(&context)?;
 
     unsafe {
@@ -318,12 +336,15 @@ fn begin_grow_mode(context: &mut DragOverlayContext) -> io::Result<()> {
         let _ = SetTimer(context.hwnd, TIMER_ID, TIMER_INTERVAL_MS, None);
     }
 
-    apply_rect(context, DragRect {
-        x: cursor.x,
-        y: cursor.y,
-        w: 1,
-        h: 1,
-    })
+    apply_rect(
+        context,
+        DragRect {
+            x: cursor.x,
+            y: cursor.y,
+            w: 1,
+            h: 1,
+        },
+    )
 }
 
 fn begin_fixed_mode(context: &mut DragOverlayContext, rect: CaptureScreenRect) -> io::Result<()> {
@@ -574,20 +595,23 @@ fn ensure_dib_size(context: &mut DragOverlayContext, w: i32, h: i32) -> io::Resu
 
     destroy_dib(context);
 
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader = BITMAPINFOHEADER {
-        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: w,
-        biHeight: -h,
-        biPlanes: 1,
-        biBitCount: 32,
-        biCompression: BI_RGB.0,
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
     let mut bits: *mut c_void = ptr::null_mut();
-    let hbm = unsafe { CreateDIBSection(context.hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) }
-        .map_err(|err| io::Error::other(format!("CreateDIBSection failed: {err}")))?;
+    let hbm =
+        unsafe { CreateDIBSection(context.hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) }
+            .map_err(|err| io::Error::other(format!("CreateDIBSection failed: {err}")))?;
 
     let previous = unsafe { SelectObject(context.hdc_mem, HGDIOBJ(hbm.0)) };
     if previous.0.is_null() {
@@ -627,7 +651,7 @@ fn destroy_dib(context: &mut DragOverlayContext) {
     context.dib_h = 0;
 }
 
-fn pixels_mut(context: &DragOverlayContext) -> io::Result<&mut [u32]> {
+fn pixels_mut(context: &mut DragOverlayContext) -> io::Result<&mut [u32]> {
     if context.bits_ptr.is_null() || context.dib_w <= 0 || context.dib_h <= 0 {
         return Err(io::Error::other("drag overlay dib is not initialized"));
     }
@@ -636,7 +660,7 @@ fn pixels_mut(context: &DragOverlayContext) -> io::Result<&mut [u32]> {
     Ok(unsafe { std::slice::from_raw_parts_mut(context.bits_ptr as *mut u32, len) })
 }
 
-fn draw_box(context: &DragOverlayContext, w: i32, h: i32) -> io::Result<()> {
+fn draw_box(context: &mut DragOverlayContext, w: i32, h: i32) -> io::Result<()> {
     let pixels = pixels_mut(context)?;
     pixels.fill(FILL_BGRA_PREMULT);
 
@@ -747,7 +771,8 @@ extern "system" fn drag_overlay_wnd_proc(
     match msg {
         WM_TIMER => {
             if wparam.0 == TIMER_ID {
-                let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
+                let ptr =
+                    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut DragOverlayContext;
                 if !ptr.is_null() {
                     let context = unsafe { &mut *ptr };
                     let _ = tick_grow_mode(context);

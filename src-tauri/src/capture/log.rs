@@ -18,19 +18,23 @@ pub fn append_capture(original: &str, translated: &str) {
     }
     if let Some(parent) = Path::new(&path).parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
-            eprintln!("[capture-log] create dir {} failed: {}", parent.display(), err);
+            eprintln!(
+                "[capture-log] create dir {} failed: {}",
+                parent.display(),
+                err
+            );
             return;
         }
     }
 
     let ts = Local::now().format("%Y-%m-%d %H:%M:%S");
     let original_out = if state.save_capture_original {
-        original.replace('\t', " ").replace('\n', " ")
+        original.replace(['\t', '\n'], " ")
     } else {
         String::new()
     };
     let translated_out = if state.save_capture_translated {
-        translated.replace('\t', " ").replace('\n', " ")
+        translated.replace(['\t', '\n'], " ")
     } else {
         String::new()
     };

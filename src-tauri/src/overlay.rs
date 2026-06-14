@@ -1,6 +1,6 @@
+use std::ffi::c_void;
 use std::io;
 use std::ptr;
-use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
@@ -9,21 +9,23 @@ use std::time::Duration;
 
 use windows::core::w;
 use windows::Win32::Foundation::{
-    COLORREF, GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
+    GetLastError, COLORREF, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
     SIZE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC,
-    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HBITMAP, HDC, HGDIOBJ, SelectObject,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, AC_SRC_ALPHA,
+    AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, HBITMAP, HDC,
+    HGDIOBJ,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, KillTimer,
-    PostMessageW, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SET_WINDOW_POS_FLAGS,
-    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW,
-    HMENU, MSG, SWP_NOACTIVATE, SWP_SHOWWINDOW, ULW_ALPHA, UPDATE_LAYERED_WINDOW_FLAGS,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, HWND_TOPMOST,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetTimer, SetWindowPos, ShowWindow,
+    TranslateMessage, UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, HMENU, HWND_TOPMOST, MSG,
+    SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA,
+    UPDATE_LAYERED_WINDOW_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY, WM_TIMER,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+    WS_POPUP,
 };
 
 use crate::capture::pipeline::BoundingBoxScreen;
@@ -86,7 +88,12 @@ pub fn init() -> io::Result<()> {
             tx: cmd_tx,
             join: Mutex::new(Some(join)),
         })
-        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "overlay runtime already initialized"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "overlay runtime already initialized",
+            )
+        })?;
 
     Ok(())
 }
@@ -130,10 +137,7 @@ pub fn shutdown() {
     }
 }
 
-fn overlay_thread_main(
-    rx: Receiver<OverlayCommand>,
-    ready_tx: SyncSender<io::Result<()>>,
-) {
+fn overlay_thread_main(rx: Receiver<OverlayCommand>, ready_tx: SyncSender<io::Result<()>>) {
     if let Err(err) = run_overlay_thread(rx, &ready_tx) {
         let _ = ready_tx.send(Err(err));
     }
@@ -299,29 +303,23 @@ fn recreate_dib(context: &mut OverlayContext, width: i32, height: i32) -> io::Re
         context.bits_ptr = ptr::null_mut();
     }
 
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader = BITMAPINFOHEADER {
-        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: width,
-        biHeight: -height,
-        biPlanes: 1,
-        biBitCount: 32,
-        biCompression: BI_RGB.0,
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
     let mut bits: *mut core::ffi::c_void = ptr::null_mut();
-    let hbm = unsafe {
-        CreateDIBSection(
-            context.hdc_mem,
-            &bmi,
-            DIB_RGB_COLORS,
-            &mut bits,
-            None,
-            0,
-        )
-    }
-    .map_err(|err| io::Error::other(format!("CreateDIBSection failed: {err}")))?;
+    let hbm =
+        unsafe { CreateDIBSection(context.hdc_mem, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) }
+            .map_err(|err| io::Error::other(format!("CreateDIBSection failed: {err}")))?;
 
     let previous = unsafe { SelectObject(context.hdc_mem, HGDIOBJ(hbm.0)) };
     if previous.0.is_null() {

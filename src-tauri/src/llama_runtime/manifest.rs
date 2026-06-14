@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum ModelId {
@@ -21,6 +22,7 @@ impl ModelId {
         }
     }
 
+    #[allow(dead_code)]
     pub fn for_lang(lang: &str) -> ModelId {
         for &id in &ALL_MODELS {
             if id.supports_lang(lang) {
@@ -31,6 +33,7 @@ impl ModelId {
     }
 }
 
+#[allow(dead_code)]
 pub struct ModelSpec {
     pub id: ModelId,
     pub display_name: &'static str,
