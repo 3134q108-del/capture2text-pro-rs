@@ -822,7 +822,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     result
 }
 
-const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it.";
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it. Even when the text is already mostly in {target}, translate any embedded words/phrases that are not in {target}, including text inside angle brackets or other punctuation (keep the punctuation, translate the words).";
 
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
@@ -981,30 +981,7 @@ fn validate_model_output(output: ModelOutput, raw: &str) -> VlmResult<ModelOutpu
         });
     }
 
-    if looks_like_unfilled_placeholder(&output.original) {
-        return Err(VlmError::ResponseDecode {
-            raw: raw.to_string(),
-            source_error: "model echoed placeholder in original field".to_string(),
-        });
-    }
-
-    if looks_like_unfilled_placeholder(&output.translated) {
-        return Err(VlmError::ResponseDecode {
-            raw: raw.to_string(),
-            source_error: "model echoed placeholder in translated field".to_string(),
-        });
-    }
-
     Ok(output)
-}
-
-fn looks_like_unfilled_placeholder(text: &str) -> bool {
-    let trimmed = text.trim();
-    !trimmed.is_empty()
-        && trimmed.starts_with('<')
-        && trimmed.ends_with('>')
-        && !trimmed.contains('\n')
-        && !trimmed.contains('\r')
 }
 
 fn sanitize_json_escapes(input: &str) -> String {
@@ -1233,10 +1210,9 @@ mod tests {
 
     #[test]
     fn parse_rejects_placeholder_echo_and_accepts_normal_json() {
-        let err = parse_model_output(
-            r#"{"original":"<source text>","translated":"<Chinese (Traditional) text>","src_lang":"en-US"}"#,
-        )
-        .expect_err("placeholder echo should be rejected");
+        let err =
+            parse_model_output(r#"{"original":"hello","translated":"   ","src_lang":"en-US"}"#)
+                .expect_err("empty translated should be rejected");
         match err {
             VlmError::ResponseDecode { source_error, .. } => {
                 assert!(source_error.contains("placeholder") || source_error.contains("empty"));
@@ -1249,6 +1225,14 @@ mod tests {
                 .expect("normal JSON should still parse");
         assert_eq!(parsed.original, "hello");
         assert_eq!(parsed.translated, "哈囉");
+        assert_eq!(parsed.src_lang.as_deref(), Some("en-US"));
+
+        let parsed = parse_model_output(
+            r#"{"original":"<source text>","translated":"<原始文字>","src_lang":"en-US"}"#,
+        )
+        .expect("translated angle-bracket content should now be accepted");
+        assert_eq!(parsed.original, "<source text>");
+        assert_eq!(parsed.translated, "<原始文字>");
         assert_eq!(parsed.src_lang.as_deref(), Some("en-US"));
     }
 
