@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::StatusCode;
+use serde::de::Deserializer;
 use serde::Deserialize;
 
 use super::{TtsProvider, Voice, VoiceLevel};
@@ -25,13 +26,10 @@ impl AzureProvider {
     }
 
     fn with_base_url(region: String, key: String, base_url: String) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|err| {
-                eprintln!("[azure-tts] failed to build timeout client: {err}");
-                reqwest::Client::new()
-            });
+        let http = reqwest::Client::builder().build().unwrap_or_else(|err| {
+            eprintln!("[azure-tts] failed to build client: {err}");
+            reqwest::Client::new()
+        });
         Self {
             region: region.trim().to_ascii_lowercase(),
             key,
@@ -71,6 +69,7 @@ impl TtsProvider for AzureProvider {
         let response = self
             .http
             .get(self.voices_url())
+            .timeout(Duration::from_secs(30))
             .header("Ocp-Apim-Subscription-Key", &self.key)
             .send()
             .await
@@ -82,20 +81,12 @@ impl TtsProvider for AzureProvider {
             return Err(map_status(status, &self.region, message));
         }
 
-        let raw = response
-            .json::<Vec<AzureVoice>>()
+        let body = response
+            .text()
             .await
-            .map_err(|err| TtsError::Api {
-                status: 200,
-                message: format!("Invalid voices response: {err}"),
-            })?;
-        let mut voices = Vec::new();
-        for voice in raw {
-            if lang.trim().is_empty() || voice.locale.eq_ignore_ascii_case(lang.trim()) {
-                voices.push(voice.try_into_voice()?);
-            }
-        }
-        Ok(voices)
+            .map_err(|err| TtsError::Network(err.to_string()))?;
+        let raw = parse_azure_voices(&body)?;
+        Ok(filter_azure_voices(raw, lang))
     }
 
     async fn test_connection(&self) -> Result<(), TtsError> {
@@ -117,6 +108,7 @@ impl TtsProvider for AzureProvider {
         let response = self
             .http
             .post(self.synthesize_url())
+            .timeout(Duration::from_secs(10))
             .header("Ocp-Apim-Subscription-Key", &self.key)
             .header("Content-Type", "application/ssml+xml")
             .header(
@@ -178,35 +170,75 @@ fn record_synthesis_usage(_voice_id: &str, _chars: u64) {}
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct AzureVoice {
-    display_name: String,
-    short_name: String,
-    gender: String,
-    locale: String,
-    sample_rate_hertz: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    short_name: Option<String>,
+    #[serde(default)]
+    gender: Option<String>,
+    #[serde(default)]
+    locale: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_sample_rate_hertz")]
+    sample_rate_hertz: Option<u32>,
 }
 
 impl AzureVoice {
-    fn try_into_voice(self) -> Result<Voice, TtsError> {
-        let sample_rate = self
-            .sample_rate_hertz
-            .parse::<u32>()
-            .map_err(|err| TtsError::Api {
-                status: 200,
-                message: format!(
-                    "Invalid SampleRateHertz for {}: {} ({err})",
-                    self.short_name, self.sample_rate_hertz
-                ),
-            })?;
-        let level = voice_level(&self.short_name);
-        Ok(Voice {
-            id: self.short_name,
-            name: self.display_name,
-            locale: self.locale,
-            gender: self.gender,
+    fn try_into_voice(self) -> Option<Voice> {
+        let short_name = self.short_name?;
+        let locale = self.locale?;
+        let name = match self.display_name {
+            Some(display_name) if !display_name.trim().is_empty() => display_name,
+            _ => short_name.clone(),
+        };
+        let level = voice_level(&short_name);
+        Some(Voice {
+            id: short_name,
+            name,
+            locale,
+            gender: self.gender.unwrap_or_default(),
             level,
-            sample_rate,
+            sample_rate: self.sample_rate_hertz.unwrap_or_default(),
         })
     }
+}
+
+fn parse_azure_voices(body: &str) -> Result<Vec<AzureVoice>, TtsError> {
+    serde_json::from_str::<Vec<AzureVoice>>(body).map_err(|err| {
+        let preview: String = body.chars().take(2000).collect();
+        eprintln!("[azure-tts] invalid voices response body (first 2000 chars):\n{preview}");
+        eprintln!(
+            "[azure-tts] serde_json error: {err} (line {}, column {})",
+            err.line(),
+            err.column()
+        );
+        TtsError::Api {
+            status: 200,
+            message: format!("Invalid voices response: {err}"),
+        }
+    })
+}
+
+fn filter_azure_voices(raw: Vec<AzureVoice>, lang: &str) -> Vec<Voice> {
+    let wanted_lang = lang.trim();
+    raw.into_iter()
+        .filter_map(AzureVoice::try_into_voice)
+        .filter(|voice| wanted_lang.is_empty() || voice.locale.eq_ignore_ascii_case(wanted_lang))
+        .collect()
+}
+
+fn deserialize_optional_sample_rate_hertz<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(number)) => {
+            number.as_u64().and_then(|value| u32::try_from(value).ok())
+        }
+        Some(serde_json::Value::String(text)) => text.trim().parse::<u32>().ok(),
+        _ => None,
+    })
 }
 
 fn voice_level(short_name: &str) -> VoiceLevel {
@@ -343,6 +375,42 @@ mod azure_voices {
         assert_eq!(voices[0].gender, "Female");
         assert_eq!(voices[0].level, VoiceLevel::Standard);
         assert_eq!(voices[0].sample_rate, 24000);
+    }
+
+    #[test]
+    fn azure_voices_missing_optional_fields_do_not_break_parse() {
+        let body = r#"
+            [
+                {
+                    "DisplayName": "Preview Voice",
+                    "ShortName": "zh-TW-PreviewNeural",
+                    "Locale": "zh-TW"
+                },
+                {
+                    "DisplayName": "HsiaoChen",
+                    "ShortName": "zh-TW-HsiaoChenNeural",
+                    "Gender": "Female",
+                    "Locale": "zh-TW",
+                    "SampleRateHertz": "24000"
+                }
+            ]
+        "#;
+
+        let voices = filter_azure_voices(parse_azure_voices(body).unwrap(), "zh-TW");
+
+        assert_eq!(voices.len(), 2);
+        assert_eq!(voices[0].id, "zh-TW-PreviewNeural");
+        assert_eq!(voices[0].name, "Preview Voice");
+        assert_eq!(voices[0].locale, "zh-TW");
+        assert_eq!(voices[0].gender, "");
+        assert_eq!(voices[0].level, VoiceLevel::Standard);
+        assert_eq!(voices[0].sample_rate, 0);
+        assert_eq!(voices[1].id, "zh-TW-HsiaoChenNeural");
+        assert_eq!(voices[1].name, "HsiaoChen");
+        assert_eq!(voices[1].locale, "zh-TW");
+        assert_eq!(voices[1].gender, "Female");
+        assert_eq!(voices[1].level, VoiceLevel::Standard);
+        assert_eq!(voices[1].sample_rate, 24000);
     }
 
     #[tokio::test]
