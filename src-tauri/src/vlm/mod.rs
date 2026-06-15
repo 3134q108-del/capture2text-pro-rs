@@ -818,7 +818,7 @@ fn build_system_prompt(target_lang: &str) -> String {
         .join(" | ");
     format!(
         "Translate the text to {language_name}. {fidelity}\n\
-         Output strict JSON only: {{\"original\":\"<input text>\",\"translated\":\"<{language_name} text>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}\n\
+         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual input text; translated must contain the actual {language_name} translation; src_lang must contain the source language BCP-47 code from {language_codes} or other. Fill every field with the actual content; never output placeholder labels or angle-bracket text such as <source text>.\n\
          No markdown, no prose.",
         language_name = language_name,
         fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", language_name),
@@ -839,7 +839,7 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .join(" | ");
     format!(
         "Translate the text in this image to {target_name}. {fidelity}\n\
-         Output strict JSON only: {{\"original\":\"<source text>\",\"translated\":\"<{target_name} text>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}\n\
+         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual text from the image; translated must contain the actual {target_name} translation; src_lang must contain the source language BCP-47 code from {codes} or other. Fill every field with the actual content; never output placeholder labels or angle-bracket text such as <source text>.\n\
          No markdown, no prose.",
         target_name = target_name,
         fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", target_name),
@@ -927,27 +927,67 @@ fn ensure_min_dimension(png_bytes: &[u8]) -> VlmResult<Vec<u8>> {
 
 fn parse_model_output(content: &str) -> VlmResult<ModelOutput> {
     if let Ok(parsed) = serde_json::from_str::<ModelOutput>(content) {
-        return Ok(parsed);
+        return validate_model_output(parsed, content);
     }
 
     let Some(json_body) = extract_first_json_object(content) else {
         let trimmed = content.trim();
-        return Ok(ModelOutput {
-            original: String::new(),
-            translated: trimmed.to_string(),
-            src_lang: None,
-        });
+        return validate_model_output(
+            ModelOutput {
+                original: String::new(),
+                translated: trimmed.to_string(),
+                src_lang: None,
+            },
+            content,
+        );
     };
 
     if let Ok(parsed) = serde_json::from_str::<ModelOutput>(json_body) {
-        return Ok(parsed);
+        return validate_model_output(parsed, content);
     }
 
     let sanitized = sanitize_json_escapes(json_body);
-    serde_json::from_str::<ModelOutput>(&sanitized).map_err(|err| VlmError::ResponseDecode {
-        raw: content.to_string(),
-        source_error: format!("model JSON parse failed even after escape sanitize: {err}"),
-    })
+    let parsed = serde_json::from_str::<ModelOutput>(&sanitized).map_err(|err| {
+        VlmError::ResponseDecode {
+            raw: content.to_string(),
+            source_error: format!("model JSON parse failed even after escape sanitize: {err}"),
+        }
+    })?;
+    validate_model_output(parsed, content)
+}
+
+fn validate_model_output(output: ModelOutput, raw: &str) -> VlmResult<ModelOutput> {
+    if output.translated.trim().is_empty() {
+        return Err(VlmError::ResponseDecode {
+            raw: raw.to_string(),
+            source_error: "model echoed placeholder / empty output in translated field".to_string(),
+        });
+    }
+
+    if looks_like_unfilled_placeholder(&output.original) {
+        return Err(VlmError::ResponseDecode {
+            raw: raw.to_string(),
+            source_error: "model echoed placeholder in original field".to_string(),
+        });
+    }
+
+    if looks_like_unfilled_placeholder(&output.translated) {
+        return Err(VlmError::ResponseDecode {
+            raw: raw.to_string(),
+            source_error: "model echoed placeholder in translated field".to_string(),
+        });
+    }
+
+    Ok(output)
+}
+
+fn looks_like_unfilled_placeholder(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty()
+        && trimmed.starts_with('<')
+        && trimmed.ends_with('>')
+        && !trimmed.contains('\n')
+        && !trimmed.contains('\r')
 }
 
 fn sanitize_json_escapes(input: &str) -> String {
@@ -1163,6 +1203,27 @@ mod tests {
             .expect("strict JSON should parse");
         assert_eq!(parsed.original, "a");
         assert_eq!(parsed.translated, "b");
+        assert_eq!(parsed.src_lang.as_deref(), Some("en-US"));
+    }
+
+    #[test]
+    fn parse_rejects_placeholder_echo_and_accepts_normal_json() {
+        let err = parse_model_output(
+            r#"{"original":"<source text>","translated":"<Chinese (Traditional) text>","src_lang":"en-US"}"#,
+        )
+        .expect_err("placeholder echo should be rejected");
+        match err {
+            VlmError::ResponseDecode { source_error, .. } => {
+                assert!(source_error.contains("placeholder") || source_error.contains("empty"));
+            }
+            other => panic!("expected ResponseDecode, got {other:?}"),
+        }
+
+        let parsed =
+            parse_model_output(r#"{"original":"hello","translated":"哈囉","src_lang":"en-US"}"#)
+                .expect("normal JSON should still parse");
+        assert_eq!(parsed.original, "hello");
+        assert_eq!(parsed.translated, "哈囉");
         assert_eq!(parsed.src_lang.as_deref(), Some("en-US"));
     }
 
