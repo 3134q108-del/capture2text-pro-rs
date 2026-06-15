@@ -822,7 +822,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     result
 }
 
-const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it. Even when the text is already mostly in {target}, translate any embedded words/phrases that are not in {target}, including text inside angle brackets or other punctuation (keep the punctuation, translate the words).";
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it. Even when the text is already mostly in {target} and only a few words remain in another language, those embedded words/phrases must still be translated into {target}; do not leave the whole passage unchanged just because most of it is already {target}. This includes single English words, technical terms, and text inside angle brackets or other punctuation (keep the punctuation, translate the words).";
 
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
@@ -907,7 +907,7 @@ fn build_chat_request(
             format_type: ResponseFormatType::JsonObject,
         }),
         messages,
-        temperature: Some(0.5),
+        temperature: Some(0.2),
         top_p: Some(0.8),
         top_k: Some(20),
         min_p: Some(0.05),
