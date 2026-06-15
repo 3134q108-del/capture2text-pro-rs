@@ -83,8 +83,17 @@ type SpeakingState =
 type SpeakAction =
   | { type: "START"; target: TtsTarget }
   | { type: "SYNTHESIZED"; target: TtsTarget }
-  | { type: "DONE" }
-  | { type: "FAIL" };
+  | { type: "DONE"; target?: TtsTarget }
+  | { type: "FAIL"; target?: TtsTarget }
+  | { type: "TIMEOUT"; target: TtsTarget };
+
+type SpeakNoticeState = { kind: "idle" } | { kind: "error"; target: TtsTarget; message: string };
+
+type SpeakNoticeAction =
+  | { type: "SHOW_ERROR"; target: TtsTarget; message: string }
+  | { type: "CLEAR" };
+
+type TtsDonePayload = { target?: TtsTarget; error?: string | null };
 
 const FONT_FAMILIES = [
   "Segoe UI",
@@ -119,6 +128,21 @@ function speakReducer(state: SpeakingState, action: SpeakAction): SpeakingState 
       return { kind: "playing", target: state.target };
     case "DONE":
     case "FAIL":
+    case "TIMEOUT":
+      if (action.target && state.kind !== "idle" && state.target !== action.target) {
+        return state;
+      }
+      return { kind: "idle" };
+    default:
+      return assertNever(action);
+  }
+}
+
+function speakNoticeReducer(_state: SpeakNoticeState, action: SpeakNoticeAction): SpeakNoticeState {
+  switch (action.type) {
+    case "SHOW_ERROR":
+      return { kind: "error", target: action.target, message: action.message };
+    case "CLEAR":
       return { kind: "idle" };
     default:
       return assertNever(action);
@@ -165,6 +189,7 @@ export default function ResultView() {
   const [errorMsg, setErrorMsg] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [speakingState, dispatchSpeaking] = useReducer(speakReducer, { kind: "idle" } as SpeakingState);
+  const [speakNotice, dispatchSpeakNotice] = useReducer(speakNoticeReducer, { kind: "idle" } as SpeakNoticeState);
   const [originalReady, setOriginalReady] = useState(false);
   const [translatedReady, setTranslatedReady] = useState(false);
   const [isTopmost, setIsTopmost] = useState(true);
@@ -179,6 +204,8 @@ export default function ResultView() {
   const originalReadyTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const lastOriginalRef = useRef("");
+  const activeSpeakTargetRef = useRef<TtsTarget | null>(null);
+  const speakingStateRef = useRef<SpeakingState>({ kind: "idle" } as SpeakingState);
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
@@ -191,6 +218,11 @@ export default function ResultView() {
       window.clearTimeout(originalReadyTimerRef.current);
       originalReadyTimerRef.current = null;
     }
+  }
+
+  function showSpeakError(target: TtsTarget, message: string) {
+    dispatchSpeakNotice({ type: "SHOW_ERROR", target, message });
+    dispatchSpeaking({ type: "FAIL", target });
   }
 
   function applyFinalPayload(payload: VlmEventPayload) {
@@ -322,6 +354,10 @@ export default function ResultView() {
       offTtsSynthesized = await listen<{ target?: string }>("tts-synthesized", (event) => {
         const target = event.payload?.target;
         if (target === "original" || target === "translated") {
+          if (activeSpeakTargetRef.current !== target) {
+            return;
+          }
+          dispatchSpeakNotice({ type: "CLEAR" });
           dispatchSpeaking({ type: "SYNTHESIZED", target });
         }
       });
@@ -335,8 +371,27 @@ export default function ResultView() {
         return;
       }
 
-      offTtsDone = await listen("tts-done", () => {
-        dispatchSpeaking({ type: "DONE" });
+      offTtsDone = await listen<TtsDonePayload>("tts-done", (event) => {
+        const payload = event.payload;
+        const target = payload?.target;
+        if (target === "original" || target === "translated") {
+          if (activeSpeakTargetRef.current !== target) {
+            return;
+          }
+        }
+        if (payload?.error) {
+          if (target === "original" || target === "translated") {
+            showSpeakError(target, payload.error);
+          }
+          return;
+        }
+
+        dispatchSpeakNotice({ type: "CLEAR" });
+        if (target === "original" || target === "translated") {
+          dispatchSpeaking({ type: "DONE", target });
+        } else {
+          dispatchSpeaking({ type: "DONE" });
+        }
       });
       if (disposed) {
         offTtsDone();
@@ -399,6 +454,42 @@ export default function ResultView() {
   useEffect(() => {
     void refreshUsageInfo();
   }, []);
+
+  useEffect(() => {
+    speakingStateRef.current = speakingState;
+    activeSpeakTargetRef.current = speakingState.kind === "idle" ? null : speakingState.target;
+  }, [speakingState]);
+
+  useEffect(() => {
+    if (speakingState.kind !== "synthesizing") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (
+        speakingStateRef.current.kind !== "synthesizing" ||
+        speakingStateRef.current.target !== speakingState.target
+      ) {
+        return;
+      }
+      dispatchSpeakNotice({ type: "SHOW_ERROR", target: speakingState.target, message: "合成逾時（15 秒）" });
+      dispatchSpeaking({ type: "TIMEOUT", target: speakingState.target });
+    }, 15_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [speakingState]);
+
+  useEffect(() => {
+    if (speakNotice.kind !== "error") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      dispatchSpeakNotice({ type: "CLEAR" });
+    }, 5_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [speakNotice]);
 
   useEffect(() => {
     let disposed = false;
@@ -645,6 +736,7 @@ export default function ResultView() {
     const lang = target === "translated" ? targetLang : (srcLang ?? detectLang(content));
 
     try {
+      dispatchSpeakNotice({ type: "CLEAR" });
       if (speakingState.kind !== "idle") {
         try {
           await invoke("stop_speaking");
@@ -653,10 +745,11 @@ export default function ResultView() {
         }
       }
       dispatchSpeaking({ type: "START", target });
+      activeSpeakTargetRef.current = target;
       await invoke("speak", { target, text: content, lang });
     } catch (error) {
       console.warn("[speak] failed", error);
-      dispatchSpeaking({ type: "FAIL" });
+      showSpeakError(target, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -729,6 +822,9 @@ export default function ResultView() {
         ? "停止"
         : "Speak 譯文";
 
+  const speakNoticeId =
+    speakNotice.kind === "error" ? `tts-speak-error-${speakNotice.target}` : undefined;
+
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
@@ -744,30 +840,57 @@ export default function ResultView() {
                 placeholder={status === "idle" ? "Waiting for capture..." : ""}
                 style={textStyle}
               />
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <Button
-                  type="button"
-                  variant={originalPhase === "playing" ? "destructive" : "secondary"}
-                  state={originalPhase === "synthesizing" ? "loading" : "content"}
-                  loadingContent="合成中..."
-                  disabled={originalPhase === "playing" ? false : originalSpeakDisabled}
-                  onClick={() => {
-                    void toggleSpeak("original");
-                  }}
-                >
-                  {originalSpeakLabel}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={!original}
-                  onClick={() => {
-                    void copy("original", original);
-                  }}
-                >
-                  {copiedTarget === "original" ? "已複製" : "Copy 原文"}
-                </Button>
-            </div>
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <Button
+                    type="button"
+                    variant={originalPhase === "playing" ? "destructive" : "secondary"}
+                    state={originalPhase === "synthesizing" ? "loading" : "content"}
+                    loadingContent="合成中..."
+                    disabled={originalPhase === "playing" ? false : originalSpeakDisabled}
+                    aria-describedby={speakNotice.kind === "error" && speakNotice.target === "original" ? speakNoticeId : undefined}
+                    onClick={() => {
+                      void toggleSpeak("original");
+                    }}
+                  >
+                    {originalSpeakLabel}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!original}
+                    onClick={() => {
+                      void copy("original", original);
+                    }}
+                  >
+                    {copiedTarget === "original" ? "已複製" : "Copy 原文"}
+                  </Button>
+                </div>
+                {speakNotice.kind === "error" && speakNotice.target === "original" ? (
+                  <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                    <StatusText
+                      id={speakNoticeId}
+                      tone="error"
+                      state="error"
+                      size="sm"
+                      role="alert"
+                      aria-live="polite"
+                    >
+                      {speakNotice.message}
+                    </StatusText>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        dispatchSpeakNotice({ type: "CLEAR" });
+                      }}
+                    >
+                      關閉
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
 
             {showTranslated ? (
               <>
@@ -778,40 +901,67 @@ export default function ResultView() {
                   placeholder={status === "idle" ? "Waiting for capture..." : ""}
                   style={textStyle}
                 />
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!original.trim() || status === "loading"}
-                    onClick={() => {
-                      void retranslate();
-                    }}
-                  >
-                    Retranslate
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={translatedPhase === "playing" ? "destructive" : "secondary"}
-                    state={translatedPhase === "synthesizing" ? "loading" : "content"}
-                    loadingContent="合成中..."
-                    disabled={translatedPhase === "playing" ? false : translatedSpeakDisabled}
-                    onClick={() => {
-                      void toggleSpeak("translated");
-                    }}
-                  >
-                    {translatedSpeakLabel}
-                  </Button>
-                  {hasTranslatedText ? (
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
                     <Button
                       type="button"
                       variant="secondary"
-                      disabled={!translated}
+                      disabled={!original.trim() || status === "loading"}
                       onClick={() => {
-                        void copy("translated", translated);
+                        void retranslate();
                       }}
                     >
-                      {copiedTarget === "translated" ? "已複製" : "Copy 譯文"}
+                      Retranslate
                     </Button>
+                    <Button
+                      type="button"
+                      variant={translatedPhase === "playing" ? "destructive" : "secondary"}
+                      state={translatedPhase === "synthesizing" ? "loading" : "content"}
+                      loadingContent="合成中..."
+                      disabled={translatedPhase === "playing" ? false : translatedSpeakDisabled}
+                      aria-describedby={speakNotice.kind === "error" && speakNotice.target === "translated" ? speakNoticeId : undefined}
+                      onClick={() => {
+                        void toggleSpeak("translated");
+                      }}
+                    >
+                      {translatedSpeakLabel}
+                    </Button>
+                    {hasTranslatedText ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!translated}
+                        onClick={() => {
+                          void copy("translated", translated);
+                        }}
+                      >
+                        {copiedTarget === "translated" ? "已複製" : "Copy 譯文"}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {speakNotice.kind === "error" && speakNotice.target === "translated" ? (
+                    <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                      <StatusText
+                        id={speakNoticeId}
+                        tone="error"
+                        state="error"
+                        size="sm"
+                        role="alert"
+                        aria-live="polite"
+                      >
+                        {speakNotice.message}
+                      </StatusText>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          dispatchSpeakNotice({ type: "CLEAR" });
+                        }}
+                      >
+                        關閉
+                      </Button>
+                    </div>
                   ) : null}
                 </div>
               </>
