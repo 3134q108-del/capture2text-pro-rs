@@ -733,13 +733,30 @@ fn run_streaming_request<F: FnMut(&str)>(
     let client = crate::llama_runtime::supervisor::shared_async_client();
     let cancel = cancel_notify();
     let result = tauri::async_runtime::block_on(async move {
-        let mut response = client
-            .post(LLAMA_CHAT_URL)
-            .json(&request)
-            .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-            .send()
-            .await
-            .map_err(map_reqwest_send_error)?;
+        let mut send_retried = false;
+        let mut response = loop {
+            match client
+                .post(LLAMA_CHAT_URL)
+                .json(&request)
+                .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+                .send()
+                .await
+            {
+                Ok(response) => break response,
+                Err(err) => {
+                    let retryable = is_retryable_send_error(
+                        err.is_connect(),
+                        err.is_request(),
+                        err.is_timeout(),
+                    );
+                    if !send_retried && retryable {
+                        send_retried = true;
+                        continue;
+                    }
+                    return Err(map_reqwest_send_error(err));
+                }
+            }
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -1012,6 +1029,14 @@ fn sanitize_json_escapes(input: &str) -> String {
     out
 }
 
+pub(crate) fn is_retryable_send_error(
+    is_connect: bool,
+    is_request: bool,
+    is_timeout: bool,
+) -> bool {
+    !is_timeout && (is_connect || is_request)
+}
+
 fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
     if err.is_timeout() {
         VlmError::Timeout(REQUEST_TIMEOUT_MS)
@@ -1262,5 +1287,13 @@ mod tests {
             VlmError::ResponseDecode { .. } => {}
             other => panic!("expected ResponseDecode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn is_retryable_send_error_respects_connect_request_and_timeout() {
+        assert!(is_retryable_send_error(true, false, false));
+        assert!(is_retryable_send_error(false, true, false));
+        assert!(!is_retryable_send_error(false, false, true));
+        assert!(!is_retryable_send_error(true, true, true));
     }
 }

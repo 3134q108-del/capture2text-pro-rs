@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use super::{TtsProvider, Voice, VoiceLevel};
 use crate::tts::TtsError;
+use crate::vlm::is_retryable_send_error;
 
 pub struct AzureProvider {
     region: String,
@@ -26,10 +27,13 @@ impl AzureProvider {
     }
 
     fn with_base_url(region: String, key: String, base_url: String) -> Self {
-        let http = reqwest::Client::builder().build().unwrap_or_else(|err| {
-            eprintln!("[azure-tts] failed to build client: {err}");
-            reqwest::Client::new()
-        });
+        let http = reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap_or_else(|err| {
+                eprintln!("[azure-tts] failed to build client: {err}");
+                reqwest::Client::new()
+            });
         Self {
             region: region.trim().to_ascii_lowercase(),
             key,
@@ -105,21 +109,38 @@ impl TtsProvider for AzureProvider {
         volume: f32,
     ) -> Result<Vec<u8>, TtsError> {
         let ssml = build_ssml(text, voice_id, rate, volume);
-        let response = self
-            .http
-            .post(self.synthesize_url())
-            .timeout(Duration::from_secs(10))
-            .header("Ocp-Apim-Subscription-Key", &self.key)
-            .header("Content-Type", "application/ssml+xml")
-            .header(
-                "X-Microsoft-OutputFormat",
-                "audio-24khz-48kbitrate-mono-mp3",
-            )
-            .header("User-Agent", "capture2text-pro")
-            .body(ssml.body.clone())
-            .send()
-            .await
-            .map_err(|err| TtsError::Network(err.to_string()))?;
+        let mut send_retried = false;
+        let response = loop {
+            match self
+                .http
+                .post(self.synthesize_url())
+                .timeout(Duration::from_secs(10))
+                .header("Ocp-Apim-Subscription-Key", &self.key)
+                .header("Content-Type", "application/ssml+xml")
+                .header(
+                    "X-Microsoft-OutputFormat",
+                    "audio-24khz-48kbitrate-mono-mp3",
+                )
+                .header("User-Agent", "capture2text-pro")
+                .body(ssml.body.clone())
+                .send()
+                .await
+            {
+                Ok(response) => break response,
+                Err(err) => {
+                    let retryable = is_retryable_send_error(
+                        err.is_connect(),
+                        err.is_request(),
+                        err.is_timeout(),
+                    );
+                    if !send_retried && retryable {
+                        send_retried = true;
+                        continue;
+                    }
+                    return Err(TtsError::Network(err.to_string()));
+                }
+            }
+        };
 
         let status = response.status();
         if !status.is_success() {

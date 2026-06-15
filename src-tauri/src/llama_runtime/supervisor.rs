@@ -136,6 +136,7 @@ pub fn shared_async_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::ClientBuilder::new()
+            .pool_max_idle_per_host(0)
             .pool_idle_timeout(Some(Duration::from_secs(90)))
             .build()
             .expect("shared reqwest async client build failed")
