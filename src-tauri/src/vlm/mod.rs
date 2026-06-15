@@ -805,6 +805,8 @@ fn run_streaming_request<F: FnMut(&str)>(
     result
 }
 
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it.";
+
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
         .map(|lang| lang.english_name)
@@ -815,10 +817,11 @@ fn build_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     format!(
-        "Translate the text to {language_name}.\n\
+        "Translate the text to {language_name}. {fidelity}\n\
          Output strict JSON only: {{\"original\":\"<input text>\",\"translated\":\"<{language_name} text>\",\"src_lang\":\"<BCP-47 from: {language_codes} | other>\"}}\n\
          No markdown, no prose.",
         language_name = language_name,
+        fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", language_name),
         language_codes = language_codes,
     )
 }
@@ -835,10 +838,11 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     format!(
-        "Translate the text in this image to {target_name}.\n\
+        "Translate the text in this image to {target_name}. {fidelity}\n\
          Output strict JSON only: {{\"original\":\"<source text>\",\"translated\":\"<{target_name} text>\",\"src_lang\":\"<BCP-47 from: {codes} | other>\"}}\n\
          No markdown, no prose.",
         target_name = target_name,
+        fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", target_name),
         codes = language_codes,
     )
 }
