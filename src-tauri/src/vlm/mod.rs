@@ -822,7 +822,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     result
 }
 
-const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate as much as possible into {target}, including proper nouns, personal and place names, and technical terms; transliterate phonetically when there is no established translation. Keep a source-language token verbatim only when translating it would be meaningless (bare numbers, symbols, or acronyms with no target equivalent). When unsure whether a token is a name or a common word, prefer translating it. Even when the text is already mostly in {target} and only a few words remain in another language, those embedded words/phrases must still be translated into {target}; do not leave the whole passage unchanged just because most of it is already {target}. For angle brackets, distinguish plain natural-language placeholders from code or markup: translate the words inside placeholders and keep the brackets, e.g. <source text>, <branch name>, <your token>; keep code or markup unchanged, e.g. <div>, <T>, </section>, <a href=\"...\">, <Component />.";
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate the entire input into {target}; never omit any part. Translate everything you can, including proper nouns, personal and place names, and technical terms. Words inside angle brackets are usually placeholders: translate the words inside and keep the brackets, and do this for EVERY bracket even if one sentence has several. For example, 'Open a PR against <branch name> and set <source text>' becomes '針對 <分支名稱> 開啟 PR 並設定 <來源文字>'. Keep unchanged only bare numbers/symbols and real code or markup such as <div>, </p>, <Component />.";
 
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
@@ -835,7 +835,7 @@ fn build_system_prompt(target_lang: &str) -> String {
         .join(" | ");
     format!(
         "Translate the text to {language_name}. {fidelity}\n\
-         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual input text; translated must contain the actual {language_name} translation; src_lang must contain the source language BCP-47 code from {language_codes} or other. Fill every field with the actual content; never output placeholder labels or angle-bracket text such as <source text>.\n\
+         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual input text; translated must contain the actual {language_name} translation; src_lang must contain the source language BCP-47 code from {language_codes} or other. Fill every field with the actual content, not placeholder labels.\n\
          No markdown, no prose.",
         language_name = language_name,
         fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", language_name),
@@ -856,7 +856,7 @@ fn build_direct_system_prompt(target_lang: &str) -> String {
         .join(" | ");
     format!(
         "Translate the text in this image to {target_name}. {fidelity}\n\
-         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual text from the image; translated must contain the actual {target_name} translation; src_lang must contain the source language BCP-47 code from {codes} or other. Fill every field with the actual content; never output placeholder labels or angle-bracket text such as <source text>.\n\
+         Output strict JSON only with keys original, translated, and src_lang. original must contain the actual text from the image; translated must contain the actual {target_name} translation; src_lang must contain the source language BCP-47 code from {codes} or other. Fill every field with the actual content, not placeholder labels.\n\
          No markdown, no prose.",
         target_name = target_name,
         fidelity = TRANSLATION_FIDELITY_GUIDANCE.replace("{target}", target_name),
