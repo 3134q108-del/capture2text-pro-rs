@@ -822,7 +822,7 @@ fn run_streaming_request<F: FnMut(&str)>(
     result
 }
 
-const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate the entire input into {target}; never omit any part. Translate everything you can, including proper nouns, personal and place names, and technical terms. Words inside angle brackets are usually placeholders: translate the words inside and keep the brackets, and do this for EVERY bracket even if one sentence has several. For example, 'Open a PR against <branch name> and set <source text>' becomes '針對 <分支名稱> 開啟 PR 並設定 <來源文字>'. Keep unchanged only bare numbers/symbols and real code or markup such as <div>, </p>, <Component />.";
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate the entire input into {target}; never omit any part. Even if the input is already mostly {target} with only a few foreign words left, you MUST still translate those embedded words into {target} — e.g. 'build 完成後 push 上去' becomes '建構完成後推送上去'; do not leave a word in the source language just because the rest is already {target}. Translate everything including proper nouns, names, and technical terms. Words inside angle brackets are usually placeholders: translate the words inside and keep the brackets, and do this for EVERY bracket even if one sentence has several. For example, 'Open a PR against <branch name> and set <source text>' becomes '針對 <分支名稱> 開啟 PR 並設定 <來源文字>'. Keep unchanged only bare numbers/symbols and real code or markup such as <div>, </p>, <Component />.";
 
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
