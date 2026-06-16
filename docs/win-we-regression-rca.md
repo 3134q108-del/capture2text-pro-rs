@@ -230,3 +230,40 @@
 - `src-tauri/src/llama_runtime/supervisor.rs`（`:72-81` VRAM 16GiB 閾值、`:140-203` 週期重啟、`:155-156` threshold=0、`:318-365` 啟動參數）
 - `src-tauri/src/vlm/mod.rs`（`:718-795` submit 無 guard、`:887-912` ensure_min_dimension、`:919-926` 寬鬆 parser、`:477-480` 成功寫 log+clipboard）
 - `src-tauri/src/overlay.rs`（regression 視窗未改、已排除）
+
+---
+
+## 8. 實際解決（2026-06-16 更新，取代上方假說排序）
+
+下方是本報告的**事後校正**：2026-06-16 實機 user 回饋 + 直接觀測（讀存檔 capture PNG + captures.log + 直接打 llama-server 做 counterfactual）後，真因與原報告的假說**部分不同**。原報告 §0–§7 是當時的假說推理，保留作記錄；以下為實證結論。
+
+### 8.1 框選軌道 — 原「root cause A（stale frame）」未被證實，真因是另外三件
+
+User 實測後明確否定 stale frame 症狀：「**沒有吃字、截斷、框歪的問題**」「畫面內容是對的」。讀 11:08 的 capture 存檔 + captures.log 也確認 OCR 文字正確、框到對的內容。**root cause A（stale WGC frame）= 假說未成立**（雖然 `captured_at` 被丟棄是事實，但不是 user 感受到的「怪」）。
+
+真因是 user 點明的三件具體事（commit `d14b664` 一次修掉）：
+
+| 症狀（user 原話）| 真因 | 修法 |
+|---|---|---|
+| 「750px 不夠寬」| W forward 長度 `W_LENGTH=750` 對 user 使用習慣偏窄 | `params.rs` W_LENGTH 750→1200 |
+| 「滑鼠游標被框進去」「下緣比上緣多」| **WGC `CursorCaptureSettings::Default` 會把游標合成進影格**（GDI 的 Win+Q 不會）；游標箭頭從尖端往右下延伸 → 邊界偵測把箭頭當 ink、下緣被拉長 | `windows_capture_pool.rs` 改 `CursorCaptureSettings::WithoutCursor` |
+| 「長按框選快捷會讓框變大」| 殘留的橘色 overlay（500ms 才消失）被下一次 WGC 擷取拍進去 → 邊界當 ink → 回饋迴圈越框越大 | `overlay.rs` 對 overlay 視窗設 `WDA_EXCLUDEFROMCAPTURE`（永不被擷取） |
+
+游標擷取 + overlay 回饋這兩條，是 `d7fc0e6`（xcap→WGC）**真正順帶引入的 regression**（GDI 路徑的 Win+Q 兩者皆無，正好對上「Q 正常 / W·E 怪」）。
+
+### 8.2 「文字邊界偵測邏輯」— git 考古證實「那次根本沒改」
+
+3-agent workflow 考古確認：邊界偵測（`preprocess.rs` `extract_text_block` + `bounding_rect.rs` `get_bounding_rect`）與框位置數學（`pipeline.rs`、`params.rs`、`build_clamped_crop`）**全部自 2026-04-18 定型、v0.6.0 那批一行未改**（只有一次無行為變化的 clippy）。而且這套演算法本來就是**原版 Capture2Text（Christopher Brochtrup, GPLv3）的忠實移植**（spiral seed + 8 方向 region growth + 不對稱 lookahead/lookbehind + border-conn-comp strip + Otsu），連常數都一樣。所以「回朔邏輯」無舊版可回、「參考原版」它已是原版做法。`d7fc0e6` 與框選/邊界唯一綁定的是 capture source（不可單獨 revert，否則 GPU 洩漏回歸）。
+
+### 8.3 模型軌道 — §0.5 結論成立，已修
+
+§0.5 的「llama-server 原生 crash（0xc0000005）+ supervisor 無 watchdog → 永久 connection refused」**成立且已修**：commit `cc45a4c` 加了 watchdog 自動重生（CAS+Drop guard + 健康檢查 + double-check）+ 收 llama-server stderr 到 log。連線層另加 `pool_max_idle_per_host(0)` + transient send-error 重試（`623dc7b`）解決「第一次 error sending request、重按才成功」的 stale keep-alive。
+
+### 8.4 翻譯（非本報告原始範圍，但同批處理）
+
+4B-Q4 對細膩翻譯指令的弱點，靠「短 prompt + 具體 input→output 範例」解決（直接打 llama-server counterfactual 實測、跨中日韓驗證）：角括號 `<source text>`→`<來源文字>`（`9c053ca`）、中文句中夾雜英文字 build→建構/push→推送（`6ad65e3`）。關鍵發現：4B 需要**具體範例**而非抽象規則，且**範例語言不污染輸出語言**。
+
+### 8.5 教訓
+
+- **假說要實證**：原報告押 stale frame（中信心、未現場確認），實機一問才發現真因是游標/寬度/overlay。RCA 的 counterfactual 步驟（讀存檔、直接打模型）才是定錨，紙上推理會押錯。
+- **「邏輯怪」未必是邏輯改了**：user 直覺「邏輯怪」，但邏輯一行沒改；怪的是 capture 設定（游標）與參數（寬度）。先觀測再歸因。
