@@ -43,7 +43,7 @@ impl CapturePool {
 
             let settings = Settings::new(
                 monitor,
-                CursorCaptureSettings::Default,
+                CursorCaptureSettings::WithoutCursor,
                 DrawBorderSettings::WithoutBorder,
                 SecondaryWindowSettings::Default,
                 MinimumUpdateIntervalSettings::Default,

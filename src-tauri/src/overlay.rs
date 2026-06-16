@@ -23,9 +23,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, PostQuitMessage, RegisterClassW, SetTimer, SetWindowPos, ShowWindow,
     TranslateMessage, UpdateLayeredWindow, CS_HREDRAW, CS_VREDRAW, HMENU, HWND_TOPMOST, MSG,
     SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA,
-    UPDATE_LAYERED_WINDOW_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_DESTROY, WM_TIMER,
-    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
-    WS_POPUP,
+    UPDATE_LAYERED_WINDOW_FLAGS, WDA_EXCLUDEFROMCAPTURE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::capture::pipeline::BoundingBoxScreen;
@@ -443,6 +443,15 @@ fn create_overlay_window(hinstance: HINSTANCE) -> io::Result<HWND> {
         )
     }
     .map_err(|err| io::Error::other(format!("CreateWindowExW failed: {err}")))?;
+
+    if let Err(err) = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity(
+            hwnd,
+            WDA_EXCLUDEFROMCAPTURE,
+        )
+    } {
+        eprintln!("[overlay] display affinity setup failed: {err}");
+    }
 
     Ok(hwnd)
 }

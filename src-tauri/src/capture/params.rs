@@ -1,7 +1,7 @@
 use crate::capture::HotkeyKind;
 
 pub const W_START_OFFSET: i32 = 25;
-pub const W_LENGTH: i32 = 750;
+pub const W_LENGTH: i32 = 1200;
 pub const W_LINE_WIDTH: i32 = 70;
 pub const W_LOOKAHEAD: i32 = 14;
 pub const W_LOOKBEHIND: i32 = 1;
