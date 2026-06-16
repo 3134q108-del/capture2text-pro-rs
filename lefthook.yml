@@ -1,0 +1,160 @@
+# Lefthook 預設配置 — 給新專案複製過去用
+# 詳見 https://github.com/evilmartians/lefthook
+#
+# 安裝：
+#   choco install lefthook        # Windows (Chocolatey)
+#   brew install lefthook          # macOS
+#   或下載 binary: https://github.com/evilmartians/lefthook/releases
+# 啟用：repo root 跑 `lefthook install`
+# 範本來源：~/.claude/templates/lefthook.yml
+#
+# ===== Windows git-bash 相容鐵則（lefthook v2.x、實戰踩過）=====
+# lefthook 在 Windows 把每個 run 用 `sh.exe -c "整段script"` 執行。因此：
+#   1. run / skip.run 內【一律單引號】— 內層雙引號會跟外層 -c "..." 提前閉合
+#      → `syntax error: unexpected end of file from 'if'`（中文 locale 還會亂碼成 `無:`）
+#   2. 需展開的位置（commit-msg 的 $1）→ 用 lefthook 模板變數 {1}（不經 shell 解析）
+#   3. 【不要 emoji、不要中文 echo】— cp950 轉換也會壞
+# 詳見 fact: 2026-05-31-lefthook-windows-sh-c-double-quote-bug.md
+#
+# ===== Graceful skip 設計 =====
+# 每條 optional command 加 skip.run 守衛：工具沒裝 / 缺設定檔自動跳過、不讓 commit 失敗
+# （否則碰到該 glob 的 commit 就 "xxx not found"、逼人 --no-verify、違反紀律）。
+#   - skip.run exit 0 → 跳過該 command
+#   - `! command -v <tool>`：工具不在 PATH 就跳過
+#   - `test ! -e <path>` / `test -z $(...)`：檔案不存在 / 偵測為空就跳過
+# 例外：secrets（gitleaks）故意不加 skip — secret 掃描漏掉不可逆、沒裝要大聲失敗。
+#
+# ===== 子目錄 crate（Tauri src-tauri/）通用化 =====
+# rust hooks 用 `$(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1)`
+# 執行期偵測 manifest 位置，同時支援「Cargo.toml 在 root（純 Rust CLI）」與「在 src-tauri/
+# （Tauri）」兩種佈局，母版不必 per-project 改路徑（解決母版改了存量不同步的痛點）。
+# 詳見 fact: 2026-05-31-cx-onboard-scaffold-no-template-sync.md
+
+pre-commit:
+  # 故意 sequential（非 parallel）：eslint --fix 與 prettier --write 的 glob 都涵蓋
+  # .ts/.tsx/.js，parallel 會讓兩者同時寫同一個檔 → race condition。
+  parallel: false
+  commands:
+    # TypeScript / JavaScript lint — 沒裝 eslint 或無 eslint 設定檔自動跳過
+    # 不加 --max-warnings=0：既有專案首次導入常有一堆 warning，零容忍會卡死所有 commit。
+    eslint:
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs}"
+      run: pnpm exec eslint --fix {staged_files}
+      skip:
+        - run: "test ! -e node_modules/.bin/eslint"
+        - run: "test -z $(ls eslint.config.* .eslintrc.* 2>/dev/null | head -1)"
+      stage_fixed: true
+
+    # Format（多語言）— 沒裝 prettier 自動跳過（prettier 無設定檔也能用內建預設）
+    prettier:
+      glob: "*.{ts,tsx,js,jsx,json,md,yml,yaml,css,scss}"
+      run: pnpm exec prettier --write {staged_files}
+      skip:
+        - run: "test ! -e node_modules/.bin/prettier"
+      stage_fixed: true
+
+    # Rust format — manifest 執行期偵測（root 或 src-tauri/）。整 crate fmt 是 Rust 慣例，
+    # stage_fixed 只 re-stage 原本 staged 的檔（首次跑會重排全 crate、一次性、之後無新改動）。
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --manifest-path $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1)
+      skip:
+        - run: "! command -v cargo"
+        - run: "test -z $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1)"
+      stage_fixed: true
+
+    # Rust clippy（整個 crate）— manifest 偵測；沒裝 cargo / 無 Cargo.toml 自動跳過
+    rust-clippy:
+      glob: "*.rs"
+      run: cargo clippy --manifest-path $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1) --all-targets -- -D warnings
+      skip:
+        - run: "! command -v cargo"
+        - run: "test -z $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1)"
+
+    # Python format — 沒裝 ruff 自動跳過
+    python-fmt:
+      glob: "*.py"
+      run: ruff format {staged_files}
+      skip:
+        - run: "! command -v ruff"
+      stage_fixed: true
+
+    # Secret scan（永遠跑；故意不加 skip — gitleaks 沒裝要「大聲」失敗，安全掃描不可靜默略過）
+    # 公開 key 誤判（reCAPTCHA sitekey 等）用 repo root 的 .gitleaks.toml allowlist 處理
+    # （母版附 ~/.claude/templates/.gitleaks.toml、cx-onboard 一起複製）
+    secrets:
+      run: gitleaks git --staged --no-banner
+
+    # ===== 規格書三件套：spectral OpenAPI lint（決策 10）=====
+    # 需先 cp ~/.claude/templates/spectral.yml 到 repo root 並重命名 .spectral.yml
+    spectral:
+      glob: "**/openapi*.{yml,yaml,json}"
+      run: spectral lint {staged_files} --ruleset .spectral.yml --fail-severity=warn
+      skip:
+        - run: "! command -v spectral"
+        - run: "test ! -e .spectral.yml"
+
+    # ===== 依賴鏈：dependency-cruiser 循環依賴檢查（決策 11）=====
+    # 用「本地」node_modules/.bin/depcruise（非全域）：全域 depcruise 找不到專案的 typescript
+    # → 無法解析 tsconfig paths（`@/*`）→ not-to-unresolvable 規則對 `@/components/ui` 誤報。
+    # 本地裝（npm i -D dependency-cruiser）+ 本地 tsc 才能正確解析。skip 改偵測本地 binary。
+    dep-cruise:
+      glob: "*.{ts,tsx,js,jsx,mjs}"
+      run: node_modules/.bin/depcruise --config .dependency-cruiser.cjs {staged_files}
+      skip:
+        - run: "test ! -e node_modules/.bin/depcruise"
+        - run: "test ! -e .dependency-cruiser.cjs"
+
+    # ===== 依賴鏈：cargo-modules 循環依賴檢查（決策 11）=====
+    # 單引號 + 無 emoji（根源 A）+ manifest 偵測（根源 C）。偵測到 circular 印警告（不硬擋，
+    # 維持既有驗證過的行為；要改成硬擋把 `(echo ...; exit 1) || true` 換成 `&& exit 1` 即可）
+    cargo-modules:
+      glob: "*.rs"
+      run: cargo modules dependencies --manifest-path $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1) --no-fns --no-types --no-traits 2>&1 | grep -q circular && (echo circular-dep-detected; exit 1) || true
+      skip:
+        - run: "! command -v cargo-modules"
+        - run: "test -z $(find . -maxdepth 2 -name Cargo.toml -not -path './node_modules/*' | head -1)"
+
+    # ===== Escape hatch（決策 10 後段）=====
+    # 開頭 `[SKIP_SPEC_CHECK]` 的 commit message 會跳過 spectral / dep-cruise（緊急用）
+
+pre-push:
+  commands:
+    # cargo 用兩個獨立 if（root / src-tauri）避開變數雙引號（根源 A）；只會命中其一
+    typecheck:
+      run: |
+        if [ -f pnpm-lock.yaml ]; then pnpm tsc --noEmit; fi
+        if [ -f Cargo.toml ]; then cargo check --manifest-path Cargo.toml --all-targets; fi
+        if [ -f src-tauri/Cargo.toml ]; then cargo check --manifest-path src-tauri/Cargo.toml --all-targets; fi
+        if [ -f pyproject.toml ]; then mypy .; fi
+
+    test:
+      run: |
+        if [ -f pnpm-lock.yaml ]; then pnpm test; fi
+        if [ -f Cargo.toml ]; then cargo test --manifest-path Cargo.toml; fi
+        if [ -f src-tauri/Cargo.toml ]; then cargo test --manifest-path src-tauri/Cargo.toml; fi
+        if [ -f pyproject.toml ]; then pytest; fi
+
+    # ===== 規格書三件套：oasdiff breaking change check（決策 10）=====
+    # 比對 main vs current 的 openapi.json、有 breaking change 就擋
+    # 單引號 + 無 emoji（根源 A）；沒 openapi.json / 沒裝 oasdiff 自動跳過
+    # Escape hatch: commit message 含 [breaking] tag → 允許
+    oasdiff:
+      skip:
+        - run: "test ! -e openapi.json"
+        - run: "! command -v oasdiff"
+      run: |
+        git show main:openapi.json > /tmp/openapi-main.json 2>/dev/null || exit 0
+        oasdiff breaking /tmp/openapi-main.json openapi.json 2>&1 | grep -q breaking || exit 0
+        git log -1 --format=%B | grep -q '\[breaking\]' && exit 0
+        echo 'Breaking change detected. Add [breaking] tag to commit message if intentional.'
+        exit 1
+
+# Conventional Commits 1.0.0 驗證
+commit-msg:
+  commands:
+    conventional:
+      # {1} = commit-msg 檔路徑（lefthook 模板變數、不經 shell、避開 $1 雙引號）
+      # 只留裸 grep（無 if/{} 控制結構、無雙引號 echo）
+      run: |
+        grep -qE '^(feat|fix|refactor|docs|test|chore|perf|style|ci|build|revert)(\([a-z0-9_/-]+\))?!?: .{1,72}$' {1}
