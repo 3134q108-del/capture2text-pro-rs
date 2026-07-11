@@ -19,7 +19,7 @@ import {
   useSnackbar,
 } from "@/components/ui";
 
-const VLM_ENDPOINT = "http://localhost:11434";
+const VLM_ENDPOINT = "http://localhost:11500";
 
 type ModelInfo = {
   id: string;

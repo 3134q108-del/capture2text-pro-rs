@@ -16,6 +16,8 @@ use windows::Win32::System::JobObjects::{
 use super::manifest::{self, ModelId};
 use super::{app_dir, SWITCH_LOCK};
 
+pub const LLAMA_PORT: u16 = 11500;
+
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
@@ -391,7 +393,7 @@ async fn send_keepalive_ping() {
     });
     let client = shared_async_client();
     let _ = client
-        .post("http://127.0.0.1:11434/v1/chat/completions")
+        .post(format!("http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions"))
         .json(&body)
         .timeout(Duration::from_secs(5))
         .send()
@@ -416,7 +418,7 @@ fn spawn_with_paths(
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg("11434")
+        .arg(LLAMA_PORT.to_string())
         .arg("--n-gpu-layers")
         .arg("999");
 
@@ -604,7 +606,7 @@ fn check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
 
 fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
     if let Ok(response) = client
-        .get("http://127.0.0.1:11434/v1/models")
+        .get(format!("http://127.0.0.1:{LLAMA_PORT}/v1/models"))
         .timeout(Duration::from_secs(5))
         .send()
     {
@@ -613,7 +615,7 @@ fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
         }
     }
     if let Ok(response) = client
-        .get("http://127.0.0.1:11434/health")
+        .get(format!("http://127.0.0.1:{LLAMA_PORT}/health"))
         .timeout(Duration::from_secs(5))
         .send()
     {

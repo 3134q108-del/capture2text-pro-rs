@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::sync::Notify;
 
+use crate::llama_runtime::supervisor::LLAMA_PORT;
 use crate::{llama_runtime, scenarios};
 
 pub mod state;
@@ -25,10 +26,13 @@ fn emit_or_log<T: serde::Serialize>(app: &AppHandle, name: &str, payload: &T) {
     }
 }
 
-const LLAMA_CHAT_URL: &str = "http://127.0.0.1:11434/v1/chat/completions";
 const CHAT_MODEL_NAME: &str = "local";
 const QWEN3VL_MIN_DIM: u32 = 32;
 const REQUEST_TIMEOUT_MS: u64 = 90_000;
+
+fn llama_chat_url() -> String {
+    format!("http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions")
+}
 
 pub type VlmResult<T> = std::result::Result<T, VlmError>;
 
@@ -597,8 +601,9 @@ pub fn warmup() {
             max_tokens: None,
         };
 
+        let chat_url = llama_chat_url();
         match tauri::async_runtime::block_on(async {
-            client.post(LLAMA_CHAT_URL).json(&request).send().await
+            client.post(chat_url.as_str()).json(&request).send().await
         }) {
             Ok(resp) => {
                 let ok = resp.status().is_success();
@@ -732,11 +737,12 @@ fn run_streaming_request<F: FnMut(&str)>(
 ) -> VlmResult<(String, Option<u64>)> {
     let client = crate::llama_runtime::supervisor::shared_async_client();
     let cancel = cancel_notify();
+    let chat_url = llama_chat_url();
     let result = tauri::async_runtime::block_on(async move {
         let mut send_retried = false;
         let mut response = loop {
             match client
-                .post(LLAMA_CHAT_URL)
+                .post(chat_url.as_str())
                 .json(&request)
                 .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
                 .send()
