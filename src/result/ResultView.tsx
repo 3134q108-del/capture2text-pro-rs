@@ -193,6 +193,11 @@ function usageTone(percent: number): "green" | "yellow" | "red" {
   return "green";
 }
 
+function speakTimeoutMs(charCount: number): number {
+  const seconds = 45 + Math.floor(charCount / 15);
+  return Math.max(45_000, Math.min(255_000, seconds * 1000));
+}
+
 export default function ResultView() {
   const [status, setStatus] = useState<VlmStatus>("idle");
   const [original, setOriginal] = useState("");
@@ -221,6 +226,7 @@ export default function ResultView() {
   const lastOriginalRef = useRef("");
   const activeSpeakTargetRef = useRef<TtsTarget | null>(null);
   const speakingStateRef = useRef<SpeakingState>({ kind: "idle" } as SpeakingState);
+  const speakingContentCharsRef = useRef(0);
 
   const showTranslated = translated.trim().length > 0 || status === "loading";
   const hasTranslatedText = translated.trim().length > 0;
@@ -572,9 +578,22 @@ export default function ResultView() {
       ) {
         return;
       }
-      dispatchSpeakNotice({ type: "SHOW_ERROR", target: speakingState.target, message: "合成逾時（15 秒）" });
-      dispatchSpeaking({ type: "TIMEOUT", target: speakingState.target });
-    }, 15_000);
+      void (async () => {
+        try {
+          await invoke("stop_speaking");
+        } catch {
+          // ignore
+        }
+        dispatchSpeakNotice({
+          type: "SHOW_ERROR",
+          target: speakingState.target,
+          message: "合成逾時",
+        });
+        dispatchSpeaking({ type: "TIMEOUT", target: speakingState.target });
+        activeSpeakTargetRef.current = null;
+        speakingContentCharsRef.current = 0;
+      })();
+    }, speakTimeoutMs(speakingContentCharsRef.current));
 
     return () => window.clearTimeout(timeoutId);
   }, [speakingState]);
@@ -820,12 +839,16 @@ export default function ResultView() {
     const content = target === "original" ? original.trim() : translated.trim();
     const currentPhase = phaseForTarget(speakingState, target);
 
-    if (currentPhase === "playing") {
+    if (currentPhase === "synthesizing" || currentPhase === "playing") {
       try {
         await invoke("stop_speaking");
       } catch {
         // ignore
       }
+      dispatchSpeakNotice({ type: "CLEAR" });
+      dispatchSpeaking({ type: "DONE", target });
+      activeSpeakTargetRef.current = null;
+      speakingContentCharsRef.current = 0;
       return;
     }
 
@@ -837,18 +860,13 @@ export default function ResultView() {
 
     try {
       dispatchSpeakNotice({ type: "CLEAR" });
-      if (speakingState.kind !== "idle") {
-        try {
-          await invoke("stop_speaking");
-        } catch {
-          // ignore
-        }
-      }
+      speakingContentCharsRef.current = content.length;
       dispatchSpeaking({ type: "START", target });
       activeSpeakTargetRef.current = target;
       await invoke("speak", { target, text: content, lang });
     } catch (error) {
       console.warn("[speak] failed", error);
+      speakingContentCharsRef.current = 0;
       showSpeakError(target, error instanceof Error ? error.message : String(error));
     }
   }
