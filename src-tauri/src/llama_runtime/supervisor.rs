@@ -25,6 +25,7 @@ static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 static INFERENCE_COUNT: AtomicU64 = AtomicU64::new(0);
 static RESTART_COUNT: AtomicU64 = AtomicU64::new(0);
 static CRASH_RESTART_COUNT: AtomicU64 = AtomicU64::new(0);
+static SERVER_GENERATION: AtomicU64 = AtomicU64::new(0);
 static CURRENT_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
 static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static EXPECTED_STOP: AtomicBool = AtomicBool::new(false);
@@ -492,13 +493,16 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
     let child = spawn_with_paths(&bin, &model, &mmproj, spec)?;
     store_child(child, id)?;
     reset_crash_restart_state();
-    poll_ready()?;
-    start_keepalive();
+    finish_spawn()?;
     Ok(())
 }
 
 pub fn restart_with_model(model_id: ModelId) -> Result<(), String> {
     restart_with_model_internal(model_id, true)
+}
+
+pub fn server_generation() -> u64 {
+    SERVER_GENERATION.load(Ordering::SeqCst)
 }
 
 fn restart_with_model_internal(model_id: ModelId, reset_crash_state: bool) -> Result<(), String> {
@@ -526,8 +530,15 @@ fn restart_with_model_internal(model_id: ModelId, reset_crash_state: bool) -> Re
     if reset_crash_state {
         reset_crash_restart_state();
     }
+    finish_spawn()?;
+    Ok(())
+}
+
+fn finish_spawn() -> Result<(), String> {
     poll_ready()?;
     start_keepalive();
+    SERVER_GENERATION.fetch_add(1, Ordering::SeqCst);
+    crate::vlm::warmup();
     Ok(())
 }
 

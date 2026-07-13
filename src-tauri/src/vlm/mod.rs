@@ -32,6 +32,7 @@ const REQUEST_TIMEOUT_MS: u64 = 90_000;
 const LOADING_RETRY_DELAY_MS: u64 = 500;
 const MODEL_LOADING_MAX_MS: u64 = 180_000;
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static LAST_WARMUP_SERVER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn llama_chat_url() -> String {
     format!("http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions")
@@ -147,6 +148,7 @@ struct OcrPerfCapture {
     first_delta_at: Option<Instant>,
     stream_done_at: Option<Instant>,
     retry_503: u32,
+    stream_retries: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +163,7 @@ struct OcrPerfLogLine {
     total_ms: u64,
     outcome: PerfOutcome,
     retry_503: u32,
+    stream_retries: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -182,6 +185,7 @@ impl OcrPerfCapture {
             first_delta_at: None,
             stream_done_at: None,
             retry_503: 0,
+            stream_retries: 0,
         }
     }
 
@@ -205,6 +209,12 @@ impl OcrPerfCapture {
         if self.first_delta_at.is_none() {
             self.first_delta_at = Some(Instant::now());
         }
+    }
+
+    fn reset_stream_timing_for_retry(&mut self) {
+        self.first_delta_at = None;
+        self.stream_done_at = None;
+        self.stream_retries = self.stream_retries.saturating_add(1);
     }
 
     fn increment_retry_503(&mut self) {
@@ -246,6 +256,7 @@ impl OcrPerfCapture {
             total_ms: elapsed_ms(self.submit_at, finished_at),
             outcome,
             retry_503: self.retry_503,
+            stream_retries: self.stream_retries,
         }
     }
 }
@@ -863,6 +874,26 @@ pub fn check_health() -> HealthStatus {
 }
 
 pub fn warmup() {
+    let server_generation = llama_runtime::supervisor::server_generation();
+    if server_generation == 0 {
+        return;
+    }
+    let mut observed = LAST_WARMUP_SERVER_GENERATION.load(Ordering::SeqCst);
+    while observed < server_generation {
+        match LAST_WARMUP_SERVER_GENERATION.compare_exchange(
+            observed,
+            server_generation,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => break,
+            Err(current) => observed = current,
+        }
+    }
+    if observed >= server_generation {
+        return;
+    }
+
     thread::spawn(|| {
         eprintln!("[vlm-warmup] start");
         let t0 = Instant::now();
@@ -961,6 +992,9 @@ where
             crate::llama_runtime::supervisor::ensure_running().map_err(|err| {
                 VlmError::Internal(format!("llama-server recovery failed: {err}"))
             })?;
+            if let Some(perf) = perf.as_deref_mut() {
+                perf.reset_stream_timing_for_retry();
+            }
             run_streaming_request(
                 build_request(),
                 seq,
@@ -1143,8 +1177,15 @@ where
                 _ = cancel.notified() => return Err(VlmError::Cancelled),
                 chunk = response.chunk() => chunk,
             };
-            let maybe_chunk = chunk_result
-                .map_err(|err| VlmError::Internal(format!("stream read failed: {err}")))?;
+            let maybe_chunk = chunk_result.map_err(|err| {
+                if err.is_timeout() {
+                    VlmError::Timeout(REQUEST_TIMEOUT_MS)
+                } else if is_stream_error_recoverable(&err) {
+                    VlmError::VlmRuntimeDown
+                } else {
+                    VlmError::Internal(format!("stream read failed: {err}"))
+                }
+            })?;
             let Some(chunk) = maybe_chunk else {
                 break;
             };
@@ -1386,6 +1427,26 @@ pub(crate) fn is_retryable_send_error(
     is_timeout: bool,
 ) -> bool {
     !is_timeout && (is_connect || is_request)
+}
+
+fn is_stream_error_recoverable(err: &reqwest::Error) -> bool {
+    is_stream_error_recoverable_flags(
+        err.is_connect(),
+        err.is_request(),
+        err.is_body(),
+        err.is_decode(),
+        err.is_timeout(),
+    )
+}
+
+fn is_stream_error_recoverable_flags(
+    is_connect: bool,
+    is_request: bool,
+    is_body: bool,
+    is_decode: bool,
+    is_timeout: bool,
+) -> bool {
+    !is_timeout && (is_connect || is_request || is_body || is_decode)
 }
 
 fn map_reqwest_send_error(err: reqwest::Error) -> VlmError {
@@ -1653,5 +1714,41 @@ mod tests {
         assert!(is_retryable_send_error(false, true, false));
         assert!(!is_retryable_send_error(false, false, true));
         assert!(!is_retryable_send_error(true, true, true));
+    }
+
+    #[test]
+    fn is_stream_error_recoverable_respects_transport_and_timeout() {
+        assert!(is_stream_error_recoverable_flags(
+            true, false, false, false, false
+        ));
+        assert!(is_stream_error_recoverable_flags(
+            false, true, false, false, false
+        ));
+        assert!(is_stream_error_recoverable_flags(
+            false, false, true, false, false
+        ));
+        assert!(is_stream_error_recoverable_flags(
+            false, false, false, true, false
+        ));
+        assert!(!is_stream_error_recoverable_flags(
+            false, false, false, false, true
+        ));
+        assert!(!is_stream_error_recoverable_flags(
+            false, false, false, false, false
+        ));
+    }
+
+    #[test]
+    fn reset_stream_timing_for_retry_clears_first_delta_and_done() {
+        let mut perf = OcrPerfCapture::new(7, "ocr");
+        perf.mark_first_delta();
+        perf.mark_stream_done();
+        perf.increment_retry_503();
+        perf.reset_stream_timing_for_retry();
+
+        assert!(perf.first_delta_at.is_none());
+        assert!(perf.stream_done_at.is_none());
+        assert_eq!(perf.stream_retries, 1);
+        assert_eq!(perf.retry_503, 1);
     }
 }
