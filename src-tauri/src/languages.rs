@@ -60,7 +60,7 @@ pub const LANGUAGES: &[Language] = &[
         native_name: "English",
         english_name: "English",
         tier: Tier::S,
-        default_voice_id: "en-US-AvaMultilingualNeural",
+        default_voice_id: "en-US-JennyNeural",
         script_direction: ScriptDirection::Ltr,
     },
     Language {
@@ -84,7 +84,7 @@ pub const LANGUAGES: &[Language] = &[
         native_name: "Francais",
         english_name: "French",
         tier: Tier::A,
-        default_voice_id: "fr-FR-VivienneMultilingualNeural",
+        default_voice_id: "fr-FR-DeniseNeural",
         script_direction: ScriptDirection::Ltr,
     },
     Language {
@@ -92,7 +92,7 @@ pub const LANGUAGES: &[Language] = &[
         native_name: "Deutsch",
         english_name: "German",
         tier: Tier::A,
-        default_voice_id: "de-DE-SeraphinaMultilingualNeural",
+        default_voice_id: "de-DE-KatjaNeural",
         script_direction: ScriptDirection::Ltr,
     },
     Language {

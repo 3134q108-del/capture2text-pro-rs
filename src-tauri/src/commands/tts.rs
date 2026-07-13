@@ -29,20 +29,16 @@ pub async fn speak(
     let key = crate::azure_tts::keyring::get_key()
         .map_err(|err| err.to_string())?
         .ok_or_else(not_configured_message)?;
-    let actual_lang = match target.as_str() {
-        "original" => crate::vlm::active_src_lang().unwrap_or_else(|| lang.clone()),
-        "translated" => crate::output_lang::current(),
-        _ => lang.clone(),
-    };
-    let normalized_lang = normalize_lang(&actual_lang);
+    let actual_lang = resolve_speak_lang(target.as_str(), &lang, crate::vlm::active_src_lang());
+    let normalized_lang = normalize_lang(&actual_lang).to_string();
     let mut voice_id = crate::window_state::azure_voice_map()
-        .get(normalized_lang)
+        .get(normalized_lang.as_str())
         .cloned()
-        .unwrap_or_else(|| default_voice_for_lang(normalized_lang).to_string());
+        .unwrap_or_else(|| voice_for_lang(normalized_lang.as_str()).to_string());
     if crate::window_state::azure_billing_tier() == crate::window_state::BillingTier::F0
         && crate::azure_tts::usage::is_hd_voice(&voice_id)
     {
-        voice_id = default_voice_for_lang(normalized_lang).to_string();
+        voice_id = voice_for_lang(normalized_lang.as_str()).to_string();
     }
     eprintln!(
         "[tts] speak target={target} lang={actual_lang} normalized={normalized_lang} voice_id={voice_id}"
@@ -55,23 +51,25 @@ pub async fn speak(
 
     let handle = tokio::spawn(async move {
         let result = async {
-            let mp3 = if let Some(bytes) =
-                crate::azure_tts::speak_cache::read_cached(&voice_id, &text, rate, volume)
-            {
-                bytes
-            } else {
-                let provider = AzureProvider::new(region, key);
-                let bytes = provider
-                    .synthesize(&text, &voice_id, rate, volume)
-                    .await
-                    .map_err(|err| err.to_string())?;
-                if let Err(err) = crate::azure_tts::speak_cache::write_cache(
-                    &voice_id, &text, rate, volume, &bytes,
-                ) {
-                    eprintln!("[azure-tts] speak cache write failed voice={voice_id}: {err}");
-                }
-                bytes
-            };
+            let (mp3, cached_voice_id) = synthesize_with_voice_fallback(
+                region,
+                key,
+                &text,
+                normalized_lang.as_str(),
+                &voice_id,
+                rate,
+                volume,
+            )
+            .await?;
+            if let Err(err) = crate::azure_tts::speak_cache::write_cache(
+                &cached_voice_id,
+                &text,
+                rate,
+                volume,
+                &mp3,
+            ) {
+                eprintln!("[azure-tts] speak cache write failed voice={cached_voice_id}: {err}");
+            }
             let _ = app.emit("tts-synthesized", serde_json::json!({ "target": target }));
             playback.play_for_target(target.clone(), mp3)?;
             Ok::<(), String>(())
@@ -144,10 +142,79 @@ fn stop_player_silent(state: &TtsRuntime) {
     state.playback.stop_silent();
 }
 
-fn default_voice_for_lang(lang: &str) -> &'static str {
+fn voice_for_lang(lang: &str) -> &'static str {
     crate::languages::by_code(normalize_lang(lang))
         .map(|lang| lang.default_voice_id)
         .unwrap_or("en-US-AvaNeural")
+}
+
+fn resolve_speak_lang(target: &str, lang: &str, active_src_lang: Option<String>) -> String {
+    match target {
+        "original" => {
+            if !lang.trim().is_empty() {
+                lang.to_string()
+            } else {
+                active_src_lang.unwrap_or_else(|| lang.to_string())
+            }
+        }
+        "translated" => crate::output_lang::current(),
+        _ => lang.to_string(),
+    }
+}
+
+fn should_retry_with_default_voice(requested_voice_id: &str, fallback_voice_id: &str) -> bool {
+    requested_voice_id != fallback_voice_id
+}
+
+async fn synthesize_with_voice_fallback(
+    region: String,
+    key: String,
+    text: &str,
+    normalized_lang: &str,
+    requested_voice_id: &str,
+    rate: f32,
+    volume: f32,
+) -> Result<(Vec<u8>, String), String> {
+    if let Some(bytes) =
+        crate::azure_tts::speak_cache::read_cached(requested_voice_id, text, rate, volume)
+    {
+        return Ok((bytes, requested_voice_id.to_string()));
+    }
+
+    let provider = AzureProvider::new(region, key);
+
+    match provider
+        .synthesize(text, requested_voice_id, rate, volume)
+        .await
+    {
+        Ok(bytes) => Ok((bytes, requested_voice_id.to_string())),
+        Err(err) => {
+            let default_voice_for_lang = voice_for_lang(normalized_lang);
+            let fallback_voice_id = default_voice_for_lang;
+            if !should_retry_with_default_voice(requested_voice_id, fallback_voice_id) {
+                return Err(err.to_string());
+            }
+
+            eprintln!(
+                "[tts] synthesize failed voice={requested_voice_id} lang={normalized_lang} err={err}; retrying with default voice={fallback_voice_id}"
+            );
+            if let Some(bytes) =
+                crate::azure_tts::speak_cache::read_cached(fallback_voice_id, text, rate, volume)
+            {
+                return Ok((bytes, fallback_voice_id.to_string()));
+            }
+
+            let bytes = provider
+                .synthesize(text, fallback_voice_id, rate, volume)
+                .await
+                .map_err(|fallback_err| {
+                    format!(
+                        "voice synthesis failed voice={requested_voice_id} fallback={fallback_voice_id} err={err}; fallback err={fallback_err}"
+                    )
+                })?;
+            Ok((bytes, fallback_voice_id.to_string()))
+        }
+    }
 }
 
 fn normalize_lang(lang: &str) -> &str {
@@ -191,4 +258,41 @@ fn normalize_lang(lang: &str) -> &str {
 
 fn not_configured_message() -> String {
     "Azure TTS is not configured. Set API key and region in Settings > Speech.".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn original_speak_prefers_explicit_lang_over_active_src_lang() {
+        assert_eq!(
+            resolve_speak_lang("original", "en-US", Some("zh-TW".to_string())),
+            "en-US"
+        );
+        assert_eq!(
+            resolve_speak_lang("original", "", Some("zh-TW".to_string())),
+            "zh-TW"
+        );
+        assert_eq!(resolve_speak_lang("original", "", None), "");
+    }
+
+    #[test]
+    fn default_voices_are_region_safe_standard_neural() {
+        assert_eq!(voice_for_lang("en-US"), "en-US-JennyNeural");
+        assert_eq!(voice_for_lang("fr-FR"), "fr-FR-DeniseNeural");
+        assert_eq!(voice_for_lang("de-DE"), "de-DE-KatjaNeural");
+    }
+
+    #[test]
+    fn fallback_voice_retry_is_disabled_for_default_voice() {
+        assert!(!should_retry_with_default_voice(
+            "en-US-JennyNeural",
+            voice_for_lang("en-US")
+        ));
+        assert!(should_retry_with_default_voice(
+            "en-US-AvaMultilingualNeural",
+            voice_for_lang("en-US")
+        ));
+    }
 }
