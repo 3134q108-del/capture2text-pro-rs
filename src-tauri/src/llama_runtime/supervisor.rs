@@ -21,14 +21,25 @@ pub const LLAMA_PORT: u16 = 11500;
 static LLAMA_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 static KEEPALIVE_STARTED: AtomicBool = AtomicBool::new(false);
+static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
 static INFERENCE_COUNT: AtomicU64 = AtomicU64::new(0);
 static RESTART_COUNT: AtomicU64 = AtomicU64::new(0);
+static CRASH_RESTART_COUNT: AtomicU64 = AtomicU64::new(0);
 static CURRENT_MODEL: OnceLock<Mutex<Option<ModelId>>> = OnceLock::new();
 static RESTART_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+static EXPECTED_STOP: AtomicBool = AtomicBool::new(false);
+static CRASH_RESTART_STATE: OnceLock<Mutex<CrashRestartState>> = OnceLock::new();
 const VISION_OFFLOAD_VRAM_THRESHOLD_GB: u64 = 16;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const LLAMA_SERVER_LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 const LLAMA_SERVER_LOG_WAIT_TIMEOUT: Duration = Duration::from_secs(330);
+
+#[derive(Default)]
+struct CrashRestartState {
+    consecutive_crashes: u32,
+    last_crash_at: Option<Instant>,
+    auto_restart_disabled: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnsureRunningDecision {
@@ -157,6 +168,7 @@ pub fn shared_blocking_client() -> &'static reqwest::blocking::Client {
 
 pub fn record_inference_done() {
     let count = INFERENCE_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    reset_crash_restart_state();
     if should_trigger_restart(count) {
         spawn_restart_task();
     }
@@ -257,6 +269,7 @@ fn spawn_restart_task() {
             .and_then(|guard| *guard);
 
         if let Some(id) = model_id {
+            EXPECTED_STOP.store(true, Ordering::SeqCst);
             match restart_with_model(id) {
                 Ok(()) => {
                     INFERENCE_COUNT.store(0, Ordering::SeqCst);
@@ -269,6 +282,162 @@ fn spawn_restart_task() {
         }
 
         RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+    });
+}
+
+fn crash_restart_state() -> &'static Mutex<CrashRestartState> {
+    CRASH_RESTART_STATE.get_or_init(|| Mutex::new(CrashRestartState::default()))
+}
+
+fn reset_crash_restart_state() {
+    if let Ok(mut guard) = crash_restart_state().lock() {
+        guard.consecutive_crashes = 0;
+        guard.last_crash_at = None;
+        guard.auto_restart_disabled = false;
+    }
+}
+
+fn crash_restart_delay(consecutive_crashes: u32) -> Option<Duration> {
+    match consecutive_crashes {
+        0..=2 => Some(Duration::from_secs(0)),
+        3..=5 => {
+            let seconds = 2_u64.pow(consecutive_crashes);
+            Some(Duration::from_secs(seconds.min(60)))
+        }
+        _ => None,
+    }
+}
+
+fn start_watchdog() {
+    if WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(2));
+        if RESTART_IN_PROGRESS.load(Ordering::SeqCst) {
+            continue;
+        }
+
+        let Some(slot) = LLAMA_CHILD.get() else {
+            continue;
+        };
+
+        let Ok(mut guard) = slot.try_lock() else {
+            continue;
+        };
+
+        let Some(child) = guard.as_mut() else {
+            continue;
+        };
+
+        let status = match child.try_wait() {
+            Ok(Some(status)) => status,
+            Ok(None) => continue,
+            Err(err) => {
+                eprintln!("[llama-watchdog] try_wait failed: {err}");
+                continue;
+            }
+        };
+
+        let expected_stop = EXPECTED_STOP.swap(false, Ordering::SeqCst);
+        let model_id = current_model();
+        guard.take();
+        drop(guard);
+
+        if expected_stop {
+            continue;
+        }
+
+        let Some(model_id) = model_id else {
+            eprintln!("[llama-watchdog] child exited unexpectedly: status={status}; no current model tracked");
+            continue;
+        };
+
+        let (delay, consecutive_crashes, newly_disabled) = {
+            let mut state = match crash_restart_state().lock() {
+                Ok(guard) => guard,
+                Err(err) => {
+                    eprintln!("[llama-watchdog] crash state lock poisoned: {err}");
+                    continue;
+                }
+            };
+
+            if let Some(last_crash_at) = state.last_crash_at {
+                if last_crash_at.elapsed() > Duration::from_secs(120) {
+                    state.consecutive_crashes = 0;
+                }
+            }
+
+            let consecutive_crashes = state.consecutive_crashes;
+            let delay = crash_restart_delay(consecutive_crashes);
+            state.consecutive_crashes = consecutive_crashes.saturating_add(1);
+            state.last_crash_at = Some(Instant::now());
+            let newly_disabled = delay.is_none() && !state.auto_restart_disabled;
+            if delay.is_none() {
+                state.auto_restart_disabled = true;
+            }
+            (delay, consecutive_crashes, newly_disabled)
+        };
+
+        eprintln!(
+                "[llama-watchdog] child exited unexpectedly: status={status}, consecutive_crashes={}, restart_count={}",
+                consecutive_crashes,
+                CRASH_RESTART_COUNT.load(Ordering::SeqCst) + 1
+            );
+
+        let Some(delay) = delay else {
+            if newly_disabled {
+                eprintln!(
+                        "[llama-watchdog] crash loop、停止自動重生: status={status}, consecutive_crashes={}",
+                        consecutive_crashes
+                    );
+            }
+            continue;
+        };
+
+        if RESTART_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+            continue;
+        }
+
+        std::thread::spawn(move || {
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
+
+            if current_model() != Some(model_id) {
+                eprintln!(
+                        "[llama-watchdog] crash restart skipped: model changed or stopped before restart"
+                    );
+                RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            let _switch_guard = match SWITCH_LOCK.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    eprintln!("[llama-watchdog] crash restart skipped: switch in progress");
+                    RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+                    return;
+                }
+            };
+
+            if current_model() != Some(model_id) {
+                eprintln!(
+                        "[llama-watchdog] crash restart skipped: model changed or stopped after switch lock"
+                    );
+                RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            CRASH_RESTART_COUNT.fetch_add(1, Ordering::SeqCst);
+            let restart_result = restart_with_model_internal(model_id, false);
+            if let Err(err) = restart_result {
+                eprintln!("[llama-watchdog] crash restart failed: {err}");
+            }
+
+            RESTART_IN_PROGRESS.store(false, Ordering::SeqCst);
+        });
     });
 }
 
@@ -322,12 +491,17 @@ pub fn spawn_for(id: &ModelId) -> Result<(), String> {
 
     let child = spawn_with_paths(&bin, &model, &mmproj, spec)?;
     store_child(child, id)?;
+    reset_crash_restart_state();
     poll_ready()?;
     start_keepalive();
     Ok(())
 }
 
 pub fn restart_with_model(model_id: ModelId) -> Result<(), String> {
+    restart_with_model_internal(model_id, true)
+}
+
+fn restart_with_model_internal(model_id: ModelId, reset_crash_state: bool) -> Result<(), String> {
     stop_current_server();
 
     let spec = model_id.spec();
@@ -349,6 +523,9 @@ pub fn restart_with_model(model_id: ModelId) -> Result<(), String> {
 
     let child = spawn_with_paths(&bin, &gguf, &mmproj, spec)?;
     store_child(child, &model_id)?;
+    if reset_crash_state {
+        reset_crash_restart_state();
+    }
     poll_ready()?;
     start_keepalive();
     Ok(())
@@ -522,6 +699,7 @@ fn store_child(child: Child, id: &ModelId) -> Result<(), String> {
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(child);
         set_current_model(Some(*id));
+        start_watchdog();
         Ok(())
     } else {
         Err("llama child lock poisoned".to_string())
@@ -575,6 +753,7 @@ pub fn stop() {
 }
 
 fn stop_current_server() {
+    EXPECTED_STOP.store(true, Ordering::SeqCst);
     set_current_model(None);
     if let Some(slot) = LLAMA_CHILD.get() {
         if let Ok(mut guard) = slot.lock() {
@@ -585,6 +764,7 @@ fn stop_current_server() {
             }
         }
     }
+    EXPECTED_STOP.store(false, Ordering::SeqCst);
 }
 
 pub fn is_healthy() -> bool {
@@ -627,9 +807,10 @@ fn try_check_runtime_ready(client: &reqwest::blocking::Client) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        decide_disable_offload, decide_ensure_running_action, decide_should_restart,
-        EnsureRunningDecision, ModelId,
+        crash_restart_delay, decide_disable_offload, decide_ensure_running_action,
+        decide_should_restart, EnsureRunningDecision, ModelId,
     };
+    use std::time::Duration;
 
     #[test]
     fn decide_disable_offload_on_forces_gpu() {
@@ -702,5 +883,25 @@ mod tests {
             decide_ensure_running_action(false, false, Some(ModelId::Qwen3Vl4bInstruct)),
             EnsureRunningDecision::Restart(ModelId::Qwen3Vl4bInstruct)
         );
+    }
+
+    #[test]
+    fn crash_restart_delay_is_immediate_for_first_three_crashes() {
+        assert_eq!(crash_restart_delay(0), Some(Duration::from_secs(0)));
+        assert_eq!(crash_restart_delay(1), Some(Duration::from_secs(0)));
+        assert_eq!(crash_restart_delay(2), Some(Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn crash_restart_delay_exponentially_backs_off_then_caps() {
+        assert_eq!(crash_restart_delay(3), Some(Duration::from_secs(8)));
+        assert_eq!(crash_restart_delay(4), Some(Duration::from_secs(16)));
+        assert_eq!(crash_restart_delay(5), Some(Duration::from_secs(32)));
+    }
+
+    #[test]
+    fn crash_restart_delay_stops_after_crash_loop() {
+        assert_eq!(crash_restart_delay(6), None);
+        assert_eq!(crash_restart_delay(42), None);
     }
 }
