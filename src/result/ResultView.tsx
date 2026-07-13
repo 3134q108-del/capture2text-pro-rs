@@ -25,7 +25,11 @@ import {
   UsageDonut,
 } from "@/components/ui";
 
-type VlmStatus = "idle" | "loading" | "success" | "error";
+const MODEL_LOADING_STATUS = "model-loading";
+const MODEL_LOADING_DOT_INTERVAL_MS = 400;
+const MODEL_LOADING_MAX_DOTS = 4;
+
+type VlmStatus = "idle" | "loading" | typeof MODEL_LOADING_STATUS | "success" | "error";
 type TtsTarget = "original" | "translated";
 type PopupFont = { family: string; size_pt: number } | null;
 
@@ -45,6 +49,7 @@ type VlmPartialEventPayload = {
   translated: string;
   src_lang?: string | null;
 };
+type VlmModelLoadingPayload = { source: string; seq: number };
 type VlmErrorPayload = { code: string; message: string };
 
 type VlmSnapshot = {
@@ -200,6 +205,7 @@ export default function ResultView() {
   const [usageInfo, setUsageInfo] = useState<UsageInfo | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [copiedTarget, setCopiedTarget] = useState<TtsTarget | null>(null);
+  const [modelLoadingDotCount, setModelLoadingDotCount] = useState(1);
 
   const originalReadyTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
@@ -310,6 +316,7 @@ export default function ResultView() {
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
+    let offModelLoading: null | (() => void) = null;
     let offTtsSynthesized: null | (() => void) = null;
     let offTtsDone: null | (() => void) = null;
     let offVlmError: null | (() => void) = null;
@@ -351,6 +358,20 @@ export default function ResultView() {
         return;
       }
 
+      offModelLoading = await listen<VlmModelLoadingPayload>("vlm-model-loading", () => {
+        hasLiveEvent = true;
+        setStatus(MODEL_LOADING_STATUS);
+      });
+      if (disposed) {
+        offModelLoading();
+        offModelLoading = null;
+        offPartial?.();
+        offPartial = null;
+        offFinal?.();
+        offFinal = null;
+        return;
+      }
+
       offTtsSynthesized = await listen<{ target?: string }>("tts-synthesized", (event) => {
         const target = event.payload?.target;
         if (target === "original" || target === "translated") {
@@ -364,6 +385,8 @@ export default function ResultView() {
       if (disposed) {
         offTtsSynthesized();
         offTtsSynthesized = null;
+        offModelLoading?.();
+        offModelLoading = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -398,6 +421,8 @@ export default function ResultView() {
         offTtsDone = null;
         offTtsSynthesized?.();
         offTtsSynthesized = null;
+        offModelLoading?.();
+        offModelLoading = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -413,6 +438,8 @@ export default function ResultView() {
         offTtsDone = null;
         offTtsSynthesized?.();
         offTtsSynthesized = null;
+        offModelLoading?.();
+        offModelLoading = null;
         offPartial?.();
         offPartial = null;
         offFinal?.();
@@ -426,11 +453,25 @@ export default function ResultView() {
       disposed = true;
       offFinal?.();
       offPartial?.();
+      offModelLoading?.();
       offTtsSynthesized?.();
       offTtsDone?.();
       offVlmError?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (status !== MODEL_LOADING_STATUS) {
+      setModelLoadingDotCount(1);
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setModelLoadingDotCount((count) => count % MODEL_LOADING_MAX_DOTS + 1);
+    }, MODEL_LOADING_DOT_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [status]);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -831,6 +872,10 @@ export default function ResultView() {
         {errorMessage ? <div className="rounded bg-red-100 px-3 py-2 text-sm text-red-900">{errorMessage}</div> : null}
         {status === "error" ? (
           <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
+        ) : status === MODEL_LOADING_STATUS ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground break-keep">
+            {"模型啟動中" + ".".repeat(modelLoadingDotCount)}
+          </div>
         ) : (
           <>
               <textarea
