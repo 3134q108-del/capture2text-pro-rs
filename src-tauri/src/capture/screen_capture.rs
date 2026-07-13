@@ -1,8 +1,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
 use std::thread;
 use std::time::Duration;
+use std::{env, fs};
 
 use chrono::Local;
 use image::imageops::crop_imm;
@@ -10,7 +10,8 @@ use image::RgbaImage;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
-    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+    ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    SRCCOPY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -308,7 +309,11 @@ fn capture_rect_via_gdi(rect: ScreenRect) -> io::Result<RgbaImage> {
     }
 
     let result = (|| -> io::Result<RgbaImage> {
-        if let Err(err) = unsafe { BitBlt(mem_dc, 0, 0, rect.w, rect.h, screen_dc, rect.x, rect.y, SRCCOPY) } {
+        if let Err(err) = unsafe {
+            BitBlt(
+                mem_dc, 0, 0, rect.w, rect.h, screen_dc, rect.x, rect.y, SRCCOPY,
+            )
+        } {
             return Err(io::Error::other(format!("BitBlt failed: {err}")));
         }
 

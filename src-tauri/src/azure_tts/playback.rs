@@ -97,8 +97,7 @@ struct Player {
 
 impl Player {
     fn new(app: AppHandle) -> Result<Self, String> {
-        let (stream, stream_handle) =
-            OutputStream::try_default().map_err(|err| err.to_string())?;
+        let (stream, stream_handle) = OutputStream::try_default().map_err(|err| err.to_string())?;
         Ok(Self {
             app,
             sink: None,
@@ -115,8 +114,7 @@ impl Player {
         }
         let source = Decoder::new(Cursor::new(mp3_bytes))
             .map_err(|err| format!("decode mp3 failed: {err}"))?;
-        let sink =
-            Sink::try_new(&self.stream_handle).map_err(|err| err.to_string())?;
+        let sink = Sink::try_new(&self.stream_handle).map_err(|err| err.to_string())?;
         let sink = Arc::new(sink);
         sink.append(source);
         let play_id = self.play_id.fetch_add(1, Ordering::SeqCst) + 1;
@@ -152,19 +150,17 @@ fn spawn_done_monitor(
 ) {
     thread::Builder::new()
         .name("azure-tts-done-monitor".to_string())
-        .spawn(move || {
-            loop {
-                if active_id.load(Ordering::SeqCst) != play_id {
-                    break;
-                }
-                if sink.empty() {
-                    if active_id.load(Ordering::SeqCst) == play_id {
-                        let _ = app.emit("tts-done", serde_json::json!({ "target": target }));
-                    }
-                    break;
-                }
-                thread::sleep(Duration::from_millis(100));
+        .spawn(move || loop {
+            if active_id.load(Ordering::SeqCst) != play_id {
+                break;
             }
+            if sink.empty() {
+                if active_id.load(Ordering::SeqCst) == play_id {
+                    let _ = app.emit("tts-done", serde_json::json!({ "target": target }));
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
         })
         .expect("failed to spawn azure tts done monitor");
 }

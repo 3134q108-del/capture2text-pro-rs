@@ -131,9 +131,9 @@ pub async fn preview_voice(
                 .synthesize(phrase, &voice_id, rate, volume)
                 .await
                 .map_err(|err| err.to_string())?;
-            if let Err(err) = crate::azure_tts::preview_cache::write_cache(
-                &voice_id, rate, volume, &bytes,
-            ) {
+            if let Err(err) =
+                crate::azure_tts::preview_cache::write_cache(&voice_id, rate, volume, &bytes)
+            {
                 eprintln!("[azure-tts] preview cache write failed voice={voice_id}: {err}");
             }
             playback.play(bytes)?;

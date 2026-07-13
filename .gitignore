@@ -45,3 +45,6 @@ T[0-9]*_BRIEFING.md
 
 # Upstream Capture2Text source for reference only(GPL,not redistributed in our repo)
 upstream-reference/
+.codegraph/
+.rtk-cache/
+.cc-onboarded

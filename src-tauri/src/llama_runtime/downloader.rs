@@ -55,7 +55,10 @@ where
             Err(DownloadError::Retriable(err)) => {
                 last_err = err;
                 if let Some(delay) = RETRY_DELAYS.get(attempt) {
-                    eprintln!("[llama-download] transient failure, retrying in {:?}: {}", delay, last_err);
+                    eprintln!(
+                        "[llama-download] transient failure, retrying in {:?}: {}",
+                        delay, last_err
+                    );
                     thread::sleep(*delay);
                     continue;
                 }
@@ -90,10 +93,7 @@ where
         .timeout(Duration::from_secs(3600))
         .build()
         .map_err(|err| DownloadError::Fatal(err.to_string()))?;
-    let mut response = client
-        .get(url)
-        .send()
-        .map_err(map_reqwest_error)?;
+    let mut response = client.get(url).send().map_err(map_reqwest_error)?;
     if !response.status().is_success() {
         let status = response.status();
         if status.is_server_error() {
@@ -107,7 +107,8 @@ where
     }
 
     let total = response.content_length().unwrap_or(0);
-    let mut file = fs::File::create(partial).map_err(|err| DownloadError::Fatal(err.to_string()))?;
+    let mut file =
+        fs::File::create(partial).map_err(|err| DownloadError::Fatal(err.to_string()))?;
     let mut downloaded = 0u64;
     let mut last_report = Instant::now();
     let mut last_reported_bytes = 0u64;
@@ -116,9 +117,7 @@ where
     const REPORT_BYTES: u64 = 8 * 1024 * 1024;
 
     loop {
-        let n = response
-            .read(&mut buf)
-            .map_err(map_io_error)?;
+        let n = response.read(&mut buf).map_err(map_io_error)?;
         if n == 0 {
             break;
         }

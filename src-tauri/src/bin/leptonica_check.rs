@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use capture2text_pro_rs_lib::leptonica::{LeptonicaError, Pix};
-use chrono::Local;
 use capture2text_pro_rs_lib::preprocess::{
     extract_text_block, ExtractParams, ExtractResult, OCR_SCALE_FACTOR_DEFAULT,
 };
+use chrono::Local;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -71,7 +71,10 @@ fn run() -> Result<(), CheckError> {
     let cleaned = binary.remove_border_conn_comps(8)?;
     let conn_comp_count = cleaned.conn_comp_count(8)?;
 
-    let output_name = format!("leptonica_check_{}.png", Local::now().format("%Y%m%d_%H%M%S"));
+    let output_name = format!(
+        "leptonica_check_{}.png",
+        Local::now().format("%Y%m%d_%H%M%S")
+    );
     let output_path = output_dir.join(output_name);
     cleaned.write_png(&output_path)?;
 

@@ -1,10 +1,10 @@
+use crate::vlm::state::{self, VlmSnapshot};
+use crate::window_state::{self, PopupFont};
 use std::path::Path;
 use tauri::{
     AppHandle, LogicalPosition, LogicalSize, Manager, WebviewWindow, WebviewWindowBuilder,
 };
 use tauri_plugin_opener::OpenerExt;
-use crate::window_state::{self, PopupFont};
-use crate::vlm::state::{self, VlmSnapshot};
 
 fn is_valid_separator(value: &str) -> bool {
     matches!(

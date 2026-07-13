@@ -1,20 +1,20 @@
-pub mod screenshot;
-#[allow(dead_code)]
-pub mod preprocess;
 pub mod log;
 pub mod params;
 pub mod pipeline;
+#[allow(dead_code)]
+pub mod preprocess;
 #[allow(clippy::field_reassign_with_default)]
 pub mod screen_capture;
+pub mod screenshot;
 pub mod windows_capture_pool;
 
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Mutex, OnceLock};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 const HOTKEY_CHANNEL_CAPACITY: usize = 8;
 const CAPTURE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -86,7 +86,12 @@ pub fn start_worker() -> io::Result<()> {
             tx,
             join: Mutex::new(Some(join)),
         })
-        .map_err(|_| io::Error::new(io::ErrorKind::AlreadyExists, "capture runtime already initialized"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "capture runtime already initialized",
+            )
+        })?;
 
     Ok(())
 }

@@ -46,12 +46,10 @@ pub fn start_worker(app_handle: tauri::AppHandle) {
     let started_at = Instant::now();
     if let Err(err) = std::thread::Builder::new()
         .name("diagnostic-worker".to_string())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(interval);
-                let snapshot = collect_snapshot(started_at);
-                append_snapshot(&app_handle, &snapshot);
-            }
+        .spawn(move || loop {
+            std::thread::sleep(interval);
+            let snapshot = collect_snapshot(started_at);
+            append_snapshot(&app_handle, &snapshot);
         })
     {
         DIAG_WORKER_STARTED.store(false, Ordering::SeqCst);
@@ -86,7 +84,10 @@ fn append_snapshot(app_handle: &tauri::AppHandle, snapshot: &DiagSnapshot) {
         }
     };
     if let Err(err) = fs::create_dir_all(&dir) {
-        eprintln!("[diagnostic] create log dir {} failed: {err}", dir.display());
+        eprintln!(
+            "[diagnostic] create log dir {} failed: {err}",
+            dir.display()
+        );
         return;
     }
 

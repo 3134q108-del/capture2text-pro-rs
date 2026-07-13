@@ -1,8 +1,7 @@
 use chrono::{Datelike, Utc};
 
 pub fn count_billable_chars(prosody_open: &str, escaped_text: &str, prosody_close: &str) -> u64 {
-    let markup =
-        prosody_open.chars().count() as u64 + prosody_close.chars().count() as u64;
+    let markup = prosody_open.chars().count() as u64 + prosody_close.chars().count() as u64;
     let text = escaped_text
         .chars()
         .map(|ch| if is_cjk_ideograph(ch) { 2 } else { 1 })
@@ -45,11 +44,8 @@ mod tests {
         let escaped_text = "春&amp;A";
         let prosody_close = "</prosody>";
 
-        let expected = prosody_open.chars().count() as u64
-            + prosody_close.chars().count() as u64
-            + 2
-            + 5
-            + 1;
+        let expected =
+            prosody_open.chars().count() as u64 + prosody_close.chars().count() as u64 + 2 + 5 + 1;
         assert_eq!(
             count_billable_chars(prosody_open, escaped_text, prosody_close),
             expected

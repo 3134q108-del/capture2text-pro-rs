@@ -31,7 +31,11 @@ pub fn set_loading(source: impl AsRef<str>) {
     });
 }
 
-pub fn set_partial(source: impl AsRef<str>, original: impl AsRef<str>, translated: impl AsRef<str>) {
+pub fn set_partial(
+    source: impl AsRef<str>,
+    original: impl AsRef<str>,
+    translated: impl AsRef<str>,
+) {
     eprintln!("[state] set_partial source={}", source.as_ref());
     update(VlmSnapshot {
         source: source.as_ref().to_string(),

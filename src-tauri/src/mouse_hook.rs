@@ -92,11 +92,7 @@ pub fn uninstall() {
     runtime.active.store(false, Ordering::Release);
     RIGHT_MOUSE_BUTTON_HELD.store(false, Ordering::Relaxed);
 
-    let state = runtime
-        .state
-        .lock()
-        .ok()
-        .and_then(|mut guard| guard.take());
+    let state = runtime.state.lock().ok().and_then(|mut guard| guard.take());
     let Some(state) = state else {
         return;
     };

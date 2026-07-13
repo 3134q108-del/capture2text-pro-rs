@@ -181,10 +181,7 @@ fn erase_connecting_border_pixels_right(
     Ok(())
 }
 
-fn erase_connecting_border_pixels_below(
-    bin: &mut Pix,
-    below_y: i32,
-) -> Result<(), LeptonicaError> {
+fn erase_connecting_border_pixels_below(bin: &mut Pix, below_y: i32) -> Result<(), LeptonicaError> {
     let border_conn = bin.extract_border_conn_comps(PIPELINE_CONNECTIVITY)?;
     let h = border_conn.height();
     let w = border_conn.width();

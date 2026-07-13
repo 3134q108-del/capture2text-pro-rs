@@ -163,7 +163,11 @@ pub fn save(inv: &Inventory) {
 fn save_to_path(inv: &Inventory, final_path: &Path) {
     if let Some(parent) = final_path.parent() {
         if let Err(err) = fs::create_dir_all(parent) {
-            eprintln!("[inventory] create dir {} failed: {}", parent.display(), err);
+            eprintln!(
+                "[inventory] create dir {} failed: {}",
+                parent.display(),
+                err
+            );
             return;
         }
     }
@@ -180,16 +184,28 @@ fn save_to_path(inv: &Inventory, final_path: &Path) {
     let mut file = match fs::File::create(&tmp_path) {
         Ok(f) => f,
         Err(err) => {
-            eprintln!("[inventory] create tmp {} failed: {}", tmp_path.display(), err);
+            eprintln!(
+                "[inventory] create tmp {} failed: {}",
+                tmp_path.display(),
+                err
+            );
             return;
         }
     };
     if let Err(err) = file.write_all(&json) {
-        eprintln!("[inventory] write tmp {} failed: {}", tmp_path.display(), err);
+        eprintln!(
+            "[inventory] write tmp {} failed: {}",
+            tmp_path.display(),
+            err
+        );
         return;
     }
     if let Err(err) = file.sync_all() {
-        eprintln!("[inventory] sync tmp {} failed: {}", tmp_path.display(), err);
+        eprintln!(
+            "[inventory] sync tmp {} failed: {}",
+            tmp_path.display(),
+            err
+        );
         return;
     }
     drop(file);

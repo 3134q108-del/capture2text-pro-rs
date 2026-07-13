@@ -55,9 +55,9 @@ pub async fn speak(
 
     let handle = tokio::spawn(async move {
         let result = async {
-            let mp3 = if let Some(bytes) = crate::azure_tts::speak_cache::read_cached(
-                &voice_id, &text, rate, volume,
-            ) {
+            let mp3 = if let Some(bytes) =
+                crate::azure_tts::speak_cache::read_cached(&voice_id, &text, rate, volume)
+            {
                 bytes
             } else {
                 let provider = AzureProvider::new(region, key);
@@ -65,11 +65,9 @@ pub async fn speak(
                     .synthesize(&text, &voice_id, rate, volume)
                     .await
                     .map_err(|err| err.to_string())?;
-                if let Err(err) =
-                    crate::azure_tts::speak_cache::write_cache(
-                        &voice_id, &text, rate, volume, &bytes,
-                    )
-                {
+                if let Err(err) = crate::azure_tts::speak_cache::write_cache(
+                    &voice_id, &text, rate, volume, &bytes,
+                ) {
                     eprintln!("[azure-tts] speak cache write failed voice={voice_id}: {err}");
                 }
                 bytes

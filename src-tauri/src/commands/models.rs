@@ -13,7 +13,10 @@ fn models_dir() -> Result<PathBuf, String> {
 
 fn model_files(spec: &ModelSpec) -> Result<(PathBuf, PathBuf), String> {
     let dir = models_dir()?;
-    Ok((dir.join(spec.gguf_filename()), dir.join(spec.mmproj_filename())))
+    Ok((
+        dir.join(spec.gguf_filename()),
+        dir.join(spec.mmproj_filename()),
+    ))
 }
 
 fn is_downloaded(spec: &ModelSpec) -> bool {
@@ -125,36 +128,44 @@ pub async fn download_model(id: String) -> Result<(), String> {
         let spec = model_id.spec();
 
         let id_clone = id_for_progress.clone();
-        downloader::download_file_with_progress(spec.gguf_url, &gguf_path, move |downloaded, total| {
-            if let Some(app) = crate::app_handle::get() {
-                use tauri::Emitter;
-                let _ = app.emit(
-                    "model-download-progress",
-                    serde_json::json!({
-                        "model_id": id_clone,
-                        "file": "gguf",
-                        "downloaded": downloaded,
-                        "total": total,
-                    }),
-                );
-            }
-        })?;
+        downloader::download_file_with_progress(
+            spec.gguf_url,
+            &gguf_path,
+            move |downloaded, total| {
+                if let Some(app) = crate::app_handle::get() {
+                    use tauri::Emitter;
+                    let _ = app.emit(
+                        "model-download-progress",
+                        serde_json::json!({
+                            "model_id": id_clone,
+                            "file": "gguf",
+                            "downloaded": downloaded,
+                            "total": total,
+                        }),
+                    );
+                }
+            },
+        )?;
 
         let id_clone = id_for_progress.clone();
-        let mmproj_result = downloader::download_file_with_progress(spec.mmproj_url, &mmproj_path, move |downloaded, total| {
-            if let Some(app) = crate::app_handle::get() {
-                use tauri::Emitter;
-                let _ = app.emit(
-                    "model-download-progress",
-                    serde_json::json!({
-                        "model_id": id_clone,
-                        "file": "mmproj",
-                        "downloaded": downloaded,
-                        "total": total,
-                    }),
-                );
-            }
-        });
+        let mmproj_result = downloader::download_file_with_progress(
+            spec.mmproj_url,
+            &mmproj_path,
+            move |downloaded, total| {
+                if let Some(app) = crate::app_handle::get() {
+                    use tauri::Emitter;
+                    let _ = app.emit(
+                        "model-download-progress",
+                        serde_json::json!({
+                            "model_id": id_clone,
+                            "file": "mmproj",
+                            "downloaded": downloaded,
+                            "total": total,
+                        }),
+                    );
+                }
+            },
+        );
 
         if let Err(e) = mmproj_result {
             // rollback: 刪掉已成功下載的 gguf，避免殘檔

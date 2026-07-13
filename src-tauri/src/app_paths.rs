@@ -78,7 +78,11 @@ pub fn ensure_migration() {
         match fs::rename(&src, &dst) {
             Ok(_) => moved += 1,
             Err(e) => {
-                eprintln!("[migration] {} -> {} failed: {e}", src.display(), dst.display());
+                eprintln!(
+                    "[migration] {} -> {} failed: {e}",
+                    src.display(),
+                    dst.display()
+                );
                 failed += 1;
             }
         }

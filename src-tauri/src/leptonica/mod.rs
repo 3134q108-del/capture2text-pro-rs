@@ -10,8 +10,8 @@ use leptonica_sys::{
     pixConvertTo8, pixDestroy, pixExtractBorderConnComps, pixGetDepth, pixGetHeight, pixGetPixel,
     pixGetWidth, pixInvert, pixOtsuAdaptiveThreshold, pixReadMem, pixRemoveBorderConnComps,
     pixScale, pixScaleGrayLI, pixSelectBySize, pixSetResolution, pixUnsharpMaskingGray,
-    pixWriteMem, pixaDestroy, pixaGetCount, Box as LepBox, Boxa, L_SELECT_IF_EITHER,
-    L_SELECT_IF_GT, Pix as LepPix, Pixa,
+    pixWriteMem, pixaDestroy, pixaGetCount, Box as LepBox, Boxa, Pix as LepPix, Pixa,
+    L_SELECT_IF_EITHER, L_SELECT_IF_GT,
 };
 use thiserror::Error;
 

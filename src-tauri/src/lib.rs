@@ -1,6 +1,9 @@
-use tauri::Manager;
 use std::sync::{Arc, OnceLock};
+use tauri::Manager;
 
+mod app_handle;
+mod app_paths;
+mod azure_tts;
 mod capture;
 mod clipboard;
 mod commands;
@@ -10,19 +13,16 @@ mod error;
 mod hotkey;
 mod inventory;
 mod languages;
+pub mod leptonica;
 mod llama_runtime;
-mod overlay;
+pub mod mouse_hook;
 mod output_lang;
-mod app_paths;
-mod app_handle;
-mod azure_tts;
+mod overlay;
 mod scenarios;
 mod tray;
 mod tts;
-mod window_state;
-pub mod leptonica;
-pub mod mouse_hook;
 pub mod vlm;
+mod window_state;
 pub use crate::capture::preprocess;
 use crate::capture::windows_capture_pool::CapturePool;
 
@@ -79,13 +79,17 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    let _ = crate::commands::result_window::show_settings_window(app_handle.clone());
+                    let _ =
+                        crate::commands::result_window::show_settings_window(app_handle.clone());
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     use tauri::Emitter;
-                    let _ = app_handle.emit("vlm-error", serde_json::json!({
-                        "error": "no_model",
-                        "message": "請先下載並選擇 AI 模型"
-                    }));
+                    let _ = app_handle.emit(
+                        "vlm-error",
+                        serde_json::json!({
+                            "error": "no_model",
+                            "message": "請先下載並選擇 AI 模型"
+                        }),
+                    );
                     let _ = app_handle.emit_to("settings", "settings-navigate", "models");
                 });
             }
@@ -214,4 +218,3 @@ pub fn run() {
         }
     });
 }
-
