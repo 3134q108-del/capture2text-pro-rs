@@ -409,6 +409,15 @@ pub fn init_worker(app_handle: AppHandle) {
                     let source_for_partial = source_label.clone();
                     let source_for_loading = source_label.clone();
                     let lang_code = target_lang.as_str();
+                    if llama_runtime::needs_switch_for_lang(lang_code) {
+                        emit_vlm_model_loading_event(
+                            &app_handle,
+                            VlmModelLoadingPayload {
+                                source: source_label.clone(),
+                                seq,
+                            },
+                        );
+                    }
                     if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
                         let message = format!("switch model for lang {lang_code} failed: {err}");
                         if is_seq_cancelled(Some(seq)) {

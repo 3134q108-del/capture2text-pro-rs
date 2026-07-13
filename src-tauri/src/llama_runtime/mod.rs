@@ -52,6 +52,10 @@ pub fn switch_model(target: ModelId) -> Result<(), String> {
     Ok(())
 }
 
+pub fn needs_switch_for_lang(lang: &str) -> bool {
+    should_switch_for_lang_impl(active_model(), lang, is_model_downloaded)
+}
+
 pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
     if !any_model_downloaded() {
         return Err("no_model: 請先下載並選擇 AI 模型".to_string());
@@ -83,6 +87,25 @@ pub fn ensure_model_for_lang(lang: &str) -> Result<(), String> {
         );
         Ok(())
     }
+}
+
+fn should_switch_for_lang_impl<F>(
+    current: Option<ModelId>,
+    lang: &str,
+    mut is_downloaded: F,
+) -> bool
+where
+    F: FnMut(&ModelId) -> bool,
+{
+    if let Some(current) = current {
+        if current.supports_lang(lang) {
+            return false;
+        }
+    }
+
+    manifest::ALL_MODELS
+        .iter()
+        .any(|id| is_downloaded(id) && id.supports_lang(lang))
 }
 
 pub fn any_model_downloaded() -> bool {
@@ -185,4 +208,35 @@ fn head_content_length(url: &str) -> Result<u64, String> {
         ));
     }
     Ok(response.content_length().unwrap_or(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switch_decision_checks_current_and_downloaded_support() {
+        let only_8b_downloaded = |id: &ModelId| matches!(id, ModelId::Qwen3Vl8bInstruct);
+
+        assert!(!should_switch_for_lang_impl(
+            Some(ModelId::Qwen3Vl8bInstruct),
+            "en-US",
+            only_8b_downloaded
+        ));
+        assert!(should_switch_for_lang_impl(
+            Some(ModelId::Qwen3Vl2bInstruct),
+            "vi-VN",
+            only_8b_downloaded
+        ));
+        assert!(!should_switch_for_lang_impl(
+            Some(ModelId::Qwen3Vl2bInstruct),
+            "vi-VN",
+            |_| false
+        ));
+        assert!(should_switch_for_lang_impl(
+            None,
+            "en-US",
+            only_8b_downloaded
+        ));
+    }
 }
