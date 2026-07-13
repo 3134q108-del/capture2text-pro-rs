@@ -331,6 +331,10 @@ pub fn get() -> WindowState {
     }
 }
 
+pub fn popup_show_enabled() -> bool {
+    get().popup_show_enabled
+}
+
 pub fn set_popup_size(w: u32, h: u32) {
     update(|state| {
         state.popup_width = w;

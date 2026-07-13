@@ -25,11 +25,18 @@ import {
   UsageDonut,
 } from "@/components/ui";
 
+const RECOGNIZING_STATUS = "recognizing";
 const MODEL_LOADING_STATUS = "model-loading";
 const MODEL_LOADING_DOT_INTERVAL_MS = 400;
 const MODEL_LOADING_MAX_DOTS = 4;
 
-type VlmStatus = "idle" | "loading" | typeof MODEL_LOADING_STATUS | "success" | "error";
+type VlmStatus =
+  | "idle"
+  | "loading"
+  | typeof RECOGNIZING_STATUS
+  | typeof MODEL_LOADING_STATUS
+  | "success"
+  | "error";
 type TtsTarget = "original" | "translated";
 type PopupFont = { family: string; size_pt: number } | null;
 
@@ -49,6 +56,7 @@ type VlmPartialEventPayload = {
   translated: string;
   src_lang?: string | null;
 };
+type VlmCaptureStartedPayload = { seq: number };
 type VlmModelLoadingPayload = { source: string; seq: number };
 type VlmErrorPayload = { code: string; message: string };
 
@@ -209,6 +217,7 @@ export default function ResultView() {
 
   const originalReadyTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const latestVlmSeqRef = useRef(0);
   const lastOriginalRef = useRef("");
   const activeSpeakTargetRef = useRef<TtsTarget | null>(null);
   const speakingStateRef = useRef<SpeakingState>({ kind: "idle" } as SpeakingState);
@@ -229,6 +238,20 @@ export default function ResultView() {
   function showSpeakError(target: TtsTarget, message: string) {
     dispatchSpeakNotice({ type: "SHOW_ERROR", target, message });
     dispatchSpeaking({ type: "FAIL", target });
+  }
+
+  function applyBusyPayload(nextStatus: typeof RECOGNIZING_STATUS | typeof MODEL_LOADING_STATUS) {
+    clearOriginalReadyTimer();
+    setStatus(nextStatus);
+    setOriginal("");
+    setTranslated("");
+    setSrcLang(null);
+    setErrorMsg("");
+    setErrorMessage("");
+    setOriginalReady(false);
+    setTranslatedReady(false);
+    lastOriginalRef.current = "";
+    dispatchSpeaking({ type: "DONE" });
   }
 
   function applyFinalPayload(payload: VlmEventPayload) {
@@ -315,6 +338,7 @@ export default function ResultView() {
     let disposed = false;
     let hasLiveEvent = false;
     let offFinal: null | (() => void) = null;
+    let offCaptureStarted: null | (() => void) = null;
     let offPartial: null | (() => void) = null;
     let offModelLoading: null | (() => void) = null;
     let offTtsSynthesized: null | (() => void) = null;
@@ -332,6 +356,23 @@ export default function ResultView() {
         return;
       }
 
+      offCaptureStarted = await listen<VlmCaptureStartedPayload>("vlm-capture-started", (event) => {
+        const seq = event.payload?.seq ?? 0;
+        if (seq < latestVlmSeqRef.current) {
+          return;
+        }
+        latestVlmSeqRef.current = seq;
+        hasLiveEvent = true;
+        applyBusyPayload(RECOGNIZING_STATUS);
+      });
+      if (disposed) {
+        offCaptureStarted();
+        offCaptureStarted = null;
+        offFinal?.();
+        offFinal = null;
+        return;
+      }
+
       try {
         const latest = await invoke<VlmSnapshot | null>("get_latest_vlm_state");
         if (!disposed && !hasLiveEvent && latest) {
@@ -343,6 +384,8 @@ export default function ResultView() {
       if (disposed) {
         offFinal?.();
         offFinal = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         return;
       }
 
@@ -353,20 +396,29 @@ export default function ResultView() {
       if (disposed) {
         offPartial();
         offPartial = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         offFinal?.();
         offFinal = null;
         return;
       }
 
-      offModelLoading = await listen<VlmModelLoadingPayload>("vlm-model-loading", () => {
+      offModelLoading = await listen<VlmModelLoadingPayload>("vlm-model-loading", (event) => {
+        const seq = event.payload?.seq ?? 0;
+        if (seq < latestVlmSeqRef.current) {
+          return;
+        }
+        latestVlmSeqRef.current = seq;
         hasLiveEvent = true;
-        setStatus(MODEL_LOADING_STATUS);
+        applyBusyPayload(MODEL_LOADING_STATUS);
       });
       if (disposed) {
         offModelLoading();
         offModelLoading = null;
         offPartial?.();
         offPartial = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         offFinal?.();
         offFinal = null;
         return;
@@ -389,6 +441,8 @@ export default function ResultView() {
         offModelLoading = null;
         offPartial?.();
         offPartial = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         offFinal?.();
         offFinal = null;
         return;
@@ -425,6 +479,8 @@ export default function ResultView() {
         offModelLoading = null;
         offPartial?.();
         offPartial = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         offFinal?.();
         offFinal = null;
         return;
@@ -442,6 +498,8 @@ export default function ResultView() {
         offModelLoading = null;
         offPartial?.();
         offPartial = null;
+        offCaptureStarted?.();
+        offCaptureStarted = null;
         offFinal?.();
         offFinal = null;
       }
@@ -452,6 +510,7 @@ export default function ResultView() {
     return () => {
       disposed = true;
       offFinal?.();
+      offCaptureStarted?.();
       offPartial?.();
       offModelLoading?.();
       offTtsSynthesized?.();
@@ -461,7 +520,7 @@ export default function ResultView() {
   }, []);
 
   useEffect(() => {
-    if (status !== MODEL_LOADING_STATUS) {
+    if (status !== RECOGNIZING_STATUS && status !== MODEL_LOADING_STATUS) {
       setModelLoadingDotCount(1);
       return;
     }
@@ -872,9 +931,9 @@ export default function ResultView() {
         {errorMessage ? <div className="rounded bg-red-100 px-3 py-2 text-sm text-red-900">{errorMessage}</div> : null}
         {status === "error" ? (
           <Banner tone="destructive" title="Error" description={errorMsg || "unknown error"} />
-        ) : status === MODEL_LOADING_STATUS ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground break-keep">
-            {"模型啟動中" + ".".repeat(modelLoadingDotCount)}
+        ) : status === RECOGNIZING_STATUS || status === MODEL_LOADING_STATUS ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center break-keep text-center text-sm text-muted-foreground">
+            {`${status === RECOGNIZING_STATUS ? "辨識中" : "模型啟動中"}${".".repeat(modelLoadingDotCount)}`}
           </div>
         ) : (
           <>

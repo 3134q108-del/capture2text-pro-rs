@@ -31,6 +31,7 @@ const QWEN3VL_MIN_DIM: u32 = 32;
 const REQUEST_TIMEOUT_MS: u64 = 90_000;
 const LOADING_RETRY_DELAY_MS: u64 = 500;
 const MODEL_LOADING_MAX_MS: u64 = 180_000;
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 fn llama_chat_url() -> String {
     format!("http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions")
@@ -149,6 +150,11 @@ pub struct VlmModelLoadingPayload {
     pub seq: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct VlmCaptureStartedPayload {
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PartialOutput {
     pub raw_accumulated: String,
@@ -229,6 +235,7 @@ pub fn init_worker(app_handle: AppHandle) {
     if VLM_RUNTIME.get().is_some() {
         return;
     }
+    let _ = APP_HANDLE.set(app_handle.clone());
     state::init();
 
     let queue = Arc::new(VlmQueue::new());
@@ -262,6 +269,9 @@ pub fn init_worker(app_handle: AppHandle) {
                 let lang_code = job_model_lang(&job);
                 if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
                     let message = format!("switch model for lang {lang_code} failed: {err}");
+                    if is_seq_cancelled(current_seq) {
+                        continue;
+                    }
                     eprintln!("[vlm] source={} failed: {}", source_label, message);
                     set_active_src_lang(None);
                     emit_vlm_event(
@@ -385,6 +395,9 @@ pub fn init_worker(app_handle: AppHandle) {
                         if matches!(err, VlmError::Cancelled) {
                             continue;
                         }
+                        if is_seq_cancelled(current_seq) {
+                            continue;
+                        }
                         eprintln!("[vlm] source={} failed: {err}", source);
                         set_active_src_lang(None);
                         emit_vlm_event(
@@ -434,12 +447,16 @@ fn set_active_src_lang(lang: Option<String>) {
 pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: String, source: &'static str, seq: u64) {
     cancel_current();
     LATEST_OCR_SEQ.store(seq, Ordering::SeqCst);
-    try_submit(VlmJob::OcrAndTranslate {
+    let job = VlmJob::OcrAndTranslate {
         png_bytes,
         target_lang,
         source,
         seq,
-    });
+    };
+    if VLM_RUNTIME.get().is_some() {
+        emit_vlm_capture_started_event(VlmCaptureStartedPayload { seq });
+    }
+    let _ = try_submit(job);
 }
 
 pub fn try_submit_text(text: String, target_lang: String, source: &'static str) {
@@ -451,13 +468,14 @@ pub fn try_submit_text(text: String, target_lang: String, source: &'static str) 
     });
 }
 
-fn try_submit(job: VlmJob) {
+fn try_submit(job: VlmJob) -> bool {
     let Some(runtime) = VLM_RUNTIME.get() else {
         eprintln!("[vlm] worker not initialized, dropping request");
-        return;
+        return false;
     };
 
     runtime.queue.submit(job);
+    true
 }
 
 fn job_source(job: &VlmJob) -> &'static str {
@@ -559,6 +577,26 @@ fn emit_vlm_model_loading_event(app_handle: &AppHandle, payload: VlmModelLoading
         payload.source, payload.seq
     );
     let _ = app_handle.emit_to("result", "vlm-model-loading", &payload);
+    if crate::window_state::popup_show_enabled() {
+        spawn_result_window_visible_unfocused(app_handle);
+    }
+}
+
+fn emit_vlm_capture_started_event(payload: VlmCaptureStartedPayload) {
+    eprintln!("[emit] capture-started seq={}", payload.seq);
+    if let Some(app_handle) = APP_HANDLE.get() {
+        let _ = app_handle.emit_to("result", "vlm-capture-started", &payload);
+        if crate::window_state::popup_show_enabled() {
+            spawn_result_window_visible_unfocused(app_handle);
+        }
+    }
+}
+
+fn spawn_result_window_visible_unfocused(app_handle: &AppHandle) {
+    let app_clone = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        ensure_result_window_visible_unfocused(&app_clone);
+    });
 }
 
 pub fn cancel_current() {
@@ -590,6 +628,27 @@ fn ensure_result_window_visible(app_handle: &AppHandle) {
     }
 
     thread::sleep(Duration::from_millis(50));
+}
+
+fn ensure_result_window_visible_unfocused(app_handle: &AppHandle) {
+    let window =
+        match crate::commands::result_window::ensure_webview_window(app_handle.clone(), "result") {
+            Ok(window) => window,
+            Err(err) => {
+                eprintln!(
+                    "[emit] ensure_result_window_visible_unfocused: window creation failed: {err}"
+                );
+                return;
+            }
+        };
+
+    if let Err(err) = window.unminimize() {
+        eprintln!("[emit] unminimize (unfocused) failed: {err}");
+    }
+
+    if let Err(err) = window.show() {
+        eprintln!("[emit] show (unfocused) failed: {err}");
+    }
 }
 
 pub fn check_health() -> HealthStatus {
