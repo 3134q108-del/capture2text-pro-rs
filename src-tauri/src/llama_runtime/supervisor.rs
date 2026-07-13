@@ -596,6 +596,7 @@ fn spawn_with_paths(
         .arg("127.0.0.1")
         .arg("--port")
         .arg(LLAMA_PORT.to_string())
+        .arg("--log-timestamps")
         .arg("--n-gpu-layers")
         .arg("999");
 

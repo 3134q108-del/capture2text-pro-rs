@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use chrono::Local;
+use chrono::{Local, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
@@ -111,12 +111,13 @@ impl HealthStatus {
     }
 }
 
-pub enum VlmJob {
+enum VlmJob {
     OcrAndTranslate {
         png_bytes: Vec<u8>,
         target_lang: String,
         source: &'static str,
         seq: u64,
+        perf: OcrPerfCapture,
     },
     TranslateText {
         text: String,
@@ -134,6 +135,123 @@ pub struct VlmEventPayload {
     pub src_lang: Option<String>,
     pub duration_ms: u64,
     pub error: Option<String>,
+}
+
+#[derive(Debug)]
+struct OcrPerfCapture {
+    seq: u64,
+    source: String,
+    submit_at: Instant,
+    dequeued_at: Option<Instant>,
+    post_sent_at: Option<Instant>,
+    first_delta_at: Option<Instant>,
+    stream_done_at: Option<Instant>,
+    retry_503: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct OcrPerfLogLine {
+    ts: String,
+    seq: u64,
+    source: String,
+    queue_ms: u64,
+    model_wait_ms: u64,
+    ttft_ms: u64,
+    stream_ms: u64,
+    total_ms: u64,
+    outcome: PerfOutcome,
+    retry_503: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PerfOutcome {
+    Success,
+    Error,
+    Cancelled,
+}
+
+impl OcrPerfCapture {
+    fn new(seq: u64, source: &str) -> Self {
+        Self {
+            seq,
+            source: source.to_string(),
+            submit_at: Instant::now(),
+            dequeued_at: None,
+            post_sent_at: None,
+            first_delta_at: None,
+            stream_done_at: None,
+            retry_503: 0,
+        }
+    }
+
+    fn mark_dequeued(&mut self) {
+        if self.dequeued_at.is_none() {
+            self.dequeued_at = Some(Instant::now());
+        }
+    }
+
+    fn mark_post_sent(&mut self, at: Instant) {
+        self.post_sent_at = Some(at);
+    }
+
+    fn mark_stream_done(&mut self) {
+        if self.stream_done_at.is_none() {
+            self.stream_done_at = Some(Instant::now());
+        }
+    }
+
+    fn mark_first_delta(&mut self) {
+        if self.first_delta_at.is_none() {
+            self.first_delta_at = Some(Instant::now());
+        }
+    }
+
+    fn increment_retry_503(&mut self) {
+        self.retry_503 = self.retry_503.saturating_add(1);
+    }
+
+    fn finalize(self, outcome: PerfOutcome) -> OcrPerfLogLine {
+        let finished_at = Instant::now();
+        let queue_end = self.dequeued_at.unwrap_or(finished_at);
+        let model_wait_start = self.dequeued_at.unwrap_or(self.submit_at);
+        let model_wait_end = self.post_sent_at.unwrap_or(finished_at);
+        let queue_ms = elapsed_ms(self.submit_at, queue_end);
+        let model_wait_ms = if self.dequeued_at.is_some() {
+            elapsed_ms(model_wait_start, model_wait_end)
+        } else {
+            0
+        };
+        let ttft_ms = match (self.post_sent_at, self.first_delta_at) {
+            (Some(post_sent_at), Some(first_delta_at)) if first_delta_at >= post_sent_at => {
+                elapsed_ms(post_sent_at, first_delta_at)
+            }
+            _ => 0,
+        };
+        let stream_ms = match (self.first_delta_at, self.stream_done_at) {
+            (Some(first_delta_at), Some(stream_done_at)) if stream_done_at >= first_delta_at => {
+                elapsed_ms(first_delta_at, stream_done_at)
+            }
+            _ => 0,
+        };
+
+        OcrPerfLogLine {
+            ts: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            seq: self.seq,
+            source: self.source,
+            queue_ms,
+            model_wait_ms,
+            ttft_ms,
+            stream_ms,
+            total_ms: elapsed_ms(self.submit_at, finished_at),
+            outcome,
+            retry_503: self.retry_503,
+        }
+    }
+}
+
+fn elapsed_ms(start: Instant, end: Instant) -> u64 {
+    end.saturating_duration_since(start).as_millis() as u64
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,17 +319,25 @@ impl VlmQueue {
         }
     }
 
-    fn submit(&self, job: VlmJob) {
+    fn submit(&self, job: VlmJob) -> Vec<OcrPerfCapture> {
         let mut guard = match self.inner.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        guard.retain(|queued| match queued {
-            VlmJob::OcrAndTranslate { seq, .. } => !is_seq_cancelled(Some(*seq)),
-            VlmJob::TranslateText { .. } => true,
-        });
+        let mut kept = VecDeque::with_capacity(guard.len() + 1);
+        let mut dropped_perf = Vec::new();
+        while let Some(queued) = guard.pop_front() {
+            match queued {
+                VlmJob::OcrAndTranslate { seq, perf, .. } if is_seq_cancelled(Some(seq)) => {
+                    dropped_perf.push(perf);
+                }
+                other => kept.push_back(other),
+            }
+        }
+        *guard = kept;
         guard.push_back(job);
         self.cvar.notify_one();
+        dropped_perf
     }
 
     fn recv(&self) -> VlmJob {
@@ -242,114 +368,67 @@ pub fn init_worker(app_handle: AppHandle) {
     let worker_queue = Arc::clone(&queue);
     let join = match thread::Builder::new()
         .name("vlm-worker".to_string())
-        .spawn(move || {
-            loop {
-                let job = worker_queue.recv();
-                let current_seq = job_seq(&job);
-                eprintln!(
-                    "[vlm worker] seq={} pulled source={}",
-                    current_seq
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "none".to_string()),
-                    job_source(&job)
-                );
-                // 連按時 stale OCR job 秒丟，不進入 loading/model-switch 路徑
-                if let VlmJob::OcrAndTranslate { seq, .. } = &job {
-                    if is_seq_cancelled(Some(*seq)) {
+        .spawn(move || loop {
+            let job = worker_queue.recv();
+            let current_seq = job_seq(&job);
+            eprintln!(
+                "[vlm worker] seq={} pulled source={}",
+                current_seq
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                job_source(&job)
+            );
+            match job {
+                VlmJob::OcrAndTranslate {
+                    png_bytes,
+                    target_lang,
+                    source,
+                    seq,
+                    mut perf,
+                } => {
+                    perf.mark_dequeued();
+                    if is_seq_cancelled(Some(seq)) {
+                        spawn_perf_log(perf, PerfOutcome::Cancelled);
                         continue;
                     }
-                    eprintln!(
-                        "[vlm worker] seq={} processing source={}",
-                        seq,
-                        job_source(&job)
-                    );
-                }
-                state::set_loading(job_source(&job));
-                let source_label = job_source(&job).to_string();
-                let lang_code = job_model_lang(&job);
-                if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
-                    let message = format!("switch model for lang {lang_code} failed: {err}");
-                    if is_seq_cancelled(current_seq) {
-                        continue;
-                    }
-                    eprintln!("[vlm] source={} failed: {}", source_label, message);
-                    set_active_src_lang(None);
-                    emit_vlm_event(
-                        &app_handle,
-                        VlmEventPayload {
-                            source: source_label,
-                            status: "error".to_string(),
-                            original: String::default(),
-                            translated: String::new(),
-                            src_lang: None,
-                            duration_ms: 0,
-                            error: Some(message),
-                        },
-                    );
-                    continue;
-                }
-                if let Some(seq) = job_seq(&job) {
-                    eprintln!("[vlm worker] seq={} model ready", seq);
-                }
-
-                let (source, result) = match job {
-                    VlmJob::OcrAndTranslate {
-                        png_bytes,
-                        target_lang,
-                        source,
-                        seq,
-                    } => {
+                    state::set_loading(source);
+                    eprintln!("[vlm worker] seq={} processing source={}", seq, source);
+                    let source_label = source.to_string();
+                    let target_lang_for_log = target_lang.clone();
+                    let source_for_partial = source_label.clone();
+                    let source_for_loading = source_label.clone();
+                    let lang_code = target_lang.as_str();
+                    if let Err(err) = llama_runtime::ensure_model_for_lang(lang_code) {
+                        let message = format!("switch model for lang {lang_code} failed: {err}");
                         if is_seq_cancelled(Some(seq)) {
+                            spawn_perf_log(perf, PerfOutcome::Cancelled);
                             continue;
                         }
-                        let source_label = source.to_string();
-                        let target_lang_for_log = target_lang.clone();
-                        eprintln!("[vlm worker] seq={} submitting to llama", seq);
-                        let source_for_partial = source_label.clone();
-                        let source_for_loading = source_label.clone();
-                        let result = ocr_and_translate_streaming(
-                            &png_bytes,
-                            target_lang,
-                            Some(seq),
-                            |partial| {
-                                emit_vlm_partial_event(
-                                    &app_handle,
-                                    VlmPartialEventPayload {
-                                        source: source_for_partial.clone(),
-                                        original: partial.original.clone().unwrap_or_default(),
-                                        translated: partial.translated.clone().unwrap_or_default(),
-                                        src_lang: partial.src_lang.clone(),
-                                    },
-                                    Some(seq),
-                                );
-                            },
-                            || {
-                                emit_vlm_model_loading_event(
-                                    &app_handle,
-                                    VlmModelLoadingPayload {
-                                        source: source_for_loading.clone(),
-                                        seq,
-                                    },
-                                );
+                        eprintln!("[vlm] source={} failed: {}", source_label, message);
+                        set_active_src_lang(None);
+                        emit_vlm_event(
+                            &app_handle,
+                            VlmEventPayload {
+                                source: source_label,
+                                status: "error".to_string(),
+                                original: String::default(),
+                                translated: String::new(),
+                                src_lang: None,
+                                duration_ms: 0,
+                                error: Some(message),
                             },
                         );
-                        eprintln!("[vlm worker] seq={} stream complete", seq);
-                        let log_png_bytes = png_bytes.clone();
-                        let _ = thread::Builder::new()
-                            .name("capture-save".to_string())
-                            .spawn(move || {
-                                persist_capture(&log_png_bytes, source, &target_lang_for_log);
-                            });
-                        (source_label, result)
+                        spawn_perf_log(perf, PerfOutcome::Error);
+                        continue;
                     }
-                    VlmJob::TranslateText {
-                        text,
+                    eprintln!("[vlm worker] seq={} model ready", seq);
+                    eprintln!("[vlm worker] seq={} submitting to llama", seq);
+                    let result = ocr_and_translate_streaming(
+                        &png_bytes,
                         target_lang,
-                        source,
-                    } => {
-                        let source_label = source.to_string();
-                        let source_for_partial = source_label.clone();
-                        let result = translate_text_streaming(&text, &target_lang, |partial| {
+                        Some(seq),
+                        Some(&mut perf),
+                        |partial| {
                             emit_vlm_partial_event(
                                 &app_handle,
                                 VlmPartialEventPayload {
@@ -358,62 +437,169 @@ pub fn init_worker(app_handle: AppHandle) {
                                     translated: partial.translated.clone().unwrap_or_default(),
                                     src_lang: partial.src_lang.clone(),
                                 },
-                                None,
+                                Some(seq),
                             );
+                        },
+                        || {
+                            emit_vlm_model_loading_event(
+                                &app_handle,
+                                VlmModelLoadingPayload {
+                                    source: source_for_loading.clone(),
+                                    seq,
+                                },
+                            );
+                        },
+                    );
+                    eprintln!("[vlm worker] seq={} stream complete", seq);
+                    let log_png_bytes = png_bytes.clone();
+                    let _ = thread::Builder::new()
+                        .name("capture-save".to_string())
+                        .spawn(move || {
+                            persist_capture(&log_png_bytes, source, &target_lang_for_log);
                         });
-                        (source_label, result)
+                    match result {
+                        Ok(out) => {
+                            if is_seq_cancelled(out.seq) {
+                                spawn_perf_log(perf, PerfOutcome::Cancelled);
+                                continue;
+                            }
+                            println!("[vlm] source={} original: {}", source_label, out.original);
+                            println!(
+                                "[vlm] source={} translated: {}",
+                                source_label, out.translated
+                            );
+                            println!(
+                                "[vlm] source={} duration_ms: {}",
+                                source_label, out.duration_ms
+                            );
+                            eprintln!(
+                                "[vlm] source={} src_lang: {:?}",
+                                source_label, &out.src_lang
+                            );
+                            set_active_src_lang(out.src_lang.clone());
+                            emit_vlm_event(
+                                &app_handle,
+                                VlmEventPayload {
+                                    source: source_label,
+                                    status: "success".to_string(),
+                                    original: out.original,
+                                    translated: out.translated,
+                                    src_lang: out.src_lang,
+                                    duration_ms: out.duration_ms,
+                                    error: None,
+                                },
+                            );
+                            spawn_perf_log(perf, PerfOutcome::Success);
+                            if let Some(seq) = out.seq {
+                                eprintln!("[vlm worker] seq={} emit done status=success", seq);
+                            }
+                        }
+                        Err(err) => {
+                            if matches!(err, VlmError::Cancelled) {
+                                spawn_perf_log(perf, PerfOutcome::Cancelled);
+                                continue;
+                            }
+                            if is_seq_cancelled(current_seq) {
+                                spawn_perf_log(perf, PerfOutcome::Cancelled);
+                                continue;
+                            }
+                            eprintln!("[vlm] source={} failed: {err}", source_label);
+                            set_active_src_lang(None);
+                            emit_vlm_event(
+                                &app_handle,
+                                VlmEventPayload {
+                                    source: source_label,
+                                    status: "error".to_string(),
+                                    original: String::default(),
+                                    translated: String::new(),
+                                    src_lang: None,
+                                    duration_ms: 0,
+                                    error: Some(err.to_string()),
+                                },
+                            );
+                            spawn_perf_log(perf, PerfOutcome::Error);
+                            if let Some(seq) = current_seq {
+                                eprintln!("[vlm worker] seq={} emit done status=error", seq);
+                            }
+                        }
                     }
-                };
-
-                match result {
-                    Ok(out) => {
-                        if is_seq_cancelled(out.seq) {
-                            continue;
-                        }
-                        println!("[vlm] source={} original: {}", source, out.original);
-                        println!("[vlm] source={} translated: {}", source, out.translated);
-                        println!("[vlm] source={} duration_ms: {}", source, out.duration_ms);
-                        eprintln!("[vlm] source={} src_lang: {:?}", source, &out.src_lang);
-                        set_active_src_lang(out.src_lang.clone());
-                        emit_vlm_event(
+                }
+                VlmJob::TranslateText {
+                    text,
+                    target_lang,
+                    source,
+                } => {
+                    state::set_loading(source);
+                    let source_label = source.to_string();
+                    let source_for_partial = source_label.clone();
+                    let result = translate_text_streaming(&text, &target_lang, |partial| {
+                        emit_vlm_partial_event(
                             &app_handle,
-                            VlmEventPayload {
-                                source,
-                                status: "success".to_string(),
-                                original: out.original,
-                                translated: out.translated,
-                                src_lang: out.src_lang,
-                                duration_ms: out.duration_ms,
-                                error: None,
+                            VlmPartialEventPayload {
+                                source: source_for_partial.clone(),
+                                original: partial.original.clone().unwrap_or_default(),
+                                translated: partial.translated.clone().unwrap_or_default(),
+                                src_lang: partial.src_lang.clone(),
                             },
+                            None,
                         );
-                        if let Some(seq) = out.seq {
-                            eprintln!("[vlm worker] seq={} emit done status=success", seq);
+                    });
+                    match result {
+                        Ok(out) => {
+                            println!("[vlm] source={} original: {}", source_label, out.original);
+                            println!(
+                                "[vlm] source={} translated: {}",
+                                source_label, out.translated
+                            );
+                            println!(
+                                "[vlm] source={} duration_ms: {}",
+                                source_label, out.duration_ms
+                            );
+                            eprintln!(
+                                "[vlm] source={} src_lang: {:?}",
+                                source_label, &out.src_lang
+                            );
+                            set_active_src_lang(out.src_lang.clone());
+                            emit_vlm_event(
+                                &app_handle,
+                                VlmEventPayload {
+                                    source: source_label,
+                                    status: "success".to_string(),
+                                    original: out.original,
+                                    translated: out.translated,
+                                    src_lang: out.src_lang,
+                                    duration_ms: out.duration_ms,
+                                    error: None,
+                                },
+                            );
+                            if let Some(seq) = out.seq {
+                                eprintln!("[vlm worker] seq={} emit done status=success", seq);
+                            }
                         }
-                    }
-                    Err(err) => {
-                        if matches!(err, VlmError::Cancelled) {
-                            continue;
-                        }
-                        if is_seq_cancelled(current_seq) {
-                            continue;
-                        }
-                        eprintln!("[vlm] source={} failed: {err}", source);
-                        set_active_src_lang(None);
-                        emit_vlm_event(
-                            &app_handle,
-                            VlmEventPayload {
-                                source,
-                                status: "error".to_string(),
-                                original: String::default(),
-                                translated: String::new(),
-                                src_lang: None,
-                                duration_ms: 0,
-                                error: Some(err.to_string()),
-                            },
-                        );
-                        if let Some(seq) = current_seq {
-                            eprintln!("[vlm worker] seq={} emit done status=error", seq);
+                        Err(err) => {
+                            if matches!(err, VlmError::Cancelled) {
+                                continue;
+                            }
+                            if is_seq_cancelled(current_seq) {
+                                continue;
+                            }
+                            eprintln!("[vlm] source={} failed: {err}", source_label);
+                            set_active_src_lang(None);
+                            emit_vlm_event(
+                                &app_handle,
+                                VlmEventPayload {
+                                    source: source_label,
+                                    status: "error".to_string(),
+                                    original: String::default(),
+                                    translated: String::new(),
+                                    src_lang: None,
+                                    duration_ms: 0,
+                                    error: Some(err.to_string()),
+                                },
+                            );
+                            if let Some(seq) = current_seq {
+                                eprintln!("[vlm worker] seq={} emit done status=error", seq);
+                            }
                         }
                     }
                 }
@@ -452,6 +638,7 @@ pub fn try_submit_ocr(png_bytes: Vec<u8>, target_lang: String, source: &'static 
         target_lang,
         source,
         seq,
+        perf: OcrPerfCapture::new(seq, source),
     };
     if VLM_RUNTIME.get().is_some() {
         emit_vlm_capture_started_event(VlmCaptureStartedPayload { seq });
@@ -474,7 +661,9 @@ fn try_submit(job: VlmJob) -> bool {
         return false;
     };
 
-    runtime.queue.submit(job);
+    for perf in runtime.queue.submit(job) {
+        spawn_perf_log(perf, PerfOutcome::Cancelled);
+    }
     true
 }
 
@@ -492,10 +681,24 @@ fn job_seq(job: &VlmJob) -> Option<u64> {
     }
 }
 
-fn job_model_lang(job: &VlmJob) -> &str {
-    match job {
-        VlmJob::OcrAndTranslate { target_lang, .. } => target_lang.as_str(),
-        VlmJob::TranslateText { target_lang, .. } => target_lang.as_str(),
+fn spawn_perf_log(perf: OcrPerfCapture, outcome: PerfOutcome) {
+    let record = perf.finalize(outcome);
+    let json = match serde_json::to_string(&record) {
+        Ok(json) => json,
+        Err(err) => {
+            eprintln!("[vlm perf] serialize failed: {err}");
+            return;
+        }
+    };
+    let json_for_thread = json.clone();
+    let spawn_result = thread::Builder::new()
+        .name("vlm-perf-log".to_string())
+        .spawn(move || {
+            crate::capture::log::append_perf_log_line(&json_for_thread);
+        });
+    if let Err(err) = spawn_result {
+        eprintln!("[vlm perf] log thread spawn failed: {err}");
+        crate::capture::log::append_perf_log_line(&json);
     }
 }
 
@@ -706,10 +909,11 @@ pub fn warmup() {
     });
 }
 
-pub fn ocr_and_translate_streaming<F, G>(
+fn ocr_and_translate_streaming<F, G>(
     png_bytes: &[u8],
     target_lang: String,
     seq: Option<u64>,
+    perf: Option<&mut OcrPerfCapture>,
     mut on_partial: F,
     mut on_loading: G,
 ) -> VlmResult<VlmOutput>
@@ -717,6 +921,7 @@ where
     F: FnMut(&PartialOutput),
     G: FnMut(),
 {
+    let mut perf = perf;
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
@@ -743,28 +948,36 @@ where
         )
     };
 
-    let (raw_accumulated, duration_ns) =
-        match run_streaming_request(build_request(), seq, &mut emit_partial, &mut on_loading) {
-            Ok(result) => result,
-            Err(VlmError::VlmRuntimeDown) => {
-                eprintln!("[vlm] llama-server down during OCR; attempting restart");
-                crate::llama_runtime::supervisor::ensure_running().map_err(|err| {
-                    VlmError::Internal(format!("llama-server recovery failed: {err}"))
-                })?;
-                run_streaming_request(build_request(), seq, &mut emit_partial, &mut on_loading)?
-            }
-            Err(err) => return Err(err),
-        };
+    let raw_accumulated = match run_streaming_request(
+        build_request(),
+        seq,
+        &mut emit_partial,
+        &mut on_loading,
+        &mut perf,
+    ) {
+        Ok(result) => result,
+        Err(VlmError::VlmRuntimeDown) => {
+            eprintln!("[vlm] llama-server down during OCR; attempting restart");
+            crate::llama_runtime::supervisor::ensure_running().map_err(|err| {
+                VlmError::Internal(format!("llama-server recovery failed: {err}"))
+            })?;
+            run_streaming_request(
+                build_request(),
+                seq,
+                &mut emit_partial,
+                &mut on_loading,
+                &mut perf,
+            )?
+        }
+        Err(err) => return Err(err),
+    };
 
     let parsed = parse_model_output(&raw_accumulated)?;
-    let duration_ms = duration_ns
-        .map(|ns| ns / 1_000_000)
-        .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
     Ok(VlmOutput {
         original: parsed.original,
         translated: parsed.translated,
         src_lang: parsed.src_lang,
-        duration_ms,
+        duration_ms: started_at.elapsed().as_millis() as u64,
         seq,
     })
 }
@@ -778,7 +991,14 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
 }
 
 pub fn ocr_and_translate(png_bytes: &[u8], target_lang: &str) -> VlmResult<VlmOutput> {
-    ocr_and_translate_streaming(png_bytes, target_lang.to_string(), None, |_| {}, || {})
+    ocr_and_translate_streaming(
+        png_bytes,
+        target_lang.to_string(),
+        None,
+        None,
+        |_| {},
+        || {},
+    )
 }
 
 fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
@@ -797,8 +1017,9 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
         None,
         true,
     );
+    let mut no_perf = None;
 
-    let (raw_accumulated, duration_ns) = run_streaming_request(
+    let raw_accumulated = run_streaming_request(
         request,
         seq,
         |raw| {
@@ -810,17 +1031,15 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
             });
         },
         || {},
+        &mut no_perf,
     )?;
 
     let parsed = parse_model_output(&raw_accumulated)?;
-    let duration_ms = duration_ns
-        .map(|ns| ns / 1_000_000)
-        .unwrap_or_else(|| started_at.elapsed().as_millis() as u64);
     Ok(VlmOutput {
         original: text.to_string(),
         translated: parsed.translated,
         src_lang: parsed.src_lang,
-        duration_ms,
+        duration_ms: started_at.elapsed().as_millis() as u64,
         seq,
     })
 }
@@ -835,7 +1054,8 @@ fn run_streaming_request<F, G>(
     seq: Option<u64>,
     mut on_partial_raw: F,
     mut on_loading: G,
-) -> VlmResult<(String, Option<u64>)>
+    perf: &mut Option<&mut OcrPerfCapture>,
+) -> VlmResult<String>
 where
     F: FnMut(&str),
     G: FnMut(),
@@ -852,6 +1072,10 @@ where
                 return Err(VlmError::Cancelled);
             }
             let response = loop {
+                let post_sent_at = Instant::now();
+                if let Some(perf) = perf.as_deref_mut() {
+                    perf.mark_post_sent(post_sent_at);
+                }
                 match client
                     .post(chat_url.as_str())
                     .json(&request)
@@ -900,6 +1124,9 @@ where
                 on_loading();
                 loading_notified = true;
             }
+            if let Some(perf) = perf.as_deref_mut() {
+                perf.increment_retry_503();
+            }
             tokio::select! {
                 _ = cancel.notified() => return Err(VlmError::Cancelled),
                 _ = tokio::time::sleep(Duration::from_millis(LOADING_RETRY_DELAY_MS)) => {}
@@ -907,7 +1134,6 @@ where
         };
 
         let mut raw_accumulated = String::new();
-        let final_duration_ns: Option<u64> = None;
         let mut pending = String::new();
         loop {
             if is_seq_cancelled(seq) {
@@ -933,7 +1159,10 @@ where
                 if let Some(payload) = line.strip_prefix("data:") {
                     let payload = payload.trim();
                     if payload == "[DONE]" {
-                        return Ok((raw_accumulated, final_duration_ns));
+                        if let Some(perf) = perf.as_deref_mut() {
+                            perf.mark_stream_done();
+                        }
+                        return Ok(raw_accumulated);
                     }
                     let chunk =
                         serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
@@ -945,6 +1174,9 @@ where
                     if let Some(choice) = chunk.choices.first() {
                         if let Some(content) = choice.delta.content.as_deref() {
                             if !content.is_empty() {
+                                if let Some(perf) = perf.as_deref_mut() {
+                                    perf.mark_first_delta();
+                                }
                                 raw_accumulated.push_str(content);
                                 on_partial_raw(&raw_accumulated);
                             }
@@ -953,7 +1185,10 @@ where
                 }
             }
         }
-        Ok((raw_accumulated, final_duration_ns))
+        if let Some(perf) = perf.as_deref_mut() {
+            perf.mark_stream_done();
+        }
+        Ok(raw_accumulated)
     });
     if result.is_ok() {
         crate::llama_runtime::supervisor::record_inference_done();
