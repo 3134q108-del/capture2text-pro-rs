@@ -1,8 +1,11 @@
 use serde::Serialize;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, State};
 
 use crate::azure_tts::runtime::TtsRuntime;
 use crate::azure_tts::{AzureProvider, TtsProvider};
+
+static ACTIVE_TTS_TARGET: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VoicePresetInfo {
@@ -22,7 +25,7 @@ pub async fn speak(
         return Ok(());
     }
 
-    abort_current_task(state.inner());
+    let _ = abort_current_task(state.inner());
     stop_player_silent(state.inner());
 
     let region = crate::window_state::azure_region().ok_or_else(not_configured_message)?;
@@ -48,6 +51,9 @@ pub async fn speak(
     let app = state.inner().app.clone();
     let playback = state.inner().playback.clone();
     let current_task = state.inner().current_task.clone();
+    let task_target = target.clone();
+
+    set_active_target(Some(task_target.clone()));
 
     let handle = tokio::spawn(async move {
         let result = async {
@@ -78,6 +84,7 @@ pub async fn speak(
 
         if let Err(err) = result {
             eprintln!("[tts] speak failed target={target} err={err}");
+            clear_active_target_if_matches(&target);
             let _ = app.emit(
                 "tts-done",
                 serde_json::json!({ "target": target, "error": err }),
@@ -105,8 +112,14 @@ pub fn is_tts_cached(_text: String, _lang: String) -> bool {
 
 #[tauri::command]
 pub fn stop_speaking(state: State<'_, TtsRuntime>) -> Result<(), String> {
-    abort_current_task(state.inner());
-    stop_player(state.inner());
+    let target = abort_current_task(state.inner());
+    stop_player_silent(state.inner());
+    if let Some(target) = target {
+        let _ = state
+            .inner()
+            .app
+            .emit("tts-done", serde_json::json!({ "target": target }));
+    }
     Ok(())
 }
 
@@ -125,21 +138,44 @@ pub fn preview_preset(_id: String, _text: String, _lang: String) -> Result<(), S
     Err("Azure TTS preview is not implemented yet (T52 in progress)".to_string())
 }
 
-fn abort_current_task(state: &TtsRuntime) {
+fn abort_current_task(state: &TtsRuntime) -> Option<String> {
+    let target = take_active_target();
     if let Ok(mut guard) = state.current_task.lock() {
         if let Some(handle) = guard.take() {
             handle.abort();
             drop(handle);
         }
     }
-}
-
-fn stop_player(state: &TtsRuntime) {
-    state.playback.stop();
+    target
 }
 
 fn stop_player_silent(state: &TtsRuntime) {
     state.playback.stop_silent();
+}
+
+fn active_target_store() -> &'static Mutex<Option<String>> {
+    ACTIVE_TTS_TARGET.get_or_init(|| Mutex::new(None))
+}
+
+fn set_active_target(target: Option<String>) {
+    if let Ok(mut guard) = active_target_store().lock() {
+        *guard = target;
+    }
+}
+
+fn take_active_target() -> Option<String> {
+    active_target_store()
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+fn clear_active_target_if_matches(target: &str) {
+    if let Ok(mut guard) = active_target_store().lock() {
+        if guard.as_deref() == Some(target) {
+            *guard = None;
+        }
+    }
 }
 
 fn voice_for_lang(lang: &str) -> &'static str {

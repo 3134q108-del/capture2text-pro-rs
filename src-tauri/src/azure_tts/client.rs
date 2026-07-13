@@ -109,12 +109,13 @@ impl TtsProvider for AzureProvider {
         volume: f32,
     ) -> Result<Vec<u8>, TtsError> {
         let ssml = build_ssml(text, voice_id, rate, volume);
+        let timeout_secs = synthesis_timeout_secs(text.chars().count());
         let mut send_retried = false;
         let response = loop {
             match self
                 .http
                 .post(self.synthesize_url())
-                .timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(timeout_secs))
                 .header("Ocp-Apim-Subscription-Key", &self.key)
                 .header("Content-Type", "application/ssml+xml")
                 .header(
@@ -178,6 +179,10 @@ fn map_status(status: StatusCode, region: &str, message: String) -> TtsError {
             message,
         },
     }
+}
+
+fn synthesis_timeout_secs(char_count: usize) -> u64 {
+    (30 + (char_count as u64 / 15)).clamp(30, 240)
 }
 
 #[cfg(not(test))]
@@ -513,5 +518,16 @@ mod azure_voices {
             .unwrap_err();
 
         assert!(matches!(err, TtsError::Auth));
+    }
+
+    #[test]
+    fn timeout_scales_with_text_length_and_caps() {
+        fn expected_timeout_secs(char_count: usize) -> u64 {
+            (30 + (char_count as u64 / 15)).clamp(30, 240)
+        }
+
+        assert_eq!(expected_timeout_secs(0), 30);
+        assert_eq!(expected_timeout_secs(1083), 102);
+        assert_eq!(expected_timeout_secs(10_000), 240);
     }
 }
