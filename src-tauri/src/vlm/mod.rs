@@ -29,6 +29,8 @@ fn emit_or_log<T: serde::Serialize>(app: &AppHandle, name: &str, payload: &T) {
 const CHAT_MODEL_NAME: &str = "local";
 const QWEN3VL_MIN_DIM: u32 = 32;
 const REQUEST_TIMEOUT_MS: u64 = 90_000;
+const LOADING_RETRY_DELAY_MS: u64 = 500;
+const MODEL_LOADING_MAX_MS: u64 = 180_000;
 
 fn llama_chat_url() -> String {
     format!("http://127.0.0.1:{LLAMA_PORT}/v1/chat/completions")
@@ -139,6 +141,12 @@ pub struct VlmPartialEventPayload {
     pub original: String,
     pub translated: String,
     pub src_lang: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VlmModelLoadingPayload {
+    pub source: String,
+    pub seq: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -288,6 +296,7 @@ pub fn init_worker(app_handle: AppHandle) {
                         let target_lang_for_log = target_lang.clone();
                         eprintln!("[vlm worker] seq={} submitting to llama", seq);
                         let source_for_partial = source_label.clone();
+                        let source_for_loading = source_label.clone();
                         let result = ocr_and_translate_streaming(
                             &png_bytes,
                             target_lang,
@@ -302,6 +311,15 @@ pub fn init_worker(app_handle: AppHandle) {
                                         src_lang: partial.src_lang.clone(),
                                     },
                                     Some(seq),
+                                );
+                            },
+                            || {
+                                emit_vlm_model_loading_event(
+                                    &app_handle,
+                                    VlmModelLoadingPayload {
+                                        source: source_for_loading.clone(),
+                                        seq,
+                                    },
                                 );
                             },
                         );
@@ -535,6 +553,14 @@ fn emit_vlm_partial_event(
     let _ = app_handle.emit_to("result", "vlm-result-partial", &payload);
 }
 
+fn emit_vlm_model_loading_event(app_handle: &AppHandle, payload: VlmModelLoadingPayload) {
+    eprintln!(
+        "[emit] model-loading source={} seq={}",
+        payload.source, payload.seq
+    );
+    let _ = app_handle.emit_to("result", "vlm-model-loading", &payload);
+}
+
 pub fn cancel_current() {
     LATEST_OCR_SEQ.fetch_add(1, Ordering::SeqCst);
     cancel_notify().notify_waiters();
@@ -621,12 +647,17 @@ pub fn warmup() {
     });
 }
 
-pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
+pub fn ocr_and_translate_streaming<F, G>(
     png_bytes: &[u8],
     target_lang: String,
     seq: Option<u64>,
     mut on_partial: F,
-) -> VlmResult<VlmOutput> {
+    mut on_loading: G,
+) -> VlmResult<VlmOutput>
+where
+    F: FnMut(&PartialOutput),
+    G: FnMut(),
+{
     let png_bytes = ensure_min_dimension(png_bytes)?;
     let started_at = Instant::now();
     let image_b64 = STANDARD.encode(&png_bytes);
@@ -654,14 +685,14 @@ pub fn ocr_and_translate_streaming<F: FnMut(&PartialOutput)>(
     };
 
     let (raw_accumulated, duration_ns) =
-        match run_streaming_request(build_request(), seq, &mut emit_partial) {
+        match run_streaming_request(build_request(), seq, &mut emit_partial, &mut on_loading) {
             Ok(result) => result,
             Err(VlmError::VlmRuntimeDown) => {
                 eprintln!("[vlm] llama-server down during OCR; attempting restart");
                 crate::llama_runtime::supervisor::ensure_running().map_err(|err| {
                     VlmError::Internal(format!("llama-server recovery failed: {err}"))
                 })?;
-                run_streaming_request(build_request(), seq, &mut emit_partial)?
+                run_streaming_request(build_request(), seq, &mut emit_partial, &mut on_loading)?
             }
             Err(err) => return Err(err),
         };
@@ -688,7 +719,7 @@ pub fn translate_text_streaming<F: FnMut(&PartialOutput)>(
 }
 
 pub fn ocr_and_translate(png_bytes: &[u8], target_lang: &str) -> VlmResult<VlmOutput> {
-    ocr_and_translate_streaming(png_bytes, target_lang.to_string(), None, |_| {})
+    ocr_and_translate_streaming(png_bytes, target_lang.to_string(), None, |_| {}, || {})
 }
 
 fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
@@ -708,14 +739,19 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
         true,
     );
 
-    let (raw_accumulated, duration_ns) = run_streaming_request(request, seq, |raw| {
-        on_partial(&PartialOutput {
-            raw_accumulated: raw.to_string(),
-            original: Some(text.to_string()),
-            translated: extract_partial_json_string(raw, "translated"),
-            src_lang: extract_partial_json_string(raw, "src_lang"),
-        });
-    })?;
+    let (raw_accumulated, duration_ns) = run_streaming_request(
+        request,
+        seq,
+        |raw| {
+            on_partial(&PartialOutput {
+                raw_accumulated: raw.to_string(),
+                original: Some(text.to_string()),
+                translated: extract_partial_json_string(raw, "translated"),
+                src_lang: extract_partial_json_string(raw, "src_lang"),
+            });
+        },
+        || {},
+    )?;
 
     let parsed = parse_model_output(&raw_accumulated)?;
     let duration_ms = duration_ns
@@ -730,48 +766,86 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
     })
 }
 
-fn run_streaming_request<F: FnMut(&str)>(
+fn is_model_loading_response(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        && (body.contains("Loading model") || body.contains("unavailable_error"))
+}
+
+fn run_streaming_request<F, G>(
     request: ChatRequest,
     seq: Option<u64>,
     mut on_partial_raw: F,
-) -> VlmResult<(String, Option<u64>)> {
+    mut on_loading: G,
+) -> VlmResult<(String, Option<u64>)>
+where
+    F: FnMut(&str),
+    G: FnMut(),
+{
     let client = crate::llama_runtime::supervisor::shared_async_client();
     let cancel = cancel_notify();
     let chat_url = llama_chat_url();
     let result = tauri::async_runtime::block_on(async move {
         let mut send_retried = false;
+        let mut loading_since: Option<Instant> = None;
+        let mut loading_notified = false;
         let mut response = loop {
-            match client
-                .post(chat_url.as_str())
-                .json(&request)
-                .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
-                .send()
-                .await
-            {
-                Ok(response) => break response,
-                Err(err) => {
-                    let retryable = is_retryable_send_error(
-                        err.is_connect(),
-                        err.is_request(),
-                        err.is_timeout(),
-                    );
-                    if !send_retried && retryable {
-                        send_retried = true;
-                        continue;
+            if is_seq_cancelled(seq) {
+                return Err(VlmError::Cancelled);
+            }
+            let response = loop {
+                match client
+                    .post(chat_url.as_str())
+                    .json(&request)
+                    .timeout(Duration::from_millis(REQUEST_TIMEOUT_MS))
+                    .send()
+                    .await
+                {
+                    Ok(response) => break response,
+                    Err(err) => {
+                        let retryable = is_retryable_send_error(
+                            err.is_connect(),
+                            err.is_request(),
+                            err.is_timeout(),
+                        );
+                        if !send_retried && retryable {
+                            send_retried = true;
+                            continue;
+                        }
+                        return Err(map_reqwest_send_error(err));
                     }
-                    return Err(map_reqwest_send_error(err));
                 }
+            };
+
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
+            let raw = response.text().await.map_err(map_reqwest_send_error)?;
+            if !is_model_loading_response(status, &raw) {
+                return Err(VlmError::VlmRuntimeHttpError {
+                    status: status.as_u16(),
+                    body: raw,
+                });
+            }
+            if is_seq_cancelled(seq) {
+                return Err(VlmError::Cancelled);
+            }
+            let loading_started_at = loading_since.get_or_insert_with(Instant::now);
+            if loading_started_at.elapsed() >= Duration::from_millis(MODEL_LOADING_MAX_MS) {
+                return Err(VlmError::VlmRuntimeHttpError {
+                    status: status.as_u16(),
+                    body: raw,
+                });
+            }
+            if !loading_notified {
+                on_loading();
+                loading_notified = true;
+            }
+            tokio::select! {
+                _ = cancel.notified() => return Err(VlmError::Cancelled),
+                _ = tokio::time::sleep(Duration::from_millis(LOADING_RETRY_DELAY_MS)) => {}
             }
         };
-
-        let status = response.status();
-        if !status.is_success() {
-            let raw = response.text().await.map_err(map_reqwest_send_error)?;
-            return Err(VlmError::VlmRuntimeHttpError {
-                status: status.as_u16(),
-                body: raw,
-            });
-        }
 
         let mut raw_accumulated = String::new();
         let final_duration_ns: Option<u64> = None;
