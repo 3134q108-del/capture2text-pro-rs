@@ -1202,36 +1202,9 @@ where
             while let Some(idx) = pending.find('\n') {
                 let line = pending[..idx].to_string();
                 pending.drain(..=idx);
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if let Some(payload) = line.strip_prefix("data:") {
-                    let payload = payload.trim();
-                    if payload == "[DONE]" {
-                        if let Some(perf) = perf.as_deref_mut() {
-                            perf.mark_stream_done();
-                        }
-                        return Ok(raw_accumulated);
-                    }
-                    let chunk =
-                        serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
-                            VlmError::ResponseDecode {
-                                raw: payload.to_string(),
-                                source_error: format!("stream chunk parse failed: {err}"),
-                            }
-                        })?;
-                    if let Some(choice) = chunk.choices.first() {
-                        if let Some(content) = choice.delta.content.as_deref() {
-                            if !content.is_empty() {
-                                if let Some(perf) = perf.as_deref_mut() {
-                                    perf.mark_first_delta();
-                                }
-                                raw_accumulated.push_str(content);
-                                on_partial_raw(&raw_accumulated);
-                            }
-                        }
-                    }
+                match handle_stream_line(&line, &mut raw_accumulated, &mut on_partial_raw, perf)? {
+                    ChatStreamLineOutcome::Continue => {}
+                    ChatStreamLineOutcome::Done => return Ok(raw_accumulated),
                 }
             }
         }
@@ -1621,6 +1594,12 @@ struct ChatStreamChunk {
     choices: Vec<ChatStreamChoice>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatStreamLineOutcome {
+    Continue,
+    Done,
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatStreamChoice {
     delta: ChatStreamDelta,
@@ -1629,6 +1608,82 @@ struct ChatStreamChoice {
 #[derive(Debug, Deserialize)]
 struct ChatStreamDelta {
     content: Option<String>,
+}
+
+fn handle_stream_line<F>(
+    line: &str,
+    raw_accumulated: &mut String,
+    on_partial_raw: &mut F,
+    perf: &mut Option<&mut OcrPerfCapture>,
+) -> VlmResult<ChatStreamLineOutcome>
+where
+    F: FnMut(&str),
+{
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') {
+        return Ok(ChatStreamLineOutcome::Continue);
+    }
+
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Ok(ChatStreamLineOutcome::Continue);
+    };
+    let payload = payload.trim();
+    if payload == "[DONE]" {
+        if let Some(perf) = perf.as_deref_mut() {
+            perf.mark_stream_done();
+        }
+        return Ok(ChatStreamLineOutcome::Done);
+    }
+
+    if let Some(error_message) = extract_stream_error_message(payload)? {
+        return Err(VlmError::Internal(format!(
+            "llama-server stream error: {error_message}"
+        )));
+    }
+
+    let chunk = serde_json::from_str::<ChatStreamChunk>(payload).map_err(|err| {
+        VlmError::ResponseDecode {
+            raw: payload.to_string(),
+            source_error: format!("stream chunk parse failed: {err}"),
+        }
+    })?;
+    if let Some(choice) = chunk.choices.first() {
+        if let Some(content) = choice.delta.content.as_deref() {
+            if !content.is_empty() {
+                if let Some(perf) = perf.as_deref_mut() {
+                    perf.mark_first_delta();
+                }
+                raw_accumulated.push_str(content);
+                on_partial_raw(raw_accumulated);
+            }
+        }
+    }
+    Ok(ChatStreamLineOutcome::Continue)
+}
+
+fn extract_stream_error_message(payload: &str) -> VlmResult<Option<String>> {
+    let value = match serde_json::from_str::<serde_json::Value>(payload) {
+        Ok(value) => value,
+        Err(err) => {
+            return Err(VlmError::ResponseDecode {
+                raw: payload.to_string(),
+                source_error: format!("stream payload parse failed: {err}"),
+            });
+        }
+    };
+    let Some(error) = value.get("error") else {
+        return Ok(None);
+    };
+    if error.is_null() {
+        return Ok(None);
+    }
+    let message = error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .or_else(|| error.as_str().map(|value| value.to_string()))
+        .unwrap_or_else(|| error.to_string());
+    Ok(Some(message))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1715,6 +1770,78 @@ mod tests {
             VlmError::ResponseDecode { .. } => {}
             other => panic!("expected ResponseDecode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stream_comment_lines_are_ignored() {
+        let mut raw_accumulated = String::new();
+        let mut partial_calls = 0;
+        let mut on_partial = |_raw: &str| {
+            partial_calls += 1;
+        };
+        let mut perf: Option<&mut OcrPerfCapture> = None;
+
+        let outcome = handle_stream_line(
+            ": keep-alive ping",
+            &mut raw_accumulated,
+            &mut on_partial,
+            &mut perf,
+        )
+        .expect("comment lines should be ignored");
+
+        assert_eq!(outcome, ChatStreamLineOutcome::Continue);
+        assert!(raw_accumulated.is_empty());
+        assert_eq!(partial_calls, 0);
+    }
+
+    #[test]
+    fn stream_error_payload_stops_stream_without_partial_emission() {
+        let mut raw_accumulated = String::new();
+        let mut partial_calls = 0;
+        let mut on_partial = |_raw: &str| {
+            partial_calls += 1;
+        };
+        let mut perf: Option<&mut OcrPerfCapture> = None;
+
+        let err = handle_stream_line(
+            r#"data: {"error":{"message":"prompt processing failed","type":"bad_request_error"}}"#,
+            &mut raw_accumulated,
+            &mut on_partial,
+            &mut perf,
+        )
+        .expect_err("in-stream error should terminate the stream");
+
+        match err {
+            VlmError::Internal(message) => {
+                assert!(message.contains("llama-server stream error"));
+                assert!(message.contains("prompt processing failed"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+        assert!(raw_accumulated.is_empty());
+        assert_eq!(partial_calls, 0);
+    }
+
+    #[test]
+    fn stream_null_error_field_is_ignored() {
+        let mut raw_accumulated = String::new();
+        let mut partial_calls = 0;
+        let mut on_partial = |_raw: &str| {
+            partial_calls += 1;
+        };
+        let mut perf: Option<&mut OcrPerfCapture> = None;
+
+        let outcome = handle_stream_line(
+            r#"data: {"error":null,"choices":[{"delta":{"content":"ok"}}]}"#,
+            &mut raw_accumulated,
+            &mut on_partial,
+            &mut perf,
+        )
+        .expect("null error should not terminate the stream");
+
+        assert_eq!(outcome, ChatStreamLineOutcome::Continue);
+        assert_eq!(raw_accumulated, "ok");
+        assert_eq!(partial_calls, 1);
     }
 
     #[test]

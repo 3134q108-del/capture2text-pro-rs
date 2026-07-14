@@ -9,7 +9,7 @@ use std::time::Duration;
 
 pub use manifest::ModelId;
 
-pub const LLAMA_CPP_TAG: &str = "b8955";
+pub const LLAMA_CPP_TAG: &str = "b9994";
 static SWITCH_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn active_model() -> Option<ModelId> {
@@ -118,9 +118,7 @@ pub fn app_dir() -> PathBuf {
 
 fn ensure_binary_installed() -> Result<(), String> {
     let bin_dir = app_dir().join("bin");
-    if !bin_dir.join("llama-server.exe").exists() {
-        downloader::download_llama_binary(&bin_dir)?;
-    }
+    downloader::ensure_llama_binary_installed(&bin_dir)?;
     Ok(())
 }
 
