@@ -3,7 +3,10 @@
 > 調查方式：4 軌平行深查（熱路徑 / llama runtime / 前端視窗 / 實機 log 量化）。
 > 日期基準 2026-07-13。
 > **執行進度（2026-07-13 晚）**：階段 1+2 全部完成——T1+T2=`1e9b145`、T4=`bdb294f`（watchdog 實機 kill 測試通過）、T8=`1856528`、T5+T6=`08594fb`、T3=`2bb654c`。每 task 均經 gpt-5.5 adversarial review + 修復。
-> 待辦：T7 研究（llama.cpp 升版）、階段 3（T9-T12，需 perf.log 累積數據 + D2/D3 拍板）、階段 4（T13-T14）。
+> **2026-07-14 階段 3 完成（實測驅動）**：T10=`9500cc9`（batch 1024/ubatch 512/fa auto：RAM 17.2→3.9GB、VRAM -2GB、長文 -18%）、T9=`b8b32f2`（GPU vision 預設化，門檻 8GB：長文 7.4s→4.1s、30 輪壓測零洩漏、CPU 尖峰消失）、T7=`ee06f16`（b8955→b9994 + staging install + SSE ping/error 相容）。b9994 上 30/30 壓測綠、watchdog kill 恢復 2 秒。
+> 升版研究關鍵翻案：#19639 洩漏是 Gemma 專屬（Qwen3-VL 不受影響）且 fix 已含於 b8955——CPU vision 保險自始非必要。
+> 累計效果 vs 7/13 基線：英文長圖 9.2s→4.1s（-55%）、llama RAM 17.2→2.9GB（-83%）、VRAM 7.85→6.6GB。
+> 剩餘待辦：T11 prompt cache（可選）、T12 影像 payload（可選、需精度 A/B）、T13-T14 收尾。TTS 缺陷四連修另見 commits 852ba26/9f705bd/740dafb。
 
 ---
 
