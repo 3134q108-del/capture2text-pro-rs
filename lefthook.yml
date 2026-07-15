@@ -155,6 +155,7 @@ commit-msg:
   commands:
     conventional:
       # {1} = commit-msg 檔路徑（lefthook 模板變數、不經 shell、避開 $1 雙引號）
+      # 單引號包住 {1}：worktree 的 commit-msg 是絕對路徑，含空格時裸 {1} 會被拆成多個參數
       # 只留裸 grep（無 if/{} 控制結構、無雙引號 echo）
       run: |
-        grep -qE '^(feat|fix|refactor|docs|test|chore|perf|style|ci|build|revert)(\([a-z0-9_/-]+\))?!?: .{1,72}$' {1}
+        grep -qE '^(feat|fix|refactor|docs|test|chore|perf|style|ci|build|revert)(\([a-z0-9_/-]+\))?!?: .{1,72}$' '{1}'
