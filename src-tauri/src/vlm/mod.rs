@@ -1069,7 +1069,8 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
             on_partial(&PartialOutput {
                 raw_accumulated: raw.to_string(),
                 original: Some(text.to_string()),
-                translated: extract_partial_json_string(raw, "translated"),
+                translated: extract_partial_json_string(raw, "translated")
+                    .map(|translated| strip_outer_text_wrapper_partial(&translated)),
                 src_lang: extract_partial_json_string(raw, "src_lang"),
             });
         },
@@ -1080,7 +1081,7 @@ fn translate_text_to_lang_streaming<F: FnMut(&PartialOutput)>(
     let parsed = parse_model_output(&raw_accumulated)?;
     Ok(VlmOutput {
         original: text.to_string(),
-        translated: parsed.translated,
+        translated: strip_outer_text_wrapper(&parsed.translated),
         src_lang: parsed.src_lang,
         duration_ms: started_at.elapsed().as_millis() as u64,
         seq,
@@ -1219,7 +1220,7 @@ where
     result
 }
 
-const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate the entire input into {target}; never omit any part. Even if the input is already mostly {target} with only a few foreign words left, you MUST still translate those embedded words into {target} — e.g. 'build 完成後 push 上去' becomes '建構完成後推送上去'; do not leave a word in the source language just because the rest is already {target}. Translate everything including proper nouns, names, and technical terms. Words inside angle brackets are usually placeholders: translate the words inside and keep the brackets, and do this for EVERY bracket even if one sentence has several. For example, 'Open a PR against <branch name> and set <source text>' becomes '針對 <分支名稱> 開啟 PR 並設定 <來源文字>'. Keep unchanged only bare numbers/symbols and real code or markup such as <div>, </p>, <Component />.";
+const TRANSLATION_FIDELITY_GUIDANCE: &str = "Translate the entire input into {target}; never omit any part. Every translated value MUST be written entirely in {target}; never mix in any third language. For example, English to Traditional Chinese: 'I have always loved working with my hands.' becomes '我一直都很喜歡用雙手工作。'. Even if the input is already mostly {target} with only a few foreign words left, you MUST still translate those embedded words into {target} — e.g. 'build 完成後 push 上去' becomes '建構完成後推送上去'; do not leave a word in the source language just because the rest is already {target}. Translate everything including proper nouns, names, and technical terms. Words inside angle brackets are usually placeholders: translate the words inside and keep the brackets, and do this for EVERY bracket even if one sentence has several. For example, 'Open a PR against <branch name> and set <source text>' becomes '針對 <分支名稱> 開啟 PR 並設定 <來源文字>'. Keep unchanged only bare numbers/symbols and real code or markup such as <div>, </p>, <Component />.";
 
 fn build_system_prompt(target_lang: &str) -> String {
     let language_name = crate::languages::by_code(target_lang)
@@ -1513,6 +1514,29 @@ fn extract_partial_json_string(raw: &str, key: &str) -> Option<String> {
     Some(out)
 }
 
+fn strip_outer_text_wrapper(value: &str) -> String {
+    let trimmed = value.trim();
+    let Some(inner) = trimmed
+        .strip_prefix("<text>")
+        .and_then(|value| value.strip_suffix("</text>"))
+    else {
+        return value.to_string();
+    };
+    inner.trim().to_string()
+}
+
+fn strip_outer_text_wrapper_partial(value: &str) -> String {
+    let trimmed = value.trim();
+    let Some(inner) = trimmed.strip_prefix("<text>") else {
+        return value.to_string();
+    };
+    inner
+        .strip_suffix("</text>")
+        .unwrap_or(inner)
+        .trim()
+        .to_string()
+}
+
 #[derive(Debug, Serialize)]
 struct ChatRequest {
     model: String,
@@ -1770,6 +1794,39 @@ mod tests {
             VlmError::ResponseDecode { .. } => {}
             other => panic!("expected ResponseDecode, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn strip_outer_text_wrapper_removes_wrapped_translation() {
+        let stripped =
+            strip_outer_text_wrapper(" \n<text>\n我一直都很喜歡用雙手工作。\n</text>\n ");
+        assert_eq!(stripped, "我一直都很喜歡用雙手工作。");
+    }
+
+    #[test]
+    fn strip_outer_text_wrapper_leaves_unwrapped_translation() {
+        let unwrapped = "我一直都很喜歡用雙手工作。";
+        assert_eq!(strip_outer_text_wrapper(unwrapped), unwrapped);
+    }
+
+    #[test]
+    fn strip_outer_text_wrapper_preserves_middle_tags() {
+        let unwrapped = "前段 <text>中間</text> 後段";
+        assert_eq!(strip_outer_text_wrapper(unwrapped), unwrapped);
+
+        let wrapped = " \n<text>\n前段 <text>中間</text> 後段\n</text>\n ";
+        assert_eq!(
+            strip_outer_text_wrapper(wrapped),
+            "前段 <text>中間</text> 後段"
+        );
+    }
+
+    #[test]
+    fn strip_outer_text_wrapper_partial_hides_opening_tag_before_close_arrives() {
+        assert_eq!(
+            strip_outer_text_wrapper_partial("<text>\n我一直都很喜歡"),
+            "我一直都很喜歡"
+        );
     }
 
     #[test]
