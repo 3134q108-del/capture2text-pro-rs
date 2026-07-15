@@ -612,6 +612,10 @@ fn spawn_with_paths(
         .arg("--n-gpu-layers")
         .arg("999");
 
+    if spec.id.is_qwen35() {
+        command.arg("--reasoning").arg("off");
+    }
+
     if should_disable_gpu_offload() {
         command.arg("--no-mmproj-offload");
     }

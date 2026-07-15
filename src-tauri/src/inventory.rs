@@ -335,6 +335,9 @@ pub fn model_items_for_id(
             known_to_item("model-qwen3vl-8b-gguf"),
             known_to_item("model-qwen3vl-8b-mmproj"),
         )),
+        crate::llama_runtime::manifest::ModelId::Qwen35_2b
+        | crate::llama_runtime::manifest::ModelId::Qwen35_4b
+        | crate::llama_runtime::manifest::ModelId::Qwen35_9b => None,
     }
 }
 
