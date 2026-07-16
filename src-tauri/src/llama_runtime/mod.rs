@@ -214,27 +214,27 @@ mod tests {
 
     #[test]
     fn switch_decision_checks_current_and_downloaded_support() {
-        let only_8b_downloaded = |id: &ModelId| matches!(id, ModelId::Qwen3Vl8bInstruct);
+        let only_9b_downloaded = |id: &ModelId| matches!(id, ModelId::Qwen35_9b);
 
         assert!(!should_switch_for_lang_impl(
-            Some(ModelId::Qwen3Vl8bInstruct),
+            Some(ModelId::Qwen35_9b),
             "en-US",
-            only_8b_downloaded
+            only_9b_downloaded
         ));
         assert!(should_switch_for_lang_impl(
-            Some(ModelId::Qwen3Vl2bInstruct),
+            Some(ModelId::Qwen35_2b),
             "vi-VN",
-            only_8b_downloaded
+            only_9b_downloaded
         ));
         assert!(!should_switch_for_lang_impl(
-            Some(ModelId::Qwen3Vl2bInstruct),
+            Some(ModelId::Qwen35_2b),
             "vi-VN",
             |_| false
         ));
         assert!(should_switch_for_lang_impl(
             None,
             "en-US",
-            only_8b_downloaded
+            only_9b_downloaded
         ));
     }
 }

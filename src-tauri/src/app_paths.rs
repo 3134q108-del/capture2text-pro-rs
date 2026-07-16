@@ -11,6 +11,7 @@ fn has_user_data(dir: &Path) -> bool {
             .join("models")
             .join("qwen3-vl-8b-instruct.Q4_K_M.gguf")
             .exists()
+        || dir.join("models").join("qwen3.5-9b.Q4_K_M.gguf").exists()
         || dir.join("output_lang.txt").exists()
 }
 

@@ -574,8 +574,11 @@ fn start_keepalive() {
 }
 
 async fn send_keepalive_ping() {
+    let model = current_model()
+        .and_then(|id| serde_json::to_value(id).ok())
+        .unwrap_or_else(|| serde_json::Value::String("Qwen35_9b".to_string()));
     let body = serde_json::json!({
-        "model": "qwen3-vl",
+        "model": model,
         "messages": [{ "role": "user", "content": "hi" }],
         "max_tokens": 1,
         "stream": false,
@@ -873,7 +876,7 @@ mod tests {
     #[test]
     fn decide_ensure_running_healthy_is_noop() {
         assert_eq!(
-            decide_ensure_running_action(true, false, Some(ModelId::Qwen3Vl2bInstruct)),
+            decide_ensure_running_action(true, false, Some(ModelId::Qwen35_2b)),
             EnsureRunningDecision::Healthy
         );
     }
@@ -897,8 +900,8 @@ mod tests {
     #[test]
     fn decide_ensure_running_unhealthy_with_model_restarts() {
         assert_eq!(
-            decide_ensure_running_action(false, false, Some(ModelId::Qwen3Vl4bInstruct)),
-            EnsureRunningDecision::Restart(ModelId::Qwen3Vl4bInstruct)
+            decide_ensure_running_action(false, false, Some(ModelId::Qwen35_4b)),
+            EnsureRunningDecision::Restart(ModelId::Qwen35_4b)
         );
     }
 

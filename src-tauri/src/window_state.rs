@@ -1,5 +1,5 @@
 use crate::llama_runtime::manifest::ModelId;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -140,7 +140,7 @@ pub struct WindowState {
     pub target_lang: String,
     #[serde(default = "default_enabled_langs")]
     pub enabled_langs: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_active_model")]
     pub active_model: Option<ModelId>,
 }
 
@@ -312,6 +312,25 @@ fn default_enabled_langs() -> Vec<String> {
         "ja-JP".to_string(),
         "ko-KR".to_string(),
     ]
+}
+
+fn deserialize_active_model<'de, D>(deserializer: D) -> Result<Option<ModelId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| match value {
+        serde_json::Value::String(value) => match value.as_str() {
+            "Qwen35_2b" => Some(ModelId::Qwen35_2b),
+            "Qwen35_4b" => Some(ModelId::Qwen35_4b),
+            "Qwen35_9b" => Some(ModelId::Qwen35_9b),
+            "Qwen3Vl2bInstruct" => Some(ModelId::Qwen35_2b),
+            "Qwen3Vl4bInstruct" => Some(ModelId::Qwen35_4b),
+            "Qwen3Vl8bInstruct" => Some(ModelId::Qwen35_9b),
+            _ => None,
+        },
+        _ => None,
+    }))
 }
 
 static WINDOW_STATE: OnceLock<Mutex<WindowState>> = OnceLock::new();
@@ -986,5 +1005,35 @@ mod tests {
             state.enabled_langs,
             vec!["zh-TW".to_string(), "en-US".to_string()]
         );
+    }
+
+    #[test]
+    fn deserialize_active_model_migrates_legacy_qwen3vl_ids() {
+        let cases = [
+            (
+                r#"{"active_model":"Qwen3Vl2bInstruct"}"#,
+                Some(ModelId::Qwen35_2b),
+            ),
+            (
+                r#"{"active_model":"Qwen3Vl4bInstruct"}"#,
+                Some(ModelId::Qwen35_4b),
+            ),
+            (
+                r#"{"active_model":"Qwen3Vl8bInstruct"}"#,
+                Some(ModelId::Qwen35_9b),
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            let state: WindowState = serde_json::from_str(raw).expect("legacy model state");
+            assert_eq!(state.active_model, expected);
+        }
+    }
+
+    #[test]
+    fn deserialize_active_model_ignores_unknown_value() {
+        let state: WindowState =
+            serde_json::from_str(r#"{"active_model":"unknown-model"}"#).expect("state");
+        assert_eq!(state.active_model, None);
     }
 }

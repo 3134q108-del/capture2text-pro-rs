@@ -31,102 +31,102 @@ struct KnownItem {
 
 const KNOWN_ITEMS: [KnownItem; 14] = [
     KnownItem {
-        id: "model-qwen3vl-2b-gguf",
-        path: "models/qwen3-vl-2b-instruct.Q4_K_M.gguf",
+        id: "model-qwen35-2b-gguf",
+        path: "models/qwen3.5-2b.Q4_K_M.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-2B-Instruct 模型",
+        label: "Qwen3.5 2B model",
     },
     KnownItem {
-        id: "model-qwen3vl-2b-mmproj",
-        path: "models/qwen3-vl-2b-instruct.mmproj.gguf",
+        id: "model-qwen35-2b-mmproj",
+        path: "models/qwen3.5-2b.mmproj.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-2B mmproj",
+        label: "Qwen3.5 2B mmproj",
     },
     KnownItem {
-        id: "model-qwen3vl-4b-gguf",
-        path: "models/qwen3-vl-4b-instruct.Q4_K_M.gguf",
+        id: "model-qwen35-4b-gguf",
+        path: "models/qwen3.5-4b.Q4_K_M.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-4B-Instruct 模型",
+        label: "Qwen3.5 4B model",
     },
     KnownItem {
-        id: "model-qwen3vl-4b-mmproj",
-        path: "models/qwen3-vl-4b-instruct.mmproj.gguf",
+        id: "model-qwen35-4b-mmproj",
+        path: "models/qwen3.5-4b.mmproj.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-4B mmproj",
+        label: "Qwen3.5 4B mmproj",
     },
     KnownItem {
-        id: "model-qwen3vl-8b-gguf",
-        path: "models/qwen3-vl-8b-instruct.Q4_K_M.gguf",
+        id: "model-qwen35-9b-gguf",
+        path: "models/qwen3.5-9b.Q4_K_M.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-8B-Instruct 模型",
+        label: "Qwen3.5 9B model",
     },
     KnownItem {
-        id: "model-qwen3vl-8b-mmproj",
-        path: "models/qwen3-vl-8b-instruct.mmproj.gguf",
+        id: "model-qwen35-9b-mmproj",
+        path: "models/qwen3.5-9b.mmproj.gguf",
         category: "ai-model",
         removable: true,
-        label: "Qwen3-VL-8B mmproj",
+        label: "Qwen3.5 9B mmproj",
     },
     KnownItem {
         id: "captures",
         path: "captures/",
         category: "user-data",
         removable: true,
-        label: "OCR 擷取圖像與記錄",
+        label: "OCR captures and records",
     },
     KnownItem {
         id: "scenarios",
         path: "scenarios.json",
         category: "settings",
         removable: true,
-        label: "情境設定",
+        label: "Scenario settings",
     },
     KnownItem {
         id: "window-state",
         path: "window_state.json",
         category: "settings",
         removable: true,
-        label: "視窗位置與狀態",
+        label: "Window state",
     },
     KnownItem {
         id: "output-lang",
         path: "output_lang.txt",
         category: "settings",
         removable: true,
-        label: "輸出語言偏好",
+        label: "Output language preference",
     },
     KnownItem {
         id: "tts-config",
         path: "tts_config.json",
         category: "settings",
         removable: true,
-        label: "Azure TTS 設定",
+        label: "Azure TTS settings",
     },
     KnownItem {
         id: "tts-preview-cache",
         path: "tts_preview_cache/",
         category: "cache",
         removable: true,
-        label: "TTS 預覽快取",
+        label: "TTS preview cache",
     },
     KnownItem {
         id: "tts-speak-cache",
         path: "tts_speak_cache/",
         category: "cache",
         removable: true,
-        label: "TTS 朗讀快取",
+        label: "TTS speak cache",
     },
     KnownItem {
         id: "llama-bin",
         path: "bin/",
         category: "dependency",
         removable: false,
-        label: "llama.cpp 執行檔（必要）",
+        label: "llama.cpp executable",
     },
 ];
 
@@ -323,21 +323,18 @@ pub fn model_items_for_id(
     model_id: crate::llama_runtime::manifest::ModelId,
 ) -> Option<(InventoryItem, InventoryItem)> {
     match model_id {
-        crate::llama_runtime::manifest::ModelId::Qwen3Vl2bInstruct => Some((
-            known_to_item("model-qwen3vl-2b-gguf"),
-            known_to_item("model-qwen3vl-2b-mmproj"),
+        crate::llama_runtime::manifest::ModelId::Qwen35_2b => Some((
+            known_to_item("model-qwen35-2b-gguf"),
+            known_to_item("model-qwen35-2b-mmproj"),
         )),
-        crate::llama_runtime::manifest::ModelId::Qwen3Vl4bInstruct => Some((
-            known_to_item("model-qwen3vl-4b-gguf"),
-            known_to_item("model-qwen3vl-4b-mmproj"),
+        crate::llama_runtime::manifest::ModelId::Qwen35_4b => Some((
+            known_to_item("model-qwen35-4b-gguf"),
+            known_to_item("model-qwen35-4b-mmproj"),
         )),
-        crate::llama_runtime::manifest::ModelId::Qwen3Vl8bInstruct => Some((
-            known_to_item("model-qwen3vl-8b-gguf"),
-            known_to_item("model-qwen3vl-8b-mmproj"),
+        crate::llama_runtime::manifest::ModelId::Qwen35_9b => Some((
+            known_to_item("model-qwen35-9b-gguf"),
+            known_to_item("model-qwen35-9b-mmproj"),
         )),
-        crate::llama_runtime::manifest::ModelId::Qwen35_2b
-        | crate::llama_runtime::manifest::ModelId::Qwen35_4b
-        | crate::llama_runtime::manifest::ModelId::Qwen35_9b => None,
     }
 }
 
