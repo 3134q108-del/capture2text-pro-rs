@@ -1,8 +1,10 @@
 # Capture2Text Pro
 
-Windows 桌面 OCR + 智慧雙向翻譯 + Azure TTS 朗讀。按 Win+Q 框選螢幕，本地 VLM 辨識，自動雙向翻譯，可選 Azure TTS 朗讀。
+> Windows 桌面 OCR + 智慧雙向翻譯 + Azure TTS 朗讀 — 全程本地 VLM，離線可用。
 
-從 Christopher Brochtrup 的 [C++ 版 Capture2Text](https://capture2text.sourceforge.net/) 衍生（原版已停止維護），用 Tauri 2 + Rust 重寫。OCR 從 Tesseract 換成本地 VLM（單次 pass 同時做 OCR + 智慧路由翻譯），加上雲端 TTS。
+按 **Win+Q** 框選螢幕任意區塊，本地視覺語言模型（VLM）一次完成「辨識 + 語言偵測 + 正確方向翻譯」，結果視窗即時串流顯示，可一鍵複製或用 Azure 神經語音朗讀。
+
+從 Christopher Brochtrup 的 [C++ 版 Capture2Text](https://capture2text.sourceforge.net/) 衍生（原版已停止維護），用 Tauri 2 + Rust 重寫。OCR 引擎從 Tesseract 換成本地 VLM（llama.cpp + Qwen3.5），單次 pass 同時做 OCR 與情境化翻譯。
 
 ## 為什麼做這個
 
@@ -12,37 +14,81 @@ Windows 桌面 OCR + 智慧雙向翻譯 + Azure TTS 朗讀。按 Win+Q 框選螢
 - **針對情境調翻譯**：看遊戲就用遊戲社群術語、讀程式碼就保留專有名詞、看醫療文件就走台灣醫學會慣用詞。
 - **聽 AI 自然語音念法**：Azure TTS 神經語音模擬母語者腔調，輔助發音 / 聽力學習，快速建立語感。
 
-## 功能
+## 功能總覽
 
-| 熱鍵 | 行為 |
-|---|---|
-| **Win+Q** | 框選螢幕區塊 → OCR + 智慧翻譯 |
-| **Win+W** | 游標往右抓一行 |
-| **Win+E** | 游標雙向抓一行 |
+| 熱鍵 | 模式 | 行為 |
+|---|---|---|
+| **Win+Q** | 自由框選 | 拖框選擇任意螢幕範圍，適合多行段落、表格、複雜版面 |
+| **Win+W** | 短句 | 游標位置往右展開 750px 的單行，適合單字、按鈕、選單項目 |
+| **Win+E** | 長句 | 游標左右各展開 750px（共 1500px）的單行，適合整句字幕、長標題、URL |
+
+三組熱鍵皆可在「設定 → 快捷鍵」重新錄製。觸發後自動截圖 + 辨識 + 翻譯，一氣呵成。
 
 - **智慧雙向翻譯（單次 pass）**：模型一次完成 OCR + 語言偵測 + 正確方向翻譯，不會「先翻錯方向再切回來」
-- **32 語支援**（分四級品質）：使用者可在「設定 → 語言」自選啟用範圍
-- **本地 VLM（離線）**：llama.cpp + Qwen3-VL-8B-Instruct（GGUF Q4_K_M，約 5 GB）
-- **Azure TTS BYOK**（可選，F0 免費 tier 一般夠用）
-  - 語速 / 音量 滑桿（套用至所有 Speak 與試聽）
-  - 試聽支援即時停止（紅色停止按鈕）
+- **三檔模型可選（app 內下載切換）**：Qwen3.5 2B / 4B / 9B，速度與語言覆蓋自己挑
+- **20 語支援（分三級品質）**：「設定 → 語言」自選啟用範圍
+- **本地 VLM（離線）**：llama.cpp 驅動，模型與推論全在本機，不上傳任何畫面
+- **即時反饋**：框選當下結果視窗立即出現（辨識中動畫），模型冷啟動顯示「模型啟動中」
+- **自動復原**：背景 watchdog 監控推論引擎，crash 自動重啟 + 重試，不用手動救
+- **Azure TTS BYOK**（可選，F0 免費 tier 一般夠用）：語速 / 音量滑桿、試聽即時停止
 - **結果視窗**：複製、朗讀、編輯後再朗讀
+- **剪貼簿輸出**：可設定自動複製原文 / 譯文 / 兩者（含分隔符選擇）
 - **同熱鍵連按會中斷正跑的 OCR**，只跑最後一次
 - **Tray 系統選單即時同步**：改設定後 tray 自動更新，不用重啟
 - 熱鍵自訂
 
-## 32 語與品質分級
+## 介面截圖
 
-支援的語言依 OCR + 翻譯 + TTS 的綜合品質分四級：
+**模型管理** — 三檔 Qwen3.5 內建下載器，一鍵切換，附 VRAM 建議：
 
-| 等級 | 數量 | 涵蓋語言 | 用途 |
+![模型設定](docs/screenshots/settings-models.png)
+
+**語言啟用** — 20 語三級分級，快速預設一鍵勾選：
+
+![語言設定](docs/screenshots/settings-languages.png)
+
+**翻譯設定** — 目標語言 + 翻譯情境（內建 5 個，可自訂 prompt）：
+
+![翻譯設定](docs/screenshots/settings-translate.png)
+
+**語音（Azure TTS）** — BYOK 金鑰管理 + 朗讀速度 / 音量滑桿：
+
+![語音設定](docs/screenshots/settings-speech.png)
+
+**輸出** — OCR 完成後自動複製原文 / 譯文到剪貼簿：
+
+![輸出設定](docs/screenshots/settings-output.png)
+
+**快捷鍵** — 三組熱鍵皆可重新錄製：
+
+![快捷鍵設定](docs/screenshots/settings-hotkeys.png)
+
+## 模型三檔位
+
+「設定 → 模型」內建下載器（含進度條），下載完即可切換，不用手動找 GGUF：
+
+| 模型 | 下載大小 | 建議 VRAM | 支援語言 | GPU 速度（RTX 4070 Ti 實測） | CPU 速度 |
+|---|---|---|---|---|---|
+| **Qwen3.5-2B** | ~1.9 GB | 6 GB+ | 8 語：中（繁/簡）、英、日、韓、法、德、西 | 0.3–0.8 秒/張 | ~24 秒 |
+| **Qwen3.5-4B** | ~3.2 GB | 8 GB+ | 14 語（上面 + 葡、義、俄、印尼、土、波蘭） | 0.5–1.5 秒/張 | ~47 秒 |
+| **Qwen3.5-9B** | ~6.2 GB | 12 GB+ | 全 20 語（上面 + 越、阿、泰、印地、希、希伯來） | 1–3 秒/張 | 60–100 秒 |
+
+VRAM 不足以容納整個模型時自動 fallback CPU（速度明顯變慢）。
+
+- 2B 是輕量檔位，速度最快；4B 是速度/品質甜蜜點；9B 品質最佳、小字小圖最穩
+- 模型皆為 GGUF Q4_K_M 量化，跑在內建 llama.cpp（llama-server，port 11500）
+
+## 20 語與品質分級
+
+支援的語言依 OCR + 翻譯 + TTS 的綜合品質分三級：
+
+| 等級 | 數量 | 涵蓋語言 | 說明 |
 |---|---|---|---|
-| **主推語言** | 5 | zh-CN、zh-TW、en-US、ja-JP、ko-KR | OCR + 翻譯 + TTS 品質最佳，預設啟用 |
+| **主推語言** | 5 | zh-CN、zh-TW、en-US、ja-JP、ko-KR | 品質最佳，預設啟用 |
 | **常用語言** | 7 | fr、de、es、pt、it、ru、vi | 歐美亞主流語系，品質良好 |
-| **進階語言** | 8 | ar、id、th、hi、el、he、tr、pl | 含 RTL 或特殊字元，可運作但建議測試 |
-| **實驗語言** | 12 | nl、uk、cs、sv、da、no、fi、hu、ro、bg、ms、fil-PH | 支援度有限，TTS 走英文 fallback 音色 |
+| **進階語言** | 8 | ar、id、th、hi、el、he、tr、pl | 含 RTL 或特殊字元，可運作但建議測試；TTS 走英文 fallback 音色 |
 
-「設定 → 語言」可勾選要啟用的語言；「設定 → 翻譯」選擇母語 + 目標語言。母語跟目標語言必須在啟用清單內。
+「設定 → 語言」勾選要啟用的語言；「設定 → 翻譯」選母語 + 目標語言（必須在啟用清單內）。注意各模型檔位的語言覆蓋不同（見上表）— 想用進階語言請選 9B。
 
 ## 智慧對翻邏輯
 
@@ -55,6 +101,8 @@ Windows 桌面 OCR + 智慧雙向翻譯 + Azure TTS 朗讀。按 Win+Q 框選螢
 | 其他語言（西班牙文、德文等） | 中文（=母語） | 看懂內容（read mode） |
 
 決策塞進 prompt，模型一次完成 OCR + 偵測 + 正確方向翻譯，UI streaming 從一開始就是正確語言，沒有過場閃爍。
+
+也提供**直接翻譯模式**（設定 → 翻譯 / tray 選單切換）：不論原文是什麼語言，永遠翻成目標語言。
 
 ## 情境（針對學習場景的翻譯模式）
 
@@ -70,41 +118,26 @@ Windows 桌面 OCR + 智慧雙向翻譯 + Azure TTS 朗讀。按 Win+Q 框選螢
 
 **也可以自訂情境**：設定 → 翻譯 tab → 「新增情境」，寫一段 prompt 告訴 VLM 你要的翻譯風格（例：「翻譯成 Z 世代年輕人用語」、「保留動漫專有名詞」、「商業合約風格，謹慎正式」）。每次 OCR 用「使用中」的情境跑。
 
-## 系統需求 / 硬體性能 / 耗能
+## 系統需求
 
-**為了在 32 語上做到不錯的 OCR + 翻譯品質，選用了 8B 級 VLM（Qwen3-VL-8B-Instruct Q4_K_M），而不是更輕量的專用 OCR 模型（像 Tesseract / PaddleOCR）。這是為了高品質的體驗刻意選的取捨，代價是吃硬體比較兇，先說清楚：**
+**這支程式用 VLM 做 OCR + 翻譯，吃硬體比傳統 OCR（Tesseract / PaddleOCR）兇，先說清楚。** 好處是三檔模型可選 — 機器弱就用 2B，機器強就上 9B。
 
 基本門檻：
 
 - **OS**：Windows 10 / 11（x64）
-- **RAM**：16 GB 起跳（model 常駐約 5.4 GB，加上系統 + browser）
-- **硬碟**：約 6 GB（模型）
-- **GPU**：NVIDIA / AMD / Intel 都可，純 CPU 也能跑，llama.cpp 自動選
+- **RAM**：16 GB 起跳（模型常駐記憶體 + 系統 + browser）
+- **硬碟**：依模型 2–7 GB
+- **GPU**：NVIDIA / AMD / Intel 都可，純 CPU 也能跑（慢很多），llama.cpp 自動選；VRAM ≥ 8 GB 時 vision 部分自動 offload 到 GPU
 
-### 建議規格
+### 建議搭配
 
-| 等級 | CPU | RAM | GPU | OCR 推論時間 |
-|---|---|---|---|---|
-| **入門** | i5 / Ryzen 5 級別 | 16 GB | 內顯 / 純 CPU | 5–10 秒（慢但堪用） |
-| **推薦** | i7 / Ryzen 7 級別 | 16–32 GB | RTX 3060 / 4060（8+ GB VRAM） | 1–3 秒 |
-| **發燒** | i9 / Ryzen 9 級別 | 32+ GB | RTX 4070 Ti+ | < 1.5 秒 |
+| 你的機器 | 建議模型 | 體感 |
+|---|---|---|
+| 無獨顯 / 內顯筆電 | 2B | CPU 推論 ~24 秒/張，堪用但不快 |
+| 中階獨顯（RTX 3060 / 4060，8 GB VRAM） | 4B | 1–2 秒/張 |
+| 高階獨顯（RTX 4070 Ti+，12 GB VRAM） | 9B | 1–3 秒/張，品質最佳 |
 
-### 實測數據（開發機）
-
-```
-CPU:  Intel Core i9-14900KF
-GPU:  NVIDIA GeForce RTX 4070 Ti（12 GB VRAM）
-RAM:  64 GB
-```
-
-| 狀態 | llama-server RAM | GPU VRAM | GPU 使用率 | CPU 使用率 |
-|---|---|---|---|---|
-| **待機**（model 載入，等熱鍵） | 5,403 MB | 7,377 MiB（含其他 GPU app baseline） | ~0%（程式自身） | < 1% |
-| **OCR + 翻譯中**（1–3 秒） | 5,681 MB（peak） | 7,214 MiB（peak） | **70%（平均）/ 87%（peak）** | 5–10% |
-
-推論單次時間在這台機器約 **1–3 秒**（單次 pass：OCR + 翻譯一次完成）。CPU 模式（沒 GPU）推論會慢到 **5–10 秒**，且 CPU 會吃滿 70–100%（全 core）。
-
-llama-server 在程式啟動時就把 model 載入並常駐，熱鍵響應只等推論時間，代價是 5.4 GB 記憶體一直佔住。在意省電 / 省記憶體的人不適合這支程式 — 拿低階筆電想跑這個會很吃力。
+模型在程式啟動時載入並常駐（熱鍵響應只等推論時間），代價是幾 GB 記憶體一直佔住。在意省電 / 省記憶體的人不適合這支程式。
 
 ## 安裝
 
@@ -121,16 +154,18 @@ llama-server 在程式啟動時就把 model 載入並常駐，熱鍵響應只等
 
 裝完啟動，右下角 tray icon 按右鍵 → 「設定」。
 
-1. **語言** — 勾選要啟用的語言（預設啟用主推 5 語）
-2. **翻譯** — 選母語 + 目標語言（智慧對翻會在這兩個方向之間自動切換）；可選擇情境（通用 / 航運 / 遊戲 / 程式碼 / 醫療）或自建
-3. **語音** — 貼 Azure Speech key + region（可跳過，只用 OCR + 翻譯）；指定每個語言的音色；調整朗讀速度與音量
-4. **快捷鍵** — 改熱鍵（預設 Win+Q / W / E）
+1. **模型** — 挑一個檔位下載（建議先 4B），下載完按「啟用」
+2. **語言** — 勾選要啟用的語言（預設啟用主推 5 語）
+3. **翻譯** — 選母語 + 目標語言；選翻譯模式（智慧對翻 / 直接翻譯）；選情境或自建
+4. **語音** — 貼 Azure Speech key + region（可跳過，只用 OCR + 翻譯）；指定每個語言的音色；調整朗讀速度與音量
+5. **輸出** — 設定 OCR 完成後是否自動複製到剪貼簿（原文 / 譯文 / 兩者）
+6. **快捷鍵** — 改熱鍵（預設 Win+Q / W / E）
 
 設好就 Win+Q 開始用。
 
 ## 卸載
 
-v0.5.0 起 uninstaller 提供三種模式，**預設選最保守的「僅刪除程式」**：
+uninstaller 提供三種模式，**預設選最保守的「僅刪除程式」**：
 
 | 模式 | 行為 | 適用場景 |
 |---|---|---|
@@ -140,7 +175,7 @@ v0.5.0 起 uninstaller 提供三種模式，**預設選最保守的「僅刪除�
 
 從 **設定 → 應用程式 → Capture2Text Pro → 解除安裝** 進入。
 
-「部分刪除」清單會在 runtime 從 app 自己維護的 `%LOCALAPPDATA%\com.capture2text.pro\inventory.json` 讀取，所以未來下載新模型或新增資料類別會自動出現在清單裡。
+「部分刪除」清單會在 runtime 從 app 自己維護的 `inventory.json` 讀取，未來下載新模型或新增資料類別會自動出現在清單裡。
 
 > **完全刪除模式仍可能殘留**：若 `WebView2 (msedgewebview2.exe)` 卸載時還在背景跑，少量 `EBWebView/` cache 可能 lock 住無法刪。手動清 `%LOCALAPPDATA%\com.capture2text.pro\` 即可。
 
@@ -162,107 +197,26 @@ npm run tauri build           # release
 npm run tauri build -- --debug # debug（編譯較快，適合測 installer）
 ```
 
-產出在 `src-tauri/target/{release,debug}/bundle/nsis/`。
+產出在 `src-tauri/target/{release,debug}/bundle/nsis/`。只產 NSIS installer（v0.5.0 起移除 MSI）；NSIS 才能掛三模式 uninstaller 自訂頁面。
 
-v0.5.0 起只產 NSIS installer（移除 MSI）；NSIS 才能掛三模式 uninstaller 自訂頁面。
-
-實作細節見 `docs/capture-spec.md`（Q/W/E 行為移植自 upstream C++ 版）。
+實作細節見 `docs/capture-spec.md`（Q/W/E 行為移植自 upstream C++ 版）。版本沿革見 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 已知限制
 
 - 只在 Windows 測過，macOS / Linux 跑不起來（全域熱鍵和 tray 部分用 Win32 API）
-- 純 CPU 推論一張約 5–10 秒，GPU 1–3 秒
+- 純 CPU 推論慢（2B ~24 秒 / 4B ~47 秒 / 9B 60+ 秒），有獨顯才有「秒級」體驗
 - Azure TTS 要自備 key，F0 免費 tier 每月 50 萬字符
 - Installer 沒簽名，第一次裝會看到 SmartScreen 警告，點「仍要執行」；如機器有 `ValidateAdminCodeSignatures=1`（見「安裝」段）需先關閉
-- ⚠️ **截圖範圍太小會 OCR 失準**：用 **Qwen3-VL-2B / 4B** 時，若截圖**小於 3 個中文字**（約 80×40 像素以下）vision tower spatial detail 不足，model 容易 hallucinate（編造與圖片無關的「中華民國」「營業時間」「台中市公有圖書館」這類常見路牌字眼）
+- ⚠️ **截圖範圍太小會 OCR 失準**：用 2B / 4B 時，若截圖**小於 3 個中文字**（約 80×40 像素以下）vision tower spatial detail 不足，模型容易 hallucinate（編造與圖片無關的常見路牌字眼）
   - **建議**：框選時多帶一點空白 / 多框幾個字一起抓
-  - **或切到 Qwen3-VL-8B-Instruct**（設定 → 模型）— 對小圖較 robust，但推論慢約 3 倍、吃 RAM 多
+  - **或切到 9B**（設定 → 模型）— 對小圖較 robust，但推論較慢、吃資源多
 
 ## 致謝
 
 - [Capture2Text](https://capture2text.sourceforge.net/) — Christopher Brochtrup 的原版，Q/W/E 互動延用此版本
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) — Georgi Gerganov 等
-- [Qwen3-VL](https://huggingface.co/Qwen) — 阿里通義千問
+- [Qwen3.5](https://huggingface.co/Qwen) — 阿里通義千問
 
 ## License
 
 Apache License 2.0（`LICENSE`）。
-
----
-
-## v0.5.0 改動
-
-### 三模式 uninstaller（installer 規範對齊）
-依 [installer.md](https://github.com/3134q108-del/capture2text-pro-rs) 規範，NSIS uninstaller 提供：
-- **模式選擇頁**：三 radio button（保守 / 部分 / 完全），預設保守
-- **部分模式 checkbox 頁**：runtime 讀 `inventory.json` 動態列出可清項目，每項含當前大小
-- **三模式對應清理**：minimal 只清 WebView/Cache 殘留；partial 依勾選清；full 全清 + cmdkey 刪 Azure TTS keyring entry
-- **必要依賴受保護**：`bin/` (llama-server) 在部分模式不顯示在 checkbox，只有「完全刪除」會清
-
-詳見「卸載」章節。
-
-### App inventory 維護
-- 新增 `src-tauri/src/inventory.rs`：app 啟動時 + 下載模型 + 寫 OCR captures 時自動 reconcile `inventory.json`，供 uninstaller 讀取
-- inventory 條目分類：ai-model / user-data / settings / cache / dependency；後者標 `removable: false`，部分模式不會顯示
-
-### Bundle 改動
-- **移除 MSI target**：WiX/MSI 無法掛 NSIS 三模式自訂頁面，bundle 只保留 `nsis`
-- **NSIS template fork**：`src-tauri/windows/installer.nsi` fork 自 tauri-bundler 預設，加入兩個 `UninstPage custom`
-- **nsJSON plugin 整合**：`src-tauri/windows/plugins/nsJSON/Plugins/x86-unicode/nsJSON.dll`，uninstaller 讀 inventory.json 用
-
-### 內部變更（無 UX 影響）
-- 移除舊 MessageBox-based「Delete app data」勾選（被三模式 wizard 取代）
-- 多了 `%LOCALAPPDATA%\com.capture2text.pro\inventory.json` 檔（容量極小）
-
-## v0.4.4 改動
-
-### 新功能：直接翻譯模式
-- **2 選 1 翻譯模式**：智慧對翻（既有）/ 直接翻譯（新增）
-  - 智慧對翻：抓母語 → 翻目標；抓其他 → 翻母語（雙向動態）
-  - 直接翻譯：不論原文，永遠翻成目標語言（單向固定）
-- **可從兩個地方切換**：設定 → 翻譯 tab radio / tray 系統選單「翻譯模式」submenu
-- **雙向即時同步**：tray 切 → 設定即時跟進；設定切 → tray 即時跟進
-
-### UI / UX 修正
-- **「儲存語言設定」按鈕成功反饋**：按鈕文字依序「儲存中...」→「✅ 已儲存」(3 秒)，旁邊綠色「✅ 語言設定已儲存」訊息
-- **移除「母語不能與目標語言相同」限制**：兩邊都允許設成同語言（在 Direct mode 下實用）
-- **Tray「目標語言」submenu 雙向同步**：設定改目標 → tray 立即打勾在新值（v0.4.3 此路徑漏實作）
-
-### 防呆 / 穩定性
-- **修 tray 死鎖**：tray click handler `target_lang_*` / `toggle_show_popup` 不再持鎖呼叫 emit-trigger 函式，避免「開設定+點 tray」程式卡死
-- **修 TranslateTab.tsx 編碼問題**：v0.4.3 之前 Codex 改檔曾誤用 UTF-8 with BOM 導致中文字串亂碼，本版重做 + 鎖死 NO BOM + LF only
-
-## v0.4.3 改動
-
-文檔同步 patch（無功能變動）：
-
-- **HelpTab**：「7 種語言全本機處理」→「32 種語言」；「使用流程 → 需要做的設定」改為母語 + 目標語言雙向描述（含智慧對翻方向說明），原本誤導為單向「翻譯目標語言」的單句說明
-- **tauri.conf.json**：installer `longDescription` 從「7 語(繁中/簡中/英/日/韓/德/法)」更新為「32 語(主推 5 + 常用 7 + 進階 8 + 實驗 12)」+ 加「智慧雙向翻譯」字樣
-
-## v0.4.2 重點改動
-
-### 翻譯核心
-- **單次 pass 智慧雙向翻譯**：把翻譯方向決策塞進 system prompt，模型一次完成 OCR + 偵測 + 正確方向翻譯。修掉 v0.4.1 抓母語時「中文閃一下才切換成英文」的 UX glitch
-- **JSON 解析 robustness**：加 llama.cpp `response_format=json_object` 強制 JSON 文法 + lenient fallback，避免模型偶爾回 plain text 時直接報錯
-
-### UI / 設定
-- **TranslateTab 動態語言**：母語 / 目標下拉現在從 enabled_langs 讀取（含 fr/de 等使用者啟用語言），儲存時不再覆蓋語言設定
-- **LanguagesTab 友善標籤**：Tier S/A/B/C → 主推 / 常用 / 進階 / 實驗 + 副說明
-- **SpeechTab 繁中化**：完整翻譯（保留 Azure 品牌名與 voice ID）
-- **TranslateTab 補繁中**：「內建」「使用中」「提示詞」
-- **試聽即時停止**：播放期間按鈕變紅色「停止」，點下立即中斷
-- **朗讀控制滑桿恢復**：朗讀速度（0.5x – 2.0x）+ 音量（-50% – +100%），同時套用至 Speak 與試聽
-- **Azure 「儲存並測試」修復**：已 configured 時不輸入 key 也能單純「測試現有金鑰」
-
-### Tray 系統選單
-- **即時同步 enabled_langs**：改 LanguagesTab 後 tray「目標語言」立即更新，無需重啟
-
-### 32 語架構
-- 主推 5（zh-CN / zh-TW / en-US / ja-JP / ko-KR）
-- 常用 7（fr / de / es / pt / it / ru / vi）
-- 進階 8（ar / id / th / hi / el / he / tr / pl）
-- 實驗 12（nl / uk / cs / sv / da / no / fi / hu / ro / bg / ms / fil-PH）
-
-### 升級相容
-- 舊版 `output_lang.txt` 自動合併進 `enabled_langs`
-- 舊版 `azure_speech_rate` / `azure_speech_volume` 直接沿用（v0.4.0 大瘦身時 UI 滑桿被刪掉，本版恢復）
