@@ -19,6 +19,7 @@
 - `perf.log` 記錄逐次 capture 的 TTFT breakdown（rotating）
 
 ### 翻譯品質
+- **翻譯模式簡化**：移除 v0.4.4 的「智慧對翻（母語 ↔ 目標）」與母語設定，統一為「一律翻成目標語言」單一行為（原文已是目標語言時原文照出）
 - 禁止第三語言混雜；strip `<text>` wrapper 洩漏
 - 混合語言段落中嵌入的外語詞會一併翻譯
 - temperature 降至 0.2 + 強化混語 fidelity；縮短翻譯 prompt 修正角括號內容不翻譯問題
