@@ -29,15 +29,15 @@ type DownloadProgress = {
 };
 
 const SPEED_HINT: Record<string, string> = {
-  Qwen3Vl2bInstruct: "0.3-0.8 秒/張 (RTX 4070Ti) / 24 秒 (CPU)",
-  Qwen3Vl4bInstruct: "0.5-1.5 秒/張 (RTX 4070Ti) / 47 秒 (CPU)",
-  Qwen3Vl8bInstruct: "1-3 秒/張 (RTX 4070Ti) / 60-100 秒 (CPU)",
+  Qwen35_2b: "0.3-0.8 秒/張 (RTX 4070Ti) / 24 秒 (CPU)",
+  Qwen35_4b: "0.5-1.5 秒/張 (RTX 4070Ti) / 47 秒 (CPU)",
+  Qwen35_9b: "1-3 秒/張 (RTX 4070Ti) / 60-100 秒 (CPU)",
 };
 
 const TIER_HINT: Record<string, string> = {
-  Qwen3Vl2bInstruct: "輕量檔位，8 種語言：中(繁/簡)、英、日、韓、法、德、西",
-  Qwen3Vl4bInstruct: "甜蜜點，14 種語言 (上面 + 葡、義、俄、印、土、波)",
-  Qwen3Vl8bInstruct: "品質檔位，全 20 種語言 (上面 + 越、阿、泰、印地、希、希伯來)",
+  Qwen35_2b: "輕量檔位，8 種語言：中(繁/簡)、英、日、韓、法、德、西",
+  Qwen35_4b: "甜蜜點，14 種語言 (上面 + 葡、義、俄、印、土、波)",
+  Qwen35_9b: "品質檔位，全 20 種語言 (上面 + 越、阿、泰、印地、希、希伯來)",
 };
 
 export default function ModelsTab() {
